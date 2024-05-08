@@ -4,22 +4,24 @@ import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
     private @Nullable B batch;
 
-    public SingletonBIt(@Nullable B batch, BatchType<B> batchType, Vars vars) {
+    public SingletonBIt(@Nullable Orphan<B> batch, BatchType<B> batchType, Vars vars) {
         super(batchType, vars);
-        this.batch = batch;
+        this.batch = Orphan.takeOwnership(batch, this);
     }
 
-    @Override public B nextBatch(@Nullable B b) {
+    @Override public Orphan<B> nextBatch(@Nullable Orphan<B> b) {
+         Orphan.recycle(b);
         lock();
         try {
-            if (b != null) batchType.recycle(b);
-            b = batch;
+            b = Owned.releaseOwnership(batch, this);
             batch = null;
             if (b == null && state() == State.ACTIVE)
                 onTermination(null);

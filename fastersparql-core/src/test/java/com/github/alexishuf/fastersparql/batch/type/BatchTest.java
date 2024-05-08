@@ -1,22 +1,26 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
-import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.*;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import jdk.incubator.vector.ByteVector;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -31,23 +35,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
 import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class BatchTest {
     private static final List<BatchType<?>> TYPES = List.of(
-            TermBatchType.TERM,
-            CompressedBatchType.COMPRESSED,
+            TERM,
+            COMPRESSED,
             StoreBatchType.STORE
     );
     private static LocalityCompositeDict storeDict;
@@ -61,6 +65,7 @@ class BatchTest {
         private final int requiredBytesUnaligned;
         private final int requiredBytesAligned;
         private final Term[][] terms;
+        private @Nullable Vars vars;
 
         Size(int rows, int cols) {
             this.rows = rows;
@@ -88,9 +93,15 @@ class BatchTest {
             this.requiredBytesUnaligned = unaligned;
             this.requiredBytesAligned   = aligned;
         }
+        
+        public Vars vars() { 
+            if (vars == null)
+                vars = mkVars(cols);
+            return vars;
+        }
 
         public int requiredBytes(BatchType<?> type) {
-            return CompressedBatchType.COMPRESSED.equals(type) ? requiredBytesAligned
+            return COMPRESSED.equals(type) ? requiredBytesAligned
                                                              : requiredBytesUnaligned;
         }
 
@@ -147,6 +158,7 @@ class BatchTest {
     );
 
     @BeforeAll static void beforeAll() throws IOException  {
+        Primer.primeAll();
         Path tmp = Files.createTempDirectory("fastersparql-BatchTest");
         try (var b = new CompositeDictBuilder(tmp, tmp, Splitter.Mode.LAST, true)) {
             visitStrings(b);
@@ -170,23 +182,98 @@ class BatchTest {
                 for (int c = 0; c < s.cols; c++) {
                     Term term = s.terms[r][c];
                     if (term != null)
-                        visitor.visit(SegmentRope.of(term));
+                        visitor.visit(asFinal(term));
                 }
             }
         }
-        visitor.visit(SegmentRope.of("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"));
-        visitor.visit(SegmentRope.of("\"bob\"@en"));
-        visitor.visit(SegmentRope.of("\"bob\"@en-US"));
-        visitor.visit(SegmentRope.of("\"bob\""));
-        visitor.visit(SegmentRope.of("<http://www.w3.org/2001/XMLSchema#string>"));
-        visitor.visit(SegmentRope.of("\"alice\""));
-        visitor.visit(SegmentRope.of("\"\""));
-        visitor.visit(SegmentRope.of("\"\"@en"));
-        visitor.visit(SegmentRope.of("\"\"@en-US"));
+        visitor.visit(asFinal("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"));
+        visitor.visit(asFinal("\"bob\"@en"));
+        visitor.visit(asFinal("\"bob\"@en-US"));
+        visitor.visit(asFinal("\"bob\""));
+        visitor.visit(asFinal("<http://www.w3.org/2001/XMLSchema#string>"));
+        visitor.visit(asFinal("\"alice\""));
+        visitor.visit(asFinal("\"\""));
+        visitor.visit(asFinal("\"\"@en"));
+        visitor.visit(asFinal("\"\"@en-US"));
     }
 
-    private interface ForEachSizeTest {
-        <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx);
+    private static class MultiGuard implements AutoCloseable {
+        private final List<Batch<?>> batches = new ArrayList<>();
+        private final List<Owned<?>> guarded = new ArrayList<>();
+        @Override public void close() {
+            for (int i = 0, n = batches.size(); i < n; i++) {
+                Batch<?> b = batches.get(i);
+                if (b != null)
+                    batches.set(i, b.recycle(this));
+            }
+            for (Owned<?> o : guarded) {
+                if (o != null)
+                    o.recycle(this);
+            }
+            guarded.clear();
+        }
+        @SuppressWarnings("unchecked") public <B extends Batch<B>> Orphan<B>
+        take(int i, BatchType<B> type) {
+            Batch<?> b = batches.set(i, null);
+            assertNotNull(b);
+            assertEquals(b.type(), type);
+            return ((B)b).releaseOwnership(this);
+        }
+        public <B extends Batch<B>> B set(int i, @Nullable B b) {
+            if (b != null)
+                b.requireOwner(this);
+            while (batches.size() <= i)
+                batches.add(null);
+            Batch<?> old = batches.get(i);
+            if (old != null && old != b && old.isOwner(this))
+                old.recycle(this);
+            batches.set(i, b);
+            return b;
+        }
+        public <B extends Batch<B>> B set(int i, @Nullable Orphan<B> orphan) {
+            B b = Orphan.takeOwnership(orphan, this);
+            while (batches.size() <= i)
+                batches.add(null);
+            Batch<?> old = batches.get(i);
+            if (old != null && old != b)
+                old.recycle(this);
+            batches.set(i, b);
+            return b;
+        }
+        public <B extends Batch<B>> B fill(int i, Size size, BatchType<B> type) {
+            return size.fill(set(i, type.create(size.cols)));
+        }
+        public <B extends Batch<B>> B reverseFill(int i, Size size, BatchType<B> type) {
+            return size.reverseFill(set(i, type.create(size.cols)));
+        }
+        public <B extends Batch<B>> B create(int i, BatchType<B> type, int cols) {
+            return set(i, type.create(cols));
+        }
+        public <T extends Owned<T>> T guard(Orphan<T> orphan) {
+            T o = orphan.takeOwnership(this);
+            guarded.add(o);
+            return o;
+        }
+        public <B extends Batch<B>> RowBucket<B, ?> bucket(BatchType<B> type,
+                                                           int rowsCapacity, int cols) {
+            RowBucket<B, ?> b = type.createBucket(rowsCapacity, cols).takeOwnership(this);
+            guarded.add(b);
+            return b;
+        }
+        public <B extends Batch<B>> BatchFilter<B, ?> filter(Orphan<? extends BatchFilter<B, ?>> orphan) {
+            BatchFilter<B, ?> m = orphan.takeOwnership(this);
+            guarded.add(m);
+            return m;
+        }
+        public <B extends Batch<B>> BatchMerger<B, ?> merger(@Nullable Orphan<? extends BatchMerger<B, ?>> orphan) {
+            BatchMerger<B, ?> m = orphan == null ? null : orphan.takeOwnership(this);
+            guarded.add(m);
+            return m;
+        }
+    }
+
+    private abstract static class ForEachSizeTest extends MultiGuard {
+        public abstract <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx);
     }
 
     static Stream<Arguments> types() { return TYPES.stream().map(Arguments::arguments); }
@@ -195,20 +282,10 @@ class BatchTest {
         for (BatchType<?> type : TYPES) {
             for (Size size : SIZES) {
                 String ctx = "type="+type+", size="+size;
-                test.run(type, size, ctx);
+                try (test) {
+                    test.run(type, size, ctx);
+                }
             }
-        }
-    }
-
-    @Test void testUnPooledCreate() {
-        for (Size s : SIZES) {
-            Consumer<Batch<?>> check = b -> {
-                String ctx = b.getClass().getSimpleName()+s;
-//                assertTrue(b.hasCapacity(s.rows, s.cols), ctx);
-                if (s.rows == 0) return;
-                assertTrue(b.rowsCapacity() >= s.rows, ctx);
-            };
-            check.accept(new TermBatch(new Term[s.rows*s.cols], s.rows, s.cols, true));
         }
     }
 
@@ -216,15 +293,16 @@ class BatchTest {
         forEachSize(new ForEachSizeTest() {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
-                var b = type.create(size.cols);
-                assertEquals(size.cols, b.cols, ctx);
-                assertEquals(0, b.rows(), ctx);
-                assertEquals(size.cols, b.hashCode(), ctx);
-                b.reserveAddLocals(size.requiredBytes(type));
-                assertEquals(size.cols, b.cols, ctx);
-                assertEquals(0, b.rows(), ctx);
-                assertEquals(size.cols, b.hashCode(), ctx);
-                b.recycle();
+                try (var bGuard = new BatchGuard<B>(this)) {
+                    var b = bGuard.set(type.create(size.cols));
+                    assertEquals(size.cols, b.cols, ctx);
+                    assertEquals(0, b.rows(), ctx);
+                    assertEquals(size.cols, b.hashCode(), ctx);
+                    b.reserveAddLocals(size.requiredBytes(type));
+                    assertEquals(size.cols, b.cols, ctx);
+                    assertEquals(0, b.rows(), ctx);
+                    assertEquals(size.cols, b.hashCode(), ctx);
+                }
             }
         });
     }
@@ -234,23 +312,21 @@ class BatchTest {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
-                B b1 = size.fill(type.create(size.cols));
-                B b2 = size.fill(type.create(size.cols));
-                B b3 = size.fill(type.create(size.cols));
+                B b1 = fill(1, size, type);
+                B b2 = fill(2, size, type);
+                B b3 = fill(3, size, type);
                 b1.reserveAddLocals(reqBytes);
                 b2.reserveAddLocals(reqBytes);
                 assertBatchesEquals(b1, b2, ctx);
                 assertBatchesEquals(b1, b3, ctx);
                 assertBatchesEquals(b2, b3, ctx);
-                for (B b : List.of(b1, b2, b3))
-                    b.recycle();
             }
         });
     }
 
     static <B extends Batch<B>> void
-    checkTerm(String ctx, B batch, int r, int c, Term t, Term tmpTerm, TwoSegmentRope expectedTSR,
-              TwoSegmentRope tmpTSR, SegmentRope tmpSR, PrefixAssigner assigner) {
+    checkTerm(String ctx, B batch, int r, int c, Term t, TermView tmpTerm, TwoSegmentRope expectedTSR,
+              TwoSegmentRope tmpTSR, SegmentRopeView tmpSR) {
         if (t == null) {
             expectedTSR = null;
         } else {
@@ -260,10 +336,7 @@ class BatchTest {
 
         assertEquals(t, batch.linkedGet(r, c), ctx);
         assertEquals(t != null, batch.linkedGetView(r, c, tmpTerm));
-
-        assertEquals(expectedTSR, batch.linkedGetRope(r, c), ctx);
         assertEquals(expectedTSR != null, batch.linkedGetRopeView(r, c, tmpTSR), ctx);
-
         assertEquals(t != null, batch.linkedLocalView(r, c, tmpSR));
 
         if (t != null) {
@@ -272,7 +345,7 @@ class BatchTest {
             assertEquals(t.local(), tmpSR);
         }
 
-        assertEquals(t == null ? EMPTY : t.shared(), batch.linkedShared(r, c), ctx);
+        assertEquals(t == null ? FinalSegmentRope.EMPTY : t.shared(), batch.linkedShared(r, c), ctx);
         if (t == null) {
             assertFalse(batch.linkedSharedSuffixed(r, c), ctx);
         } else if (t.sharedSuffixed() && t.shared().len <= 7 && batch.linkedShared(r, c).len == 0) {
@@ -290,67 +363,66 @@ class BatchTest {
         assertEquals(t == null ? null : t.datatypeTerm(), batch.linkedDatatypeTerm(r, c), ctx);
         assertEquals(t == null ? Rope.FNV_BASIS : t.hashCode(), batch.linkedHash(r, c), ctx);
 
-        ByteRope ex = new ByteRope(), ac = new ByteRope();
-        if (t != null) t.toSparql(ex, assigner);
-        int sparqlBytes = batch.linkedWriteSparql(ac, r, c, assigner);
-        assertEquals(ex, ac, ctx);
-        assertEquals(ac.len, sparqlBytes);
+        try (var ex = PooledMutableRope.get();
+             var ac = PooledMutableRope.get()) {
+            if (t != null) t.toSparql(ex, PrefixAssigner.NOP);
+            int sparqlBytes = batch.linkedWriteSparql(ac, r, c, PrefixAssigner.NOP);
+            assertEquals(ex, ac, ctx);
+            assertEquals(ac.len, sparqlBytes);
 
-        ex.clear().append(t == null ? EMPTY : t);
-        batch.linkedWriteNT(ac.clear(), r, c);
-        assertEquals(ex, ac, ctx);
+            ex.clear().append(t == null ? FinalSegmentRope.EMPTY : t);
+            batch.linkedWriteNT(ac.clear(), r, c);
+            assertEquals(ex, ac, ctx);
+        }
     }
 
     @SuppressWarnings("SimplifiableAssertion")
     static <B extends Batch<B>> void assertBatchesEquals(B expected, B batch, String outerCtx) {
-        expected.requireUnpooled();
-        batch.requireUnpooled();
+        expected.requireAlive();
+        batch.requireAlive();
         expected.validate();
         batch.validate();
-        Term tmpTerm = Term.pooledMutable();
-        TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = TwoSegmentRope.pooled();
-        SegmentRope tmpSR = SegmentRope.pooled();
-        var assigner = new PrefixAssigner(new RopeArrayMap());
-        assertEquals(expected.totalRows(), batch.totalRows(), outerCtx);
-        assertEquals(expected.cols, batch.cols, outerCtx);
-        for (int r = 0, rows = expected.rows, cols = expected.cols; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                String ctx = ", r=" + r + ", c=" + c+", "+outerCtx;
-                assertTrue(batch.linkedEquals(r, c, expected, r, c), ctx);
-                assertEquals(expected.linkedHash(r, c), batch.linkedHash(r, c), ctx);
-                checkTerm(ctx, batch, r, c, expected.get(r, c),
-                          tmpTerm, expectedTSR, tmpTSR, tmpSR, assigner);
+        try (var tmpTerm     = PooledTermView.ofEmptyString();
+             var tmpSR       = PooledSegmentRopeView.ofEmpty();
+             var tmpTSR      = PooledTwoSegmentRope.ofEmpty();
+             var expectedTSR = PooledTwoSegmentRope.ofEmpty()) {
+            assertEquals(expected.totalRows(), batch.totalRows(), outerCtx);
+            assertEquals(expected.cols, batch.cols, outerCtx);
+            for (int r = 0, rows = expected.rows, cols = expected.cols; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    String ctx = ", r=" + r + ", c=" + c + ", " + outerCtx;
+                    assertTrue(batch.linkedEquals(r, c, expected, r, c), ctx);
+                    assertEquals(expected.linkedHash(r, c), batch.linkedHash(r, c), ctx);
+                    checkTerm(ctx, batch, r, c, expected.get(r, c),
+                            tmpTerm, expectedTSR, tmpTSR, tmpSR);
+                }
+                assertTrue(batch.linkedEquals(r, expected, r), "r=" + r + ", " + outerCtx);
+                assertEquals(expected.linkedHash(r), batch.linkedHash(r), "r=" + r + ", " + outerCtx);
             }
-            assertTrue(batch.linkedEquals(r, expected, r), "r="+r+", "+outerCtx);
-            assertEquals(expected.linkedHash(r), batch.linkedHash(r), "r="+r+", "+outerCtx);
+            assertTrue(expected.equals(batch), outerCtx);
+            assertTrue(batch.equals(expected), outerCtx);
+            assertEquals(expected.hashCode(), batch.hashCode());
         }
-        assertTrue(expected.equals(batch), outerCtx);
-        assertTrue(batch.equals(expected), outerCtx);
-        assertEquals(expected.hashCode(), batch.hashCode());
-        tmpTerm.recycle();
-        tmpSR.recycle();
     }
 
     static <B extends Batch<B>> void assertBatchesEquals(Size size,
                                                          B batch, String outerCtx) {
-        batch.requireUnpooled();
+        batch.requireAlive();
         batch.validate();
-        Term tmpTerm = Term.pooledMutable();
-        TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
-        SegmentRope tmpSR = SegmentRope.pooled();
-        PrefixAssigner assigner = new PrefixAssigner(new RopeArrayMap());
-        for (int r = 0, rows = size.rows, cols = size.cols; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                Term t = size.terms[r][c];
-                String ctx = "r=" + r + ", c=" + c+",t="+t+", "+outerCtx;
-                assertTrue(batch.linkedEquals(r, c, t), ctx);
+        try (var tmpTerm = PooledTermView.ofEmptyString();
+             var tmpSR = PooledSegmentRopeView.ofEmpty()) {
+            TwoSegmentRope expectedTSR = new TwoSegmentRope(), tmpTSR = new TwoSegmentRope();
+            for (int r = 0, rows = size.rows, cols = size.cols; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    Term t = size.terms[r][c];
+                    String ctx = "r=" + r + ", c=" + c + ",t=" + t + ", " + outerCtx;
+                    assertTrue(batch.linkedEquals(r, c, t), ctx);
 
-                checkTerm(ctx, batch, r, c, t, tmpTerm, expectedTSR, tmpTSR, tmpSR, assigner);
+                    checkTerm(ctx, batch, r, c, t, tmpTerm, expectedTSR, tmpTSR, tmpSR);
+                }
+                assertTrue(batch.linkedEquals(r, size.terms[r]), "r=" + r + ", " + outerCtx);
             }
-            assertTrue(batch.linkedEquals(r, size.terms[r]), "r="+r+", "+outerCtx);
         }
-        tmpTerm.recycle();
-        tmpSR.recycle();
     }
 
     @Test void testPut() {
@@ -359,26 +431,26 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 ThreadJournal.resetJournals();
                 int reqBytes = size.requiredBytes(type);
-                B b1  = type.create(size.cols);
-                B b2  = type.create(size.cols);
-                B b3  = type.create(size.cols);
-                B b6  = type.create(size.cols);
-                B b6_ = type.create(size.cols);
-                B b4 = size.reverseFill(type.create(size.cols));
-                B b5 = size.reverseFill(type.create(size.cols));
-                B b7 = size.reverseFill(type.create(size.cols));
-                B b8 = type.create(size.cols);
-                B b9 = type.create(size.cols);
-                B bA = type.create(size.cols);
+                B b1  = create(1, type, size.cols);
+                B b2  = create(2, type, size.cols);
+                B b3  = create(3, type, size.cols);
+                B b6  = create(6, type, size.cols);
+                B b6_ = create(60, type, size.cols);
+                B b4 = reverseFill(4, size, type);
+                B b5 = reverseFill(5, size, type);
+                B b7 = reverseFill(7, size, type);
+                B b8 = create(8,  type, size.cols);
+                B b9 = create(9,  type, size.cols);
+                B bA = create(10, type, size.cols);
                 b4 = b4.clear(size.cols*2);
                 b5 = b5.clear(size.cols*2);
                 b4 = b4.clear(size.cols);
                 b5 = b5.clear(size.cols);
                 b7 = b7.clear(size.cols);
-                TermBatch bT = TermBatchType.TERM.create(size.cols);
+                TermBatch bT = create(11, TERM, size.cols);
                 bT.reserveAddLocals(reqBytes);
                 size.fill(bT);
-                TermParser termParser = new TermParser();
+                TermParser termParser = guard(TermParser.create());
                 for (int r = 0; r < size.rows; r++) {
                     b1.beginPut();
                     b2.beginPut();
@@ -392,7 +464,7 @@ class BatchTest {
                         b1.putTerm(c, t);
                         b4.putTerm(c, t);
                         byte[] u8 = ("(" + (t == null ? "" : t.local()) + ")").getBytes(UTF_8);
-                        SegmentRope sh = t == null ? null : t.shared();
+                        FinalSegmentRope sh = t == null ? null : t.finalShared();
                         boolean sharedSuffixed = t != null && t.sharedSuffixed();
                         MemorySegment u8Seg = MemorySegment.ofArray(u8);
                         b7.putTerm(c, sh, u8, 1, u8.length-2, sharedSuffixed);
@@ -404,9 +476,11 @@ class BatchTest {
                         b2.linkedPutTerm(c, b1, r, c);
                         b5.putTerm(c, t);
                         if (t != null) {
-                            ByteRope in = new ByteRope(t.len + 2).append('(').append(t).append(')');
-                            assertTrue(termParser.parse(in, 1, in.len - 1).isValid());
-                            b9.putTerm(c, termParser);
+                            try (var in = PooledMutableRope.getWithCapacity(t.len+2)) {
+                                in.append('(').append(t).append(')');
+                                assertTrue(termParser.parse(in, 1, in.len-1).isValid());
+                                b9.putTerm(c, termParser);
+                            }
                         }
                     }
                     b2.commitPut();
@@ -442,9 +516,6 @@ class BatchTest {
                 assertBatchesEquals(b7, b8, ctx);
                 assertBatchesEquals(b8, b9, ctx);
                 assertBatchesEquals(b9, bA, ctx);
-
-                for (B b : List.of(b1, b2, b3, b4, b5, b6, b7, b8, b9))
-                    b.recycle();
             }
         });
     }
@@ -457,7 +528,7 @@ class BatchTest {
             for (var ln = left; ln != null; ln = ln.next) {
                 if (ln == rn) return;
             }
-            rn.requirePooled();
+            assertFalse(rn.isAlive());
         }
     }
 
@@ -465,15 +536,13 @@ class BatchTest {
     @Test void testMergeThinLeft() {
         forEachSize(new ForEachSizeTest() {
             @Override public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
-                B full = size.fill(type.create(size.cols));
-                B left = type.create(0);
+                B full = fill(0, size, type);
+                B left = create(1, type, 0);
                 left.rows = 2;
-                var merger = type.merger(mkVars(size.cols), Vars.EMPTY, mkVars(size.cols));
-                B merged = merger.merge(null, left, 1, full);
+                var merger = merger(type.merger(size.vars(), Vars.EMPTY, size.vars()));
+                B merged = set(2, merger.merge(null, left, 1, full));
                 assertBatchesEquals(size, full, ctx);
                 assertBatchesEquals(size, merged, ctx);
-                for (B b : List.of(requireNonNull(full), left, merged))
-                    type.recycle(b);
             }
         });
     }
@@ -481,24 +550,24 @@ class BatchTest {
     @Test void testMergeThinRight() {
         forEachSize(new ForEachSizeTest() {
             @Override public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
-                B full = size.fill(type.create(size.cols));
-                B tmp = type.create(size.cols);
-                B expected = type.create(size.cols);
-                B right = type.create(0);
+                B full     =   fill(0, size, type);
+                B tmp      = create(1, type, size.cols);
+                B expected = create(2, type, size.cols);
+                B right    = create(3, type, 0);
                 right.rows = 2;
-                var merger = type.merger(mkVars(size.cols), mkVars(size.cols), Vars.EMPTY);
+                var merger = merger(type.merger(size.vars(), size.vars(), Vars.EMPTY));
                 for (var node = full; node != null; node = node.next) {
                     for (int r = 0; r < node.rows; r++) {
                         expected.clear();
                         expected.putRow(node, r);
                         expected.putRow(node, r);
-                        B merged = merger.merge(tmp.clear(size.cols), node, r, right);
+                        tmp.clear(size.cols);
+                        B merged = set(4, merger.merge(take(1, type), node, r, right));
                         assertSame(tmp, merged);
                         assertBatchesEquals(expected, merged, ctx);
+                        set(1, take(4, type));
                     }
                 }
-                for (B b : List.of(requireNonNull(full), tmp, expected, right))
-                    type.recycle(b);
             }
         });
     }
@@ -506,10 +575,10 @@ class BatchTest {
     @Test void testMerge() {
         forEachSize(new ForEachSizeTest() {
             @Override public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
-                B left = new Size(2, 3).fill(type.create(3));
-                B right = size.fill(type.create(size.cols));
-                B expected = type.create(3+1+size.cols);
-                Vars rightVars = mkVars(size.cols);
+                B left     = fill(0, new Size(2, 3), type);
+                B right    = fill(1, size, type);
+                B expected = create(2, type, 3+1+size.cols);
+                Vars rightVars = size.vars();
                 Vars leftVars = Vars.of("a", "b", "c");
                 Vars exVars = rightVars.union(Vars.of("c", "z", "a", "b"));
                 if (right.rows == 0) {
@@ -530,68 +599,63 @@ class BatchTest {
                         expected.commitPut();
                     }
                 }
-                BatchMerger<B> merger = type.merger(exVars, leftVars, rightVars);
+                var merger = merger(type.merger(exVars, leftVars, rightVars));
                 assertNotNull(merger);
-                B actual = merger.merge(null, left, 1, right);
+                B actual = set(3, merger.merge(null, left, 1, right));
                 assertBatchesEquals(expected, actual, ctx);
 
-                var expected2 = expected.dup();
+                var expected2 = set(4, expected.dup());
                 expected2.copy(expected);
-                B actual2 = merger.merge(actual, left, 1, right);
+                B actual2 = set(5, merger.merge(take(3, type), left, 1, right));
                 assertSame(actual, actual2);
                 assertBatchesEquals(expected2, actual2, ctx);
-
-                for (B b : List.of(expected, left, requireNonNull(right), actual, expected2))
-                    type.recycle(b);
             }
         });
     }
 
     <B extends Batch<B>> void testMergeRow0(BatchType<B> type, int cols) {
-        String ctx = "type="+type+", cols="+cols;
-        Vars leftVars = Vars.of("l0", "l1", "l2");
-        B left = new Size(2, 3).fill(type.create(3));
-        B rightRoot = new Size(4, cols).fill(type.create(cols));
-        int rightRow = 2;
-        B right = rightRoot;
-        for (; right != null && rightRow >= right.rows; right = right.next)
-            rightRow -= right.rows;
-        assertNotNull(right);
+        try (var g = new MultiGuard()) {
+            String ctx = "type=" + type + ", cols=" + cols;
+            Vars leftVars = Vars.of("l0", "l1", "l2");
+            B left      = g.fill(0, new Size(2, 3), type);
+            B rightRoot = g.fill(1, new Size(4, cols),   type);
+            int rightRow = 2;
+            B right = rightRoot;
+            for (; right != null && rightRow >= right.rows; right = right.next)
+                rightRow -= right.rows;
+            assertNotNull(right);
 
-        var rightVars = mkVars(cols);
-        Vars outVars = Vars.of("l0", "l2").union(rightVars);
-        var merger = type.merger(outVars, leftVars, rightVars);
 
-        B dst = type.create(2+cols);
-        while ((dst.rows+1)*dst.cols <= dst.termsCapacity()) {
-            dst.beginPut();
-            dst.putTerm(0, left, 0, 0);
-            dst.putTerm(1, left, 0, 2);
+            var rightVars = mkVars(cols);
+            Vars outVars = Vars.of("l0", "l2").union(rightVars);
+            var merger = g.merger(type.merger(outVars, leftVars, rightVars));
+
+            B dst = g.create(2, type, 2+cols);
+            while ((dst.rows + 1) * dst.cols <= dst.termsCapacity()) {
+                dst.beginPut();
+                dst.putTerm(0, left, 0, 0);
+                dst.putTerm(1, left, 0, 2);
+                for (int c = 0; c < cols; c++)
+                    dst.putTerm(2 + c, rightRoot, 0, c);
+                dst.commitPut();
+            }
+
+            B expected = g.set(3, dst.dup()), actual = g.set(4, (B)null);
+            expected.beginPut();
+            expected.putTerm(0, left, 1, 0);
+            expected.putTerm(1, left, 1, 2);
             for (int c = 0; c < cols; c++)
-                dst.putTerm(2+c, rightRoot, 0, c);
-            dst.commitPut();
+                expected.putTerm(2 + c, right, rightRow, c);
+            expected.commitPut();
+
+            try {
+                actual = g.set(4, merger.mergeRow(g.take(2, type), left, 1, right, rightRow));
+            } catch (Throwable t) {
+                fail(t.getClass().getSimpleName() + "ctx=" + ctx, t);
+            }
+            assertSame(dst, actual, ctx);
+            assertBatchesEquals(expected, actual, ctx);
         }
-
-        B expected = dst.dup(), actual = null;
-        expected.beginPut();
-        expected.putTerm(0, left, 1, 0);
-        expected.putTerm(1, left, 1, 2);
-        for (int c = 0; c < cols; c++)
-            expected.putTerm(2+c, right, rightRow, c);
-        expected.commitPut();
-
-        try {
-            actual = merger.mergeRow(dst, left, 1, right, rightRow);
-        } catch (Throwable t) {
-            fail(t.getClass().getSimpleName()+"ctx="+ctx, t);
-        }
-        assertSame(dst, actual, ctx);
-        assertBatchesEquals(expected, actual, ctx);
-
-        assertNull(type.recycle(actual));
-        assertNull(type.recycle(expected));
-        assertNull(type.recycle(left));
-        assertNull(type.recycle(right));
     }
 
     @Test void testMergeRow() {
@@ -603,10 +667,11 @@ class BatchTest {
 
     @Test void testCopy() {
         forEachSize(new ForEachSizeTest() {
-            @Override public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
-                B b = size.fill(type.create(size.cols));
-                B byRow = type.create(size.cols);
-                B byRow2 = type.create(size.cols);
+            @Override public <B extends Batch<B>>
+            void run(BatchType<B> type, Size size, String ctx) {
+                B b      =   fill(0, size, type);
+                B byRow  = create(1, type, size.cols);
+                B byRow2 = create(2, type, size.cols);
                 for (var node = b; node != null; node = node.next) {
                     for (int r = 0; r < node.rows; ++r) {
                         byRow .putRow(node, r);
@@ -617,17 +682,15 @@ class BatchTest {
                     for (int r = 0; r < node.rows; ++r)
                         byRow2.putRow(node, r);
                 }
-                B dupAndCopy = byRow.dup();
+                B dupAndCopy = set(3, byRow.dup());
                 dupAndCopy.copy(byRow);
 
-                assertEquals(size.rows, byRow.totalRows());
-                assertEquals(size.rows*2, byRow2.totalRows());
+                assertEquals(size.rows,   byRow     .totalRows());
+                assertEquals(size.rows*2, byRow2    .totalRows());
                 assertEquals(size.rows*2, dupAndCopy.totalRows());
                 assertBatchesEquals(size, byRow, ctx);
                 assertBatchesEquals(b, byRow, ctx);
                 assertBatchesEquals(byRow2, dupAndCopy, ctx);
-                for (B batch : List.of(b, byRow, byRow2, dupAndCopy))
-                    batch.recycle();
             }
         });
     }
@@ -638,85 +701,95 @@ class BatchTest {
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
                 int halfRows = size.rows/2, halfBytes = reqBytes/2;
-                B origFull   = size.fill(type.create(size.cols));
-                B origFstHalf  = type.create(size.cols);
-                B origSndHalf  = type.create(size.cols);
+                B origFull     =   fill(0, size, type);
+                B origFstHalf  = create(1, type, size.cols);
+                B origSndHalf  = create(2, type, size.cols);
                 origFstHalf.reserveAddLocals(halfBytes);
                 origSndHalf.reserveAddLocals(reqBytes);
                 for (int r =        0; r <  halfRows; r++) origFstHalf.linkedPutRow(origFull, r);
                 for (int r = halfRows; r < size.rows; r++) origSndHalf.linkedPutRow(origFull, r);
 
+                int nextId = 3;
                 List<B> batches = new ArrayList<>();
                 {
-                    B b = type.create(size.cols), tmp = origFull.dup();
+                    B b = create(nextId++, type, size.cols);
+                    B tmp = set(nextId++, origFull.dup());
                     assertNotSame(tmp, origFull);
                     assertBatchesEquals(origFull, tmp, ctx);
-                    b.append(tmp);
+                    b.append(take(--nextId, type));
                     checkPooledOrAppended(concurrent, b, tmp);
                     batches.add(b);
                 }
                 {
-                    B b = type.create(size.cols), t1 = origFstHalf.dup(), t2 = origSndHalf.dup();
+                    B b = create(nextId++, type, size.cols);
+                    B t1 = set(nextId++,  origFstHalf.dup());
+                    B t2 = set(nextId++,  origSndHalf.dup());
                     assertNotSame(origFstHalf, t1);
                     assertNotSame(origSndHalf, t2);
                     assertBatchesEquals(origFstHalf, t1, ctx);
                     assertBatchesEquals(origSndHalf, t2, ctx);
                     batches.add(b);
-                    b.append(t1);
+                    b.append(take(nextId-2, type));
                     checkPooledOrAppended(concurrent, b, t1);
-                    b.append(t2);
+                    b.append(take(nextId-1, type));
                     checkPooledOrAppended(concurrent, b, t2);
                 }
                 {
-                    B b = null, t1 = origFstHalf.dup(), t2 = origSndHalf.dup();
+                    B b  = set(nextId++, (B)null);
+                    B t1 = set(nextId++, origFstHalf.dup());
+                    B t2 = set(nextId++, origSndHalf.dup());
                     assertNotSame(t1, origFstHalf);
                     assertNotSame(t2, origSndHalf);
                     assertBatchesEquals(origFstHalf, t1, ctx);
                     assertBatchesEquals(origSndHalf, t2, ctx);
-                    b = Batch.quickAppend(b, t1);
+                    b = set(nextId-3, Batch.quickAppend(b, this, take(nextId-2, type)));
                     checkPooledOrAppended(concurrent, b, t1);
-                    b = Batch.quickAppend(b, t2);
+                    b = set(nextId-3, Batch.quickAppend(b, this, take(nextId-1, type)));
                     batches.add(b);
                     checkPooledOrAppended(concurrent, b, t2);
                 }
                 {
-                    B b = type.create(size.cols), tmp = origSndHalf.dup();
+                    B b = create(nextId++, type, size.cols);
+                    B tmp = set(nextId++, origSndHalf.dup());
                     batches.add(b);
-                    for (int r = 0; r < halfRows; r++) b.linkedPutRow(origFull, r);
+                    for (int r = 0; r < halfRows; r++)
+                        b.linkedPutRow(origFull, r);
                     assertBatchesEquals(origFstHalf, b,   ctx);
                     assertBatchesEquals(origSndHalf, tmp, ctx);
-                    b.append(tmp);
+                    b.append(take(nextId-1, type));
                     checkPooledOrAppended(concurrent, b, tmp);
                 }
                 {
-                    B b = type.create(size.cols), tmp = origSndHalf.dup();
-                    for (int r = 0; r < halfRows; r++) b.linkedPutRow(origFull, r);
+                    B b = create(nextId++, type, size.cols);
+                    B tmp = set(nextId++,  origSndHalf.dup());
+                    for (int r = 0; r < halfRows; r++)
+                        b.linkedPutRow(origFull, r);
                     assertBatchesEquals(origFstHalf, b,   ctx);
                     assertBatchesEquals(origSndHalf, tmp, ctx);
-                    b = Batch.quickAppend(b, tmp);
+                    b = set(nextId-2, Batch.quickAppend(b, this, take(nextId-1, type)));
                     batches.add(b);
                     checkPooledOrAppended(concurrent, b, tmp);
                 }
                 {
-                    B b = type.create(size.cols);
+                    B b = create(nextId++, type, size.cols);
                     batches.add(b);
+                    int tmpId = nextId++;
                     for (int r = 0; r < size.rows; r++) {
-                        B tmp = origFull.linkedDupRow(r);
+                        B tmp = set(tmpId, origFull.linkedDupRow(r));
                         assertTrue(origFull.linkedEquals(r, tmp, 0), ctx);
-                        b.append(tmp);
+                        b.append(take(tmpId, type));
                         checkPooledOrAppended(concurrent, b, tmp);
                     }
                 }
                 {
-                    B b = null;
+                    int bId = nextId++, tmpId = nextId++;
+                    B b = set(bId, (B)null);
                     for (int r = 0; r < size.rows; r++) {
-                        B tmp = origFull.linkedDupRow(r);
-                        b = Batch.quickAppend(b, tmp);
+                        B tmp = set(tmpId, origFull.linkedDupRow(r));
+                        b = set(bId, Batch.quickAppend(b, this, take(tmpId, type)));
                         if (r == 0)
                             batches.add(b);
                         checkPooledOrAppended(concurrent, b, tmp);
-                        if (r > 0)
-                            assertSame(tmp, b.tail());
                     }
                 }
 
@@ -731,8 +804,6 @@ class BatchTest {
                     String iCtx = ctx + ", i=" + i;
                     assertBatchesEquals(origFull, b, iCtx);
                     assertBatchesEquals(size,     b, iCtx);
-                    assertNull(b.recycle());
-                    if (!concurrent) b.requirePooled();
                 }
             }
         });
@@ -750,11 +821,11 @@ class BatchTest {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int halfRows = size.rows/2, offRows = size.rows+1;
-                var bucket0 =           type.createBucket(offRows  , size.cols);
-                var bucket1 =           type.createBucket(halfRows , size.cols);
-                var batch   = size.fill(type.create(size.cols));
-                var copy0 = type.create(size.cols);
-                var copy1 = type.create(size.cols);
+                var bucket0 = bucket(type, offRows  , size.cols);
+                var bucket1 = bucket(type, halfRows , size.cols);
+                var batch   =   fill(0, size, type);
+                var copy0   = create(1, type, size.cols);
+                var copy1   = create(2, type, size.cols);
 
                 for (int r = 0; r < size.rows; r++)
                     bucket0.setLinked(r+1, batch, r);
@@ -797,7 +868,7 @@ class BatchTest {
     private static Vars mkVars(int n) {
         var vars = new Vars.Mutable(n);
         for (int i = 0; i < n; i++)
-            vars.add(Rope.of("x", i));
+            vars.add(RopeFactory.make(12).add('x').add(i).take());
         return vars;
     }
 
@@ -810,7 +881,7 @@ class BatchTest {
                         },
                         (Function<Vars, Vars>)in -> {
                             var set = new Vars.Mutable(in.size() + 1);
-                            set.add(SegmentRope.of("empty"));
+                            set.add(asFinal("empty"));
                             set.addAll(in);
                             return set;
                         }
@@ -827,7 +898,7 @@ class BatchTest {
                             var out = new Vars.Mutable(in.size() * 2);
                             for (int i = 0; i < in.size(); i++) {
                                 out.add(in.get(i));
-                                out.add(Rope.of("empty", i));
+                                out.add(RopeFactory.make(17).add("empty").add(i).take());
                             }
                             return out;
                         }),
@@ -862,31 +933,28 @@ class BatchTest {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
-                Vars in = mkVars(size.cols), out = generateOutVars.apply(in);
-                B expected = type.create(out.size());
+                Vars in = size.vars(), out = generateOutVars.apply(in);
+                B expected = create(0, type, out.size());
                 for (int r = 0; r < size.rows; r++) {
                     expected.beginPut();
                     projectExpected.accept(size.terms[r], expected);
                     expected.commitPut();
                 }
-                B full = size.fill(type.create(size.cols));
+                B full = fill(1, size, type);
                 full.reserveAddLocals(reqBytes);
-                BatchMerger<B> projector = type.projector(out, in);
+                var projector = merger(type.projector(out, in));
                 if (out.equals(in)) {
                     assertNull(projector, ctx);
-                    full.recycle();
                 } else {
                     assertNotNull(projector, ctx);
-                    B copyProjected = projector.project(null, full);
+                    B copyProjected = set(3, projector.project(null, full));
+                    assertNotSame(copyProjected, full);
                     assertBatchesEquals(expected, copyProjected, ctx);
-                    copyProjected.recycle();
                     assertBatchesEquals(size, full, ctx); // copy-projection does not change input
 
-                    B inPlace = projector.projectInPlace(full);
+                    B inPlace = set(4, projector.projectInPlace(take(1, type)));
                     assertBatchesEquals(expected, inPlace, ctx);
-                    inPlace.recycle();
                 }
-                expected.recycle();
             }
         });
     }
@@ -1012,11 +1080,19 @@ class BatchTest {
                         (Function<Vars, Vars>)in -> {
                             Vars.Mutable out = new Vars.Mutable(10);
                             for (int i = in.size()/2; i < in.size(); i++)  out.add(in.get(i));
-                            out.add(SegmentRope.of("dummy"));
+                            out.add(asFinal("dummy"));
                             return out;
                         }
                 )
         );
+    }
+
+    static abstract class RF<B extends Batch<B>> extends AbstractOwned<RF<B>>
+            implements RowFilter<B, RF<B>>, Orphan<RF<B>> {
+        @Override public @Nullable RF<B> recycle(Object currentOwner) {
+            return internalMarkGarbage(currentOwner);
+        }
+        @Override public RF<B> takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     @ParameterizedTest @MethodSource
@@ -1028,17 +1104,17 @@ class BatchTest {
             @Override
             public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 int reqBytes = size.requiredBytes(type);
-                Vars in = mkVars(size.cols), out = genOutVars.apply(in);
-                B full = size.fill(type.create(size.cols));
-                full      .reserveAddLocals(reqBytes);
-                B expected = type.create(out.size());
+                Vars in = size.vars(), out = genOutVars.apply(in);
+                B full     = fill(0, size, type);
+                B expected = create(1, type, out.size());
+                full.reserveAddLocals(reqBytes);
                 var survivors = survivorsGetter.apply(size);
                 for (int r : survivors) {
                     expected.beginPut();
                     projectExpected.accept(size.terms[r], expected);
                     expected.commitPut();
                 }
-                RowFilter<B> rowFilter = new RowFilter<>() {
+                RF<B> rowFilter = new RF<>() {
                     private int absRow;
                     private B currentBatch;
                     private final BitSet currentVisitedRows = new BitSet();
@@ -1054,14 +1130,12 @@ class BatchTest {
                     }
                     @Override public void rebind(BatchBinding binding) {}
                 };
-                var filter = out.equals(in) ? type.filter(out, rowFilter)
-                                            : type.filter(out, in, rowFilter);
-                B inPlace = filter.filterInPlace(full);
+                var filter = out.equals(in) ? filter(type.filter(out, rowFilter))
+                                            : filter(type.filter(out, in, rowFilter));
+                B inPlace = set(3, filter.filterInPlace(take(0, type)));
                 if (inPlace != full)
-                    full.requirePooled();
+                    assertFalse(full.isAlive());
                 assertBatchesEquals(expected, inPlace, ctx);
-                inPlace.recycle();
-                expected.recycle();
             }
         });
     }
@@ -1101,14 +1175,17 @@ class BatchTest {
 
     @ParameterizedTest @MethodSource void testWrite(Term term, int begin, int end) {
         for (BatchType<?> type : TYPES) {
-            var b = type.create(3);
-            b.putRow(DUMMY_ROW);
-            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+            try (var g = new MultiGuard()) {
+                var b = g.create(0, type, 3);
+                b.putRow(DUMMY_ROW);
+                b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
 
-            ByteRope dest = new ByteRope().append("@");
-            b.linkedWrite(dest, 1, 1, begin, end);
-            assertEquals("@"+term.toString(begin, end), dest.toString(), "type="+type);
-            b.recycle();
+                try (var dest = PooledMutableRope.get()) {
+                    dest.append("@");
+                    b.linkedWrite(dest, 1, 1, begin, end);
+                    assertEquals("@" + term.toString(begin, end), dest.toString(), "type=" + type);
+                }
+            }
         }
     }
 
@@ -1123,10 +1200,12 @@ class BatchTest {
     void testLen(String termString) {
         Term term = termString.equals("null") ? null : Term.array(termString)[0];
         for (BatchType<?> type : TYPES) {
-            var b = type.create( 3);
-            b.putRow(DUMMY_ROW);
-            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
-            assertEquals(term == null ? 0 : term.len, b.len(1, 1));
+            try (var g = new MultiGuard()) {
+                var b = g.set(0, type.create(3));
+                b.putRow(DUMMY_ROW);
+                b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+                assertEquals(term == null ? 0 : term.len, b.len(1, 1));
+            }
         }
     }
 
@@ -1150,115 +1229,112 @@ class BatchTest {
     @ParameterizedTest @MethodSource
     void testLexEnd(Term term, int expected) {
         for (BatchType<?> type : TYPES) {
-            var b = type.create(3);
-            b.putRow(DUMMY_ROW);
-            b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
-            assertEquals(expected, b.lexEnd(1, 1));
-            b.recycle();
+            try (var g = new MultiGuard()) {
+                var b = g.set(0, type.create(3));
+                b.putRow(DUMMY_ROW);
+                b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
+                assertEquals(expected, b.lexEnd(1, 1));
+            }
         }
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"}) @ParameterizedTest @MethodSource("types")
     void testOutOfOrderOffer(BatchType<?> type) {
-        Batch<?> ex1 = type.create(3);
-        Batch<?> ex2 = type.create(3);
-        Batch<?> ex3 = type.create(3);
-        ex1.putRow(DUMMY_ROW);
-        for (int i = 0; i < 2; i++) ex2.putRow(DUMMY_ROW);
-        for (int i = 0; i < 4; i++) ex3.putRow(DUMMY_ROW);
+        try (var g = new MultiGuard()) {
+            Batch<?> ex1 = g.create(1, type, 3);
+            Batch<?> ex2 = g.create(2, type, 3);
+            Batch<?> ex3 = g.create(3, type, 3);
+            ex1.putRow(DUMMY_ROW);
+            for (int i = 0; i < 2; i++) ex2.putRow(DUMMY_ROW);
+            for (int i = 0; i < 4; i++) ex3.putRow(DUMMY_ROW);
 
-        for (var permutation : List.of(List.of(2, 1, 0), List.of(1, 2, 0), List.of(0, 2, 1))) {
-            Batch<?> b1 = type.create(3);
-            Batch<?> b2 = type.create(3);
-            Batch<?> b3 = type.create(3);
-            b1.beginPut();
-            for (int c : permutation)
-                b1.putTerm(c, DUMMY_ROW[c]);
-            b1.commitPut();
+            for (var permutation : List.of(List.of(2, 1, 0), List.of(1, 2, 0), List.of(0, 2, 1))) {
+                Batch<?> b1 = g.create(4, type, 3);
+                Batch<?> b2 = g.create(5, type, 3);
+                Batch<?> b3 = g.create(6, type, 3);
+                b1.beginPut();
+                for (int c : permutation)
+                    b1.putTerm(c, DUMMY_ROW[c]);
+                b1.commitPut();
 
-            ((Batch)b2).putRow(b1, 0);
-            ((Batch)b2).putRow(b1, 0);
+                ((Batch)b2).putRow(b1, 0);
+                ((Batch)b2).putRow(b1, 0);
 
-            // put by term
-            b3.beginPut();
-            for (int c = 0; c < 3; c++)
-                b3.putTerm(c, b1.get(0, c));
-            b3.commitPut();
-            b3.beginPut();
-            // offer by term
-            for (int c = 0; c < 3; c++)
-                b3.putTerm(c, b1.get(0, c));
-            b3.commitPut();
-            // offer by term from b1
-            b3.beginPut();
-            for (int c = 0; c < 3; c++)
-                ((Batch)b3).putTerm(c, b1, 0, c);
-            b3.commitPut();
-            // put by term from b1
-            b3.beginPut();
-            for (int c = 0; c < 3; c++)
-                ((Batch)b3).putTerm(c, b1, 0, c);
-            b3.commitPut();
+                // put by term
+                b3.beginPut();
+                for (int c = 0; c < 3; c++)
+                    b3.putTerm(c, b1.get(0, c));
+                b3.commitPut();
+                b3.beginPut();
+                // offer by term
+                for (int c = 0; c < 3; c++)
+                    b3.putTerm(c, b1.get(0, c));
+                b3.commitPut();
+                // offer by term from b1
+                b3.beginPut();
+                for (int c = 0; c < 3; c++)
+                    ((Batch)b3).putTerm(c, b1, 0, c);
+                b3.commitPut();
+                // put by term from b1
+                b3.beginPut();
+                for (int c = 0; c < 3; c++)
+                    ((Batch)b3).putTerm(c, b1, 0, c);
+                b3.commitPut();
 
-            String ctx = "permutation="+permutation;
-            assertBatchesEquals((Batch)ex1, (Batch)b1, ctx);
-            assertBatchesEquals((Batch)ex2, (Batch)b2, ctx);
-            assertBatchesEquals((Batch)ex3, (Batch)b3, ctx);
-
-            for (var b : List.of(b1, b2, b3))
-                b.recycle();
+                String ctx = "permutation="+permutation;
+                assertBatchesEquals((Batch)ex1, (Batch)b1, ctx);
+                assertBatchesEquals((Batch)ex2, (Batch)b2, ctx);
+                assertBatchesEquals((Batch)ex3, (Batch)b3, ctx);
+            }
         }
-        for (var b : List.of(ex1, ex2, ex3))
-            b.recycle();
     }
 
     @ParameterizedTest @MethodSource("types")
     <B extends Batch<B>> void testNullRow(BatchType<B> type) {
         Size sz = new Size(4, 2);
-        B n = type.create(2);
-        n.putRow(new Term[]{null, null});
+        try (var g = new MultiGuard()) {
+            B n = g.create(0, type, 2);
+            n.putRow(new Term[]{null, null});
 
-        B uo0 = type.create(2);
-        uo0.beginPut();
-        uo0.putTerm(1, sz.terms[0][1]);
-        uo0.putTerm(0, sz.terms[0][0]);
-        uo0.commitPut();
-        uo0.putRow(n, 0);
-        if (type == CompressedBatchType.COMPRESSED) assertTrue(uo0.validate());
+            B uo0 = g.create(1, type, 2);
+            uo0.beginPut();
+            uo0.putTerm(1, sz.terms[0][1]);
+            uo0.putTerm(0, sz.terms[0][0]);
+            uo0.commitPut();
+            uo0.putRow(n, 0);
+            if (type == COMPRESSED) assertTrue(uo0.validate());
 
-        B uo1 = type.create(2);
-        uo1.beginPut();
-        uo1.putTerm(1, sz.terms[0][1]);
-        uo1.putTerm(0, sz.terms[0][0]);
-        uo1.commitPut();
-        uo1.beginPut();
-        uo1.commitPut();
-        if (type == CompressedBatchType.COMPRESSED) assertTrue(uo1.validate());
+            B uo1 = g.create(2, type, 2);
+            uo1.beginPut();
+            uo1.putTerm(1, sz.terms[0][1]);
+            uo1.putTerm(0, sz.terms[0][0]);
+            uo1.commitPut();
+            uo1.beginPut();
+            uo1.commitPut();
+            if (type == COMPRESSED) assertTrue(uo1.validate());
 
-        B o0 = type.create(2);
-        o0.putRow(sz.terms[0]);
-        o0.putRow(n, 0);
-        if (type == CompressedBatchType.COMPRESSED) assertTrue(o0.validate());
+            B o0 = g.create(3, type, 2);
+            o0.putRow(sz.terms[0]);
+            o0.putRow(n, 0);
+            if (type == COMPRESSED) assertTrue(o0.validate());
 
-        B o1 = type.create(2);
-        o1.putRow(sz.terms[0]);
-        o1.beginPut();
-        o1.commitPut();
-        if (type == CompressedBatchType.COMPRESSED) assertTrue(o1.validate());
+            B o1 = g.create(4, type, 2);
+            o1.putRow(sz.terms[0]);
+            o1.beginPut();
+            o1.commitPut();
+            if (type == COMPRESSED) assertTrue(o1.validate());
 
-        B expected = type.create(2);
-        expected.putRow(sz.terms[0]);
-        expected.beginPut();
-        expected.commitPut();
-        assertEquals(2, expected.totalRows());
+            B expected = g.create(5, type, 2);
+            expected.putRow(sz.terms[0]);
+            expected.beginPut();
+            expected.commitPut();
+            assertEquals(2, expected.totalRows());
 
-        assertBatchesEquals(expected, uo0, "uo0");
-        assertBatchesEquals(expected, uo1, "uo1");
-        assertBatchesEquals(expected, o0, "o0");
-        assertBatchesEquals(expected, o1, "o1");
-
-        for (B b : List.of(n, uo0, uo1, o0, o1, expected))
-            b.recycle();
+            assertBatchesEquals(expected, uo0, "uo0");
+            assertBatchesEquals(expected, uo1, "uo1");
+            assertBatchesEquals(expected, o0, "o0");
+            assertBatchesEquals(expected, o1, "o1");
+        }
     }
 
 //    @Test void regressionHashC7() {
@@ -1296,29 +1372,29 @@ class BatchTest {
     @Test void  regressionHashS6() {
         String name = "\"Michael Bartels\"";
         Term place = Term.valueOf("<http://sws.geonames.org/2911297/>");
-        var ex = CompressedBatchType.COMPRESSED.create(2);
-        ex.beginPut();
-        ex.putTerm(0, EMPTY, name.getBytes(UTF_8), 0, name.length(), false);
-        ex.putTerm(1, place);
-        ex.commitPut();
+        try (var g = new MultiGuard()) {
+            var ex = g.create(0, COMPRESSED, 2);
+            ex.beginPut();
+            ex.putTerm(0, FinalSegmentRope.EMPTY, name.getBytes(UTF_8), 0, name.length(), false);
+            ex.putTerm(1, place);
+            ex.commitPut();
 
-        var ac = CompressedBatchType.COMPRESSED.create(2);
-        ac.beginPut();
-        ac.putTerm(0, EMPTY, (".."+name).getBytes(UTF_8), 2, name.length(), true);
-        ac.putTerm(1, SegmentRope.of("<http://sws.geonames.org/"),
-                    "2911297/>".getBytes(UTF_8), 0, 9, false);
-        ac.commitPut();
+            var ac = g.create(1, COMPRESSED, 2);
+            ac.beginPut();
+            ac.putTerm(0, FinalSegmentRope.EMPTY, (".."+name).getBytes(UTF_8), 2, name.length(), true);
+            ac.putTerm(1, asFinal("<http://sws.geonames.org/"),
+                        "2911297/>".getBytes(UTF_8), 0, 9, false);
+            ac.commitPut();
 
-        for (int c = 0; c < 2; c++) {
-            assertTrue(ac.equals(0, c, ex, 0, c), "c="+c);
-            assertTrue(ex.equals(0, c, ac, 0, c), "c="+c);
-            assertEquals(ex.hash(0, c), ac.hash(0, c), "c="+c);
+            for (int c = 0; c < 2; c++) {
+                assertTrue(ac.equals(0, c, ex, 0, c), "c="+c);
+                assertTrue(ex.equals(0, c, ac, 0, c), "c="+c);
+                assertEquals(ex.hash(0, c), ac.hash(0, c), "c="+c);
+            }
+            assertTrue(ac.equals(0, ex, 0));
+            assertTrue(ex.equals(0, ac, 0));
+            assertEquals(ex.hash(0), ac.hash(0));
         }
-        assertTrue(ac.equals(0, ex, 0));
-        assertTrue(ex.equals(0, ac, 0));
-        assertEquals(ex.hash(0), ac.hash(0));
-        ac.recycle();
-        ex.recycle();
     }
 
 }

@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -212,40 +213,44 @@ public class TermParserTest {
             case ',', '.', ';', '\t', '\n', '\r', ' ' -> inEnd-1;
             default                                   -> inEnd;
         };
-        TermParser parser = new TermParser();
-        if (eager)
-            assertSame(parser, parser.eager());
-        parser.prefixMap.add(Rope.of("ex"), Term.iri("http://example.org/ns#"));
-        parser.prefixMap.add(Rope.of(""), Term.iri("http://example.org/"));
-        var inRope = SegmentRope.of(in);
-        TermParser.Result result = parser.parse(inRope, start, len);
-        assertEquals(expected != ERROR, result.isValid());
+        try (var parserGuard = new Guard<TermParser>(this)) {
+            var parser = parserGuard.set(TermParser.create());
+            if (eager)
+                assertSame(parser, parser.eager());
+            parser.prefixMap().add(Rope.asRope("ex"), Term.iri("http://example.org/ns#"));
+            parser.prefixMap().add(Rope.asRope(""), Term.iri("http://example.org/"));
+            var inRope = FinalSegmentRope.asFinal(in);
+            TermParser.Result result = parser.parse(inRope, start, len);
+            assertEquals(expected != ERROR, result.isValid());
 
-        if (expected == ERROR) {
-            assertThrows(InvalidTermException.class, parser::asTerm);
-        } else {
-            assertEquals(expectedTermEnd, parser.termEnd());
-            assertEquals(expected, parser.asTerm());
-            assertEquals(expected.toString(), parser.asTerm().toString());
-            assertEquals(expectedTermEnd, parser.termEnd(), "termEnd changed by as*() methods");
+            if (expected == ERROR) {
+                assertThrows(InvalidTermException.class, parser::asTerm);
+            } else {
+                assertEquals(expectedTermEnd, parser.termEnd());
+                assertEquals(expected, parser.asTerm());
+                assertEquals(expected.toString(), parser.asTerm().toString());
+                assertEquals(expectedTermEnd, parser.termEnd(), "termEnd changed by as*() methods");
 
-            assertEquals(expected.shared(), parser.shared());
-            switch (parser.result()) {
-                case NT, VAR -> {
-                    int begin = parser.localBegin(), end = parser.localEnd();
-                    assertSame(inRope, parser.localBuf());
-                    assertEquals(new ByteRope(expected.local()),
-                                 requireNonNull(parser.localBuf()).sub(begin, end));
+                assertEquals(expected.shared(), parser.shared());
+                switch (parser.result()) {
+                    case NT, VAR -> {
+                        int begin = parser.localBegin(), end = parser.localEnd();
+                        assertSame(inRope, parser.localBuf());
+                        assertEquals(FinalSegmentRope.asFinal(expected.local()),
+                                requireNonNull(parser.localBuf()).sub(begin, end));
+                    }
+                }
+
+                var sh = parser.shared();
+                assertEquals(expected.shared(), sh);
+                int localBegin = parser.localBegin(), localEnd = parser.localEnd();
+                Rope local = parser.localBuf().sub(localBegin, localEnd);
+                try (var reassembled = PooledMutableRope.get()) {
+                    if (sh.len > 0 && sh.get(0) == '"') reassembled.append(local).append(sh);
+                    else                                reassembled.append(sh).append(local);
+                    assertEquals(expected.toString(), reassembled.toString());
                 }
             }
-
-            var sh = parser.shared();
-            assertEquals(expected.shared(), sh);
-            int localBegin = parser.localBegin(), localEnd = parser.localEnd();
-            Rope local = parser.localBuf().sub(localBegin, localEnd);
-            Rope reassembled = sh.len > 0 && sh.get(0) == '"' ? Rope.of(local, sh)
-                                                              : Rope.of(sh, local);
-            assertEquals(expected.toString(), reassembled.toString());
         }
     }
 

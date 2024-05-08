@@ -53,12 +53,14 @@ public class ProjectTest {
         expected.check(FS.project(in.asPlan(), expected.vars()).execute(TermBatchType.TERM));
         ThreadJournal.resetJournals();
         try {
-            expected.check(FS.project(in.asPlan(), expected.vars()).emit(TermBatchType.TERM, Vars.EMPTY));
+            var em = FS.project(in.asPlan(), expected.vars()).emit(TermBatchType.TERM, Vars.EMPTY);
+            expected.check(em);
         } catch (Throwable t ) {
             ThreadJournal.dumpAndReset(System.err, 80);
             throw t;
         }
-        expected.check(FS.project(in.asPlan(), expected.vars()).emit(CompressedBatchType.COMPRESSED, Vars.EMPTY));
+        var em = FS.project(in.asPlan(), expected.vars()).emit(CompressedBatchType.COMPRESSED, Vars.EMPTY);
+        expected.check(em);
     }
 
 }

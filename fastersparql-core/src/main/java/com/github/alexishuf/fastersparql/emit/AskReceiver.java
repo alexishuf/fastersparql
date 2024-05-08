@@ -5,6 +5,8 @@ import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +16,9 @@ import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
-public class AskReceiver<B extends Batch<B>> implements Receiver<B> {
+public abstract class AskReceiver<B extends Batch<B>>
+        extends AbstractOwned<AskReceiver<B>>
+        implements Receiver<B> {
     private static final Logger log = LoggerFactory.getLogger(AskReceiver.class);
     private static final boolean DEBUG_ENABLED = log.isDebugEnabled();
     private static final VarHandle RESULTS;
@@ -26,15 +30,30 @@ public class AskReceiver<B extends Batch<B>> implements Receiver<B> {
         }
     }
 
-    private final Emitter<B> up;
+    private final Emitter<B, ?> up;
     @SuppressWarnings("FieldMayBeFinal") private int plainResult = -1;
     private Thread consumer;
     private int state;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
 
-    public AskReceiver(Emitter<B> up) {
-        this.up = up;
+    public static <B extends Batch<B>> Orphan<AskReceiver<B>>
+    create(Orphan<? extends Emitter<B, ?>> upstreamOrphan) {return new Concrete<>(upstreamOrphan);}
+
+    protected AskReceiver(Orphan<? extends Emitter<B, ?>> upstreamOrphan) {
+        up = upstreamOrphan.takeOwnership(this);
         up.subscribe(this);
+    }
+
+    @Override public @Nullable AskReceiver<B> recycle(Object currentOwner) {
+        internalMarkGarbage(currentOwner);
+        up.cancel();
+        return null;
+    }
+
+    private static final class Concrete<B extends Batch<B>> extends AskReceiver<B>
+            implements Orphan<AskReceiver<B>> {
+        public Concrete(Orphan<? extends Emitter<B, ?>> upstreamOrphan) {super(upstreamOrphan);}
+        @Override public AskReceiver<B> takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     public boolean request() {
@@ -81,12 +100,20 @@ public class AskReceiver<B extends Batch<B>> implements Receiver<B> {
 
     /* --- --- --- Receiver --- --- --- */
 
-    @Override public @Nullable B onBatch(B batch) {
+    @Override public void onBatch(Orphan<B> orphan) {
+        B b = orphan.takeOwnership(this);
+        onBatchByCopy(b);
+        b.recycle(this);
+    }
+
+    @Override public void onBatchByCopy(B batch) {
+        if (batch == null)
+            return;
         if (batch.rows > 0) {
-            RESULTS.setRelease(this, 1);
+            if ((int)RESULTS.getAndSetRelease(this, 1) > 0)
+                up.cancel(); // upstream should be a LIMIT 1 filter, if it was not, stop emitting
             Unparker.unpark(consumer);
         }
-        return batch;
     }
 
     private void onTermination(int state) {

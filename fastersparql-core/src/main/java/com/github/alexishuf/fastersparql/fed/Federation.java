@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.fed;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
@@ -18,6 +17,8 @@ import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.BS;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.File;
@@ -264,8 +265,8 @@ public class Federation extends AbstractSparqlClient {
         return it;
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
-                                                               Vars rebindHint) {
+    @Override protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         long entryNs = Timestamp.nanoTime();
         var m = new FedMetrics(this, sparql);
         var it = plan(sparql, m, rebindHint).emit(bt, rebindHint);
@@ -576,8 +577,8 @@ public class Federation extends AbstractSparqlClient {
         if (sources.isEmpty()) return new Empty(plan);
         return switch (plan.type) {
             case JOIN -> {
-                var cli = sources.get(0).client;
-                var sel = sources.get(0).selector;
+                var cli = sources.getFirst().client;
+                var sel = sources.getFirst().selector;
                 for (int i = 0, n = plan.opCount(); i < n; i++) {
                     Plan o = plan.op(i);
                     if (o instanceof TriplePattern tp) {
@@ -589,8 +590,8 @@ public class Federation extends AbstractSparqlClient {
                 }
                 yield plan;
             }
-            case TRIPLE -> sources.get(0).selector.has((TriplePattern)plan)
-                         ? new Query(plan, sources.get(0).client) : new Empty(plan);
+            case TRIPLE -> sources.getFirst().selector.has((TriplePattern)plan)
+                         ? new Query(plan, sources.getFirst().client) : new Empty(plan);
             default -> {
                 for (int i = 0, n = plan.opCount(); i < n; i++) {
                     Plan o = plan.op(i), bound = trivialPlan(o);

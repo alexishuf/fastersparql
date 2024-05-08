@@ -1,22 +1,28 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.asOpenLitU8;
+import java.util.function.Supplier;
+
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-public final class TermParser implements AutoCloseable {
+public abstract sealed class TermParser extends AbstractOwned<TermParser> {
+    public static final int BYTES = 16 + 12*4 + MutableRope.BYTES + 128;
     private static final byte[][][] QUOTE_BYTES = {
             {null, {'\''}, null, {'\'', '\'', '\''}},
             {null, {'"' }, null, {'"',  '"',  '"'}},
@@ -34,20 +40,61 @@ public final class TermParser implements AutoCloseable {
     private static final byte TTL_KIND_PREFIXED = 5;
 
     private SegmentRope in;
-    private @Nullable ByteRope ntBuf;
+    private @Nullable MutableRope ntBuf;
     private int begin, end;
     private int stopped, lexEnd;
     private byte qLen, ttlKind;
     boolean typed, eager, sharedSuffixed;
     private Result result;
     public int localBegin, localEnd;
-    private SegmentRope shared;
+    private FinalSegmentRope shared;
+    private final PrefixMap prefixMap = PrefixMap.create().takeOwnership(this).resetToBuiltin();
 
-    /**
-     * Map from prefixes (e.g., @code rdf:) to IRI prefixes (e.g., {@code http://...}) used to
-     * parse prefixed IRIs (e.g., {@code rdf:type}) and datatypes (e.g., {@code "1"^^xsd:int}).
-     */
-    public PrefixMap prefixMap = new PrefixMap().resetToBuiltin();
+    private static final Alloc<TermParser> ALLOC;
+    private static final Supplier<TermParser> ALLOC_FAC = new Supplier<>() {
+        @Override public TermParser get() {
+            return new TermParser.Concrete().takeOwnership(RECYCLED);
+        }
+        @Override public String toString() {return "TermParser.ALLOC_FAC";}
+    };
+    static {
+        ALLOC = new Alloc<>(TermParser.class,
+                "TermParser.ALLOC", Alloc.THREADS*64,
+                ALLOC_FAC, BYTES);
+        Primer.INSTANCE.sched(() -> ALLOC.prime(() -> {
+            TermParser p = new Concrete().takeOwnership(RECYCLED);
+            p.ntBuf = new MutableRope(Bytes.createPooled(new byte[256]), 0);
+            return p;
+        }, 2, 0));
+    }
+
+    public static Orphan<TermParser> create() {
+        TermParser p = ALLOC.create();
+        p.eager = false;
+        p.prefixMap.resetToBuiltin();
+        return p.releaseOwnership(RECYCLED);
+    }
+
+    private TermParser() {}
+
+    @Override public @Nullable TermParser recycle(Object currentOwner) {
+        internalMarkRecycled(currentOwner);
+        if (ALLOC.offer(this) != null)
+            internalMarkGarbage(RECYCLED);
+        return null;
+    }
+
+    @Override protected @Nullable TermParser internalMarkGarbage(Object currentOwner) {
+        super.internalMarkGarbage(currentOwner);
+        prefixMap.recycle(this);
+        if (ntBuf != null)
+            ntBuf.close();
+        return null;
+    }
+
+    private static final class Concrete extends TermParser implements Orphan<TermParser> {
+        @Override public TermParser takeOwnership(Object o) {return takeOwnership0(o);}
+    }
 
     /**
      * Makes this {@link TermParser} eager.
@@ -60,6 +107,12 @@ public final class TermParser implements AutoCloseable {
      * @return {@code this}
      */
     public @This TermParser eager() { eager = true; return this; }
+
+    /**
+     * Map from prefixes (e.g., @code rdf:) to IRI prefixes (e.g., {@code http://...}) used to
+     * parse prefixed IRIs (e.g., {@code rdf:type}) and datatypes (e.g., {@code "1"^^xsd:int}).
+     */
+    public PrefixMap prefixMap() { return prefixMap; }
 
     public enum Result {
         /** An RDF term in valid N-Triples syntax. */
@@ -74,14 +127,6 @@ public final class TermParser implements AutoCloseable {
         EOF;
 
         public boolean isValid() { return this.ordinal() < 3; }
-    }
-
-
-    @Override public void close() {
-        if (ntBuf != null) {
-            ntBuf.recycle();
-            ntBuf = null;
-        }
     }
 
     /**
@@ -100,7 +145,7 @@ public final class TermParser implements AutoCloseable {
         if (ntBuf != null) ntBuf.clear();
         stopped = this.begin = begin;
         this.end = end;
-        shared = ByteRope.EMPTY;
+        shared = FinalSegmentRope.EMPTY;
         sharedSuffixed = false;
         localBegin = localEnd = -1;
         qLen = -1;
@@ -113,7 +158,7 @@ public final class TermParser implements AutoCloseable {
             case '$', '?' -> {
                 stopped = in.skip(begin+1, end, VARNAME);
                 if (stopped - begin > 1) {
-                    shared = ByteRope.EMPTY;
+                    shared = FinalSegmentRope.EMPTY;
                     yield Result.VAR;
                 }
                 yield Result.EOF;
@@ -235,7 +280,7 @@ public final class TermParser implements AutoCloseable {
      * @return the {@link Term#shared()} of {@link #asTerm()}  or 0 if {@link #asTerm()}
      *         would raise an exception.
      */
-    public SegmentRope shared() {
+    public FinalSegmentRope shared() {
         if (localBegin == -1) postParse();
         return shared;
     }
@@ -265,18 +310,18 @@ public final class TermParser implements AutoCloseable {
                     var sh = typed ? SHARED_ROPES.internDatatype(in, lexEnd, stopped) : null;
                     if (sh == null || sh == SharedRopes.DT_langString) {
                         localEnd = stopped;
-                        shared = ByteRope.EMPTY;
+                        shared = FinalSegmentRope.EMPTY;
                     } else if (sh == SharedRopes.DT_string) {
                         localEnd = lexEnd+1;
-                        shared = ByteRope.EMPTY;
+                        shared = FinalSegmentRope.EMPTY;
                     } else {
                         localEnd = lexEnd;
                         shared = sh;
                     }
                 } else {
-                    ByteRope ntBuf = this.ntBuf;
+                    MutableRope ntBuf = this.ntBuf;
                     if (ntBuf == null)
-                        this.ntBuf = ntBuf = ByteRope.pooled(stopped - begin);
+                        this.ntBuf = ntBuf = new MutableRope(stopped-begin);
                     toNT();
                     localBegin = 0;
                     if (typed) {
@@ -289,12 +334,12 @@ public final class TermParser implements AutoCloseable {
                         }
                         if (sh == SharedRopes.DT_string || sh == SharedRopes.DT_langString) {
                             localEnd++; // include closing "
-                            sh = ByteRope.EMPTY;
+                            sh = FinalSegmentRope.EMPTY;
                         }
                         shared = sh;
                     } else {
                         localEnd = ntBuf.len;
-                        shared = ByteRope.EMPTY;
+                        shared = FinalSegmentRope.EMPTY;
                     }
                 }
             }
@@ -303,7 +348,7 @@ public final class TermParser implements AutoCloseable {
                 localEnd = stopped;
             }
             default -> {
-                ByteRope buf = ntBuf == null ? ntBuf = new ByteRope(32) : ntBuf.clear();
+                MutableRope buf = ntBuf == null ? ntBuf = new MutableRope(32) : ntBuf.clear();
                 localBegin = 0;
                 switch (ttlKind) {
                     case TTL_KIND_NUMBER  -> buf.append('"').append(in, begin, stopped);
@@ -311,7 +356,7 @@ public final class TermParser implements AutoCloseable {
                     case TTL_KIND_FALSE   -> buf.append(FALSE.local());
                     case TTL_KIND_TYPE    -> buf.append(RDF_TYPE.local());
                     case TTL_KIND_BNODE   -> {
-                        shared = ByteRope.EMPTY;
+                        shared = FinalSegmentRope.EMPTY;
                         localBegin = begin;
                         localEnd = stopped;
                     }
@@ -321,7 +366,7 @@ public final class TermParser implements AutoCloseable {
                         Term term = prefixMap.expand(in, begin, colon, colon + 1);
                         if (term == null)
                             throw new InvalidTermException(in, begin, "Unresolved prefix");
-                        shared = term.shared();
+                        shared = term.finalShared();
                         SegmentRope local = term.local();
                         buf.append(local, 0, local.len-1);
                         unescapePrefixedLocal(buf, colon+1);
@@ -371,9 +416,13 @@ public final class TermParser implements AutoCloseable {
         SegmentRope lBuf = localBuf();
         final SegmentRope sh = shared();
         return switch (in.get(begin)) {
-            case '?', '$'  -> Term.valueOf(in, begin, stopped);
+            case '?', '$'  -> Term.wrap(FinalSegmentRope.EMPTY, in.sub(begin, stopped));
             case '<'       -> Term.wrap(sh, in.sub(localBegin, localEnd));
-            case '"', '\'' -> Term.wrap(new ByteRope(lBuf.toArray(localBegin, localEnd)), sh);
+            case '"', '\'' -> {
+                var local = lBuf == in ? in.sub(localBegin, localEnd)
+                                       : asFinal(lBuf, localBegin, localEnd);
+                yield Term.wrap(local, sh);
+            }
             default -> switch (ttlKind) {
                 case TTL_KIND_NUMBER   -> {
                     if (sh == DT_integer && localEnd-localBegin <= 4) {
@@ -381,15 +430,18 @@ public final class TermParser implements AutoCloseable {
                         if (term != null)
                             yield term;
                     }
-                    var local = new ByteRope(asOpenLitU8(in, begin, stopped));
+                    var local = RopeFactory.make(stopped-begin+1)
+                                           .add('"').add(in, begin, stopped).take();
                     yield Term.wrap(local, sh);
                 }
                 case TTL_KIND_TRUE     -> TRUE;
                 case TTL_KIND_FALSE    -> FALSE;
                 case TTL_KIND_TYPE     -> RDF_TYPE;
-                case TTL_KIND_PREFIXED -> Term.wrap(sh, new ByteRope(lBuf.toArray(0, lBuf.len)));
-                case TTL_KIND_BNODE    ->
-                        Term.splitAndWrap(new ByteRope(stopped-begin).append(in, begin, stopped));
+                case TTL_KIND_PREFIXED -> Term.wrap(sh, asFinal(lBuf));
+                case TTL_KIND_BNODE    -> {
+                    var r = asFinal(in, begin, stopped);
+                    yield Term.splitAndWrap(r);
+                }
                 default -> throw new IllegalStateException("corrupted");
             };
         };
@@ -538,8 +590,10 @@ public final class TermParser implements AutoCloseable {
         int pos = Math.abs(value);
         if (value < cache.length) {
             Term term = cache[pos];
-            if (term == null)
-                cache[pos] = term = Term.wrap(new ByteRope(localBuf().toArray(localBegin(), localEnd())), DT_integer);
+            if (term == null) {
+                term = Term.wrap(asFinal(localBuf(), localBegin(), localEnd()), DT_integer);
+                cache[pos] = term;
+            }
             return term;
         }
         return null;
@@ -549,8 +603,8 @@ public final class TermParser implements AutoCloseable {
         int[] escapeNames = in.get(begin) == '"' ? LIT_ESCAPE_NAME : LIT_ESCAPE_NAME_SINGLE;
         int stopped = this.stopped;
         int size = 2/*""*/ + lexEnd - (begin + qLen) + stopped-(lexEnd+qLen);
-        ByteRope esc = ntBuf;
-        if (ntBuf == null) ntBuf = esc = ByteRope.pooled(size);
+        MutableRope esc = ntBuf;
+        if (ntBuf == null) ntBuf = esc = new MutableRope(size);
         else               ntBuf.clear().ensureFreeCapacity(size);
         esc.append('"');
         for (int consumed = begin+qLen, i; consumed < lexEnd; consumed = i+1) {
@@ -582,7 +636,7 @@ public final class TermParser implements AutoCloseable {
         } // else: plain string
     }
 
-    private void unescapePrefixedLocal(ByteRope out, int begin) {
+    private void unescapePrefixedLocal(MutableRope out, int begin) {
         var in = this.in;
         for (int i, end = stopped; begin < end; begin = i) {
             out.append(in, begin, i = in.skipUntil(begin, end, '\\'));

@@ -6,12 +6,15 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
@@ -82,14 +85,14 @@ public enum QueryName {
     private <B extends Batch<B>> @Nullable B loadExpected(BatchType<B> batchType) {
         //read vars
         Vars vars = new Vars.Mutable(10);
-        try (var is = getClass().getResourceAsStream("results/" + name() + ".tsv")) {
+        try (var is = getClass().getResourceAsStream("results/" + name() + ".tsv");
+             var header = PooledMutableRope.get()) {
             if (is == null) return null;
-            ByteRope header = new ByteRope();
             if (!header.readLine(is))
                 throw new IllegalStateException("Invalid results TSV resource is empty");
             for (int i = 1, j; i < header.len ; i = j+2) {
                 j = header.skipUntil(i, header.len, '\t');
-                if (!vars.add(new ByteRope(header.toArray(i, j))))
+                if (!vars.add(FinalSegmentRope.asFinal(header, i, j)))
                     throw new IllegalStateException("Duplicate var in TSV resource file");
             }
         } catch (IOException e) {
@@ -103,7 +106,7 @@ public enum QueryName {
             assert is != null;
             Thread.startVirtualThread(() -> {
                 try {
-                    parser.feedShared(new ByteRope(is.readAllBytes())); // largest TSV has 9_053 results
+                    parser.feedShared(new FinalSegmentRope(is.readAllBytes())); // largest TSV has 9_053 results
                     parser.feedEnd();
                 } catch (IOException e) {
                     parser.feedError(FSException.wrap(null, e));
@@ -111,8 +114,8 @@ public enum QueryName {
                     throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
                 }
             });
-            B acc = batchType.create(vars.size());
-            for (B b = null; (b = parsed.nextBatch(b)) != null; )
+            B acc = batchType.create(vars.size()).takeOwnership(this);
+            for (B b = null; (b = parsed.nextBatch(b, this)) != null; )
                 acc.copy(b);
             return acc;
         } catch (IOException e) {
@@ -125,14 +128,15 @@ public enum QueryName {
         String path = "queries/" + name();
         try (var is = getClass().getResourceAsStream(path)) {
             if (is == null) throw new RuntimeException("resource stream "+path+" not found");
-            var sparql = new ByteRope(is.readAllBytes());
+            var sparql = new FinalSegmentRope(is.readAllBytes());
             int obBegin = sparql.skipUntil(0, sparql.len(), LF_ORDER_BY);
             if (obBegin != sparql.len()) {
-                var unordered = new ByteRope(sparql.len);
-                unordered.append(sparql, 0, obBegin);
-                int obEnd = sparql.skipUntil(obBegin+1, sparql.len, '\n');
-                unordered.append(sparql, obEnd, sparql.len);
-                sparql = unordered;
+                try (var unordered = PooledMutableRope.get()) {
+                    unordered.append(sparql, 0, obBegin);
+                    int obEnd = sparql.skipUntil(obBegin + 1, sparql.len, '\n');
+                    unordered.append(sparql, obEnd, sparql.len);
+                    sparql = FinalSegmentRope.asFinal(unordered);
+                }
             }
             return new OpaqueSparqlQuery(sparql);
         } catch (IOException e) {
@@ -142,42 +146,43 @@ public enum QueryName {
 
     public Plan parsed() { return SparqlParser.parse(opaque()); }
 
-
-    public <B extends Batch<B>> B amputateNumbers(BatchType<B> type, B b) {
-        if (b == null || (this != C7 && this != C8 && this != C10))
-            return b;
-        B fixed = amputateNumbersInNode(type, b, b.rows);
-        for (B n = b.next; n != null; n = n.next) {
-            B a = amputateNumbersInNode(type, n, n.rows);
-            fixed = Batch.quickAppend(fixed, a == n ? n.dup() : a);
-        }
-        return fixed;
+    public boolean isAmputateNumberNoOp() {
+        return this != C7 && this != C8 && this != C10;
     }
 
-    private <B extends Batch<B>> B amputateNumbersInNode(BatchType<B> type, B b, int endRow) {
-        if (this != C7 && this != C8 && this != C10)
-            return b;
-        B fixed = type.create(b.cols);
-        fixed.reserveAddLocals(b.localBytesUsed());
-        var tmp = Term.pooledMutable();
-        var tr = new ByteRope();
-        for (int r = 0, cols = b.cols; r < endRow; r++) {
-            fixed.beginPut();
-            for (int c = 0; c < cols; c++) {
-                if (Term.isNumericDatatype(b.shared(r, c))) {
-                    if (!b.getView(r, c, tmp))
-                        throw new AssertionError("no term, but shared() != null");
-                    SegmentRope local = tmp.local();
-                    int dot = local.skipUntil(0, local.len, '.');
-                    tr.clear().append(local, 0, dot);
-                    fixed.putTerm(c, tmp.shared(), tr.utf8, 0, tr.len, true);
-                } else {
-                    fixed.putTerm(c, b, r, c);
+    public <B extends Batch<B>> Orphan<B> amputateNumbers(Orphan<B> in) {
+        if (in == null || isAmputateNumberNoOp())
+            return in;
+        short cols = Batch.peekColumns(in);
+        var bt     = Batch.peekType(in);
+        B fixed    = null;
+        try (var tmp = PooledTermView.ofEmptyString();
+             var rope  = PooledMutableRope.get()) {
+            while (in != null) {
+                B node = in.takeOwnership(this);
+                in = node.detachHead();
+                B amp = bt.create(cols).takeOwnership(this);
+                for (int r = 0, rows = node.rows; r < rows; r++) {
+                    amp.beginPut();
+                    for (int c = 0; c < cols; c++) {
+                        if (Term.isNumericDatatype(node.shared(r, c))) {
+                            if (!node.getView(r, c, tmp))
+                                throw new AssertionError("no term, but shared() != null");
+                            var local = tmp.local();
+                            int dot = local.skipUntil(0, local.len, '.');
+                            rope.clear().append(local, 0, dot);
+                            amp.putTerm(c, tmp.finalShared(), rope.utf8, 0,
+                                        rope.len, true);
+                        } else {
+                            amp.putTerm(c, node, r, c);
+                        }
+                    }
+                    amp.commitPut();
                 }
+                fixed = Batch.quickAppend(fixed, this, amp.releaseOwnership(this));
+                node.recycle(this);
             }
-            fixed.commitPut();
         }
-        tmp.recycle();
-        return fixed;
+        return Owned.releaseOwnership(fixed, this);
     }
 }

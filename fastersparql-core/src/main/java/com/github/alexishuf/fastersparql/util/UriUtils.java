@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.util;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.slf4j.Logger;
@@ -114,7 +114,7 @@ public class UriUtils {
         return state != 0;
     }
 
-    private static ByteRope doEscapeQueryParam(Rope in, ByteRope out) {
+    private static void doEscapeQueryParam(Rope in, MutableRope out) {
         int end = in.len();
         out.ensureFreeCapacity(2* end);
         for (int i, consumed = 0; consumed < end; consumed = i+1) {
@@ -127,32 +127,31 @@ public class UriUtils {
                 out.append(in, consumed, end);
             }
         }
-        return out;
     }
 
     /**
-     * Escape any character not allowed in query parameter names or values, as defined per
-     * <a href="https://datatracker.ietf.org/doc/html/rfc2396">RFC 2396</a>.
-     * <p>
-     * Only {@code string.subSequence(begin, end)} will be processed. Data before or after
-     * this range will not be included in the result.
+     * If {@code cs}  contains any character not allowed in query parameter names or values,
+     * return a {@link String} with  a version of {@code cs} where such characters are %-escaped
+     * as per <a href="https://datatracker.ietf.org/doc/html/rfc2396">RFC 2396</a>.
      *
-     * @param string the value to be escaped as if it were used as a query parameter name or value
-     * @return the %-escaped string equivalent to {@code string.subSequence(begin, end)},
-     *         or null if {@code string} was null. If escapes are not required, a subsequence
-     *         object will be returned, which may reflect mutations on {@code string} depending
-     *         on its implementation.
+     * <p>If {@code cs} does not require any escaping, return {@code cs} itself</p>
+     *
+     * @return {@code cs} itself or a %-escaped {@link String}
      */
-    public static Rope escapeQueryParam(Rope string) {
-        return needsEscape(string)
-                ? doEscapeQueryParam(string, new ByteRope())
-                : string;
-    }
-    /** {@link UriUtils#escapeQueryParam(Rope)} for {@link CharSequence}s */
     public static CharSequence escapeQueryParam(CharSequence cs) {
-        return needsEscape(cs)
-                ? doEscapeQueryParam(new ByteRope(cs), new ByteRope()).toString()
-                : cs;
+        if (needsEscape(cs)) {
+            PooledMutableRope tmpInput = null;
+            try (var tmp = PooledMutableRope.get()) {
+                Rope in = cs instanceof Rope r ? r
+                        : (tmpInput=PooledMutableRope.get()).append(cs);
+                doEscapeQueryParam(in, tmp);
+                return tmp.toString();
+            } finally {
+                if (tmpInput != null)
+                    tmpInput.close();
+            }
+        }
+        return cs;
     }
 
     /**
@@ -160,39 +159,46 @@ public class UriUtils {
      * query parameter names or values, as defined per
      * <a href="https://datatracker.ietf.org/doc/html/rfc2396">RFC 2396</a>.
      *
-     * @param builder the output {@link ByteRope}.
+     * @param builder the output {@link MutableRope}.
      * @param string the input string possibly containing disallowed characters
      */
-    public static void escapeQueryParam(ByteRope builder, Rope string) {
+    public static void escapeQueryParam(MutableRope builder, Rope string) {
         if (needsEscape(string))
             doEscapeQueryParam(string, builder);
         else
             builder.append(string);
     }
 
-    /** {@link UriUtils#escapeQueryParam(ByteRope, Rope)} for {@link CharSequence}s */
-    public static void escapeQueryParam(StringBuilder builder, CharSequence string) {
-        if (needsEscape(string))
-            builder.append(doEscapeQueryParam(new ByteRope(string), new ByteRope()));
-        else
-            builder.append(string);
+    /** {@link UriUtils#escapeQueryParam(MutableRope, Rope)} for {@link CharSequence}s */
+    public static void escapeQueryParam(StringBuilder builder, CharSequence cs) {
+        if (needsEscape(cs)) {
+            PooledMutableRope tmpIn = null;
+            try (var tmp = PooledMutableRope.get()) {
+                Rope in = cs instanceof Rope r ? r
+                        : (tmpIn=PooledMutableRope.getWithCapacity(cs.length())).append(cs);
+                doEscapeQueryParam(in, tmp);
+                tmp.appendTo(builder);
+            } finally {
+                if (tmpIn != null)
+                    tmpIn.close();
+            }
+        } else {
+            builder.append(cs);
+        }
     }
 
     /**
      * Replace all %-escapes with the escaped characters
      *
      * @param string the string to have %-escapes decoded
-     * @param dst if {@code != null}, result will be written to it and {@code dst} itself
-     *            will be returned by this call
-     * @return a new string with escapes decoded or the same instance there are no escapes.
+     * @param begin index of first byte in {@code string} to decode
+     * @param end {@code string.len} or index of the first byte in {@code string} to no decode.
+     * @param dst to where the decoded string will be appended to
      */
-    public static @PolyNull ByteRope unescape(@PolyNull PlainRope string, int begin, int end,
-                                                 @Nullable ByteRope dst) {
-        if (string == null)
-            return null;
+    public static void unescape(@PolyNull PlainRope string, int begin, int end, MutableRope dst) {
+        if (string == null || end <= begin)
+            return;
         int i = string.skipUntil(begin, end, '%');
-        if (dst == null)
-            dst = new ByteRope(end-begin);
         while (i < end) {
             dst.append(string, begin, i);
             if (i + 2 < end) {
@@ -207,22 +213,13 @@ public class UriUtils {
             }
             i = string.skipUntil(begin = i+3, end, '%');
         }
-        return dst.append(string, begin, end);
-    }
-    public static @PolyNull SegmentRope unescape(@PolyNull PlainRope string, int begin, int end) {
-        return unescape(string, begin, end, null);
+        dst.append(string, begin, end);
     }
 
-    public static @PolyNull ByteRope unescapeToRope(@PolyNull String string) {
-        return unescapeToRope(string, null);
-    }
-    public static @PolyNull ByteRope unescapeToRope(@PolyNull String string,
-                                                    @Nullable ByteRope dst) {
-        if (string == null)
-            return null;
+    public static void unescapeToRope(@PolyNull String string, MutableRope dst) {
+        if (string == null || string.isEmpty())
+            return;
         int begin = 0, len = string.length(), i = string.indexOf('%');
-        if (dst == null)
-            dst = new ByteRope(len);
         while (i != -1) {
             dst.append(string, begin, i);
             if (i + 2 < len) {
@@ -237,7 +234,7 @@ public class UriUtils {
             }
             i = string.indexOf('%', begin = i+3);
         }
-        return dst.append(string, begin, len);
+        dst.append(string, begin, len);
     }
 
     public static @PolyNull String unescape(@PolyNull String string) {

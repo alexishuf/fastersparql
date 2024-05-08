@@ -1,14 +1,14 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FlowModel;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.util.IOUtils;
-import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
+import com.github.alexishuf.fastersparql.util.concurrent.BackgroundTasks;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -130,7 +130,7 @@ public class MeasureOptions {
         var runtime = Runtime.getRuntime();
         double freeBefore = runtime.freeMemory()/(double)runtime.totalMemory();
 
-        PoolCleaner.INSTANCE.sync(); // sets unpooled refs to null, allowing collection
+        BackgroundTasks.sync();
         if (callGC) {
             if (ms > 10 || asyncProfiler != null) // null writes SHOULD be visible anyway
                 uninterruptibleSleep(10);

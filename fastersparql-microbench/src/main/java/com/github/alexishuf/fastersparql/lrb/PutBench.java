@@ -4,8 +4,6 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import org.openjdk.jmh.annotations.*;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
@@ -17,8 +15,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode({Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class PutBench {
-    private List<Batch> in;
-    private List<Batch> out;
+    private Batch in;
+    private Batch out;
 //    private List<CompressedBatch> inC;
 //    private List<CompressedBatch> outC;
 
@@ -31,26 +29,19 @@ public class PutBench {
     public void setup() {
         BatchType<?> bt = Workloads.parseBatchType(typeName);
         assert bt != null;
-        in = Workloads.fromName(bt, sizeName);
-        out = new ArrayList<>();
-        for (Batch batch : in)
-            out.add(bt.create(batch.cols));
-//        if (bt == CompressedBatchType.COMPRESSED) {
-//            inC  = (List<CompressedBatch>)(List<?>)in;
-//            outC = (List<CompressedBatch>)(List<?>)out;
-//        } else {
-//            inC = null;
-//            outC = null;
-//        }
+        in  = Workloads.fromName(bt, sizeName).takeOwnership(this);
+        out = bt.create(in.cols).takeOwnership(this);
     }
 
-    @Benchmark
-    public List<Batch> put() {
-        for (int i = 0, n = in.size(); i < n; i++) {
-            Batch outBatch = out.get(i), inBatch = in.get(i);
-            out.set(i, outBatch = outBatch.clear(inBatch.cols));
-            outBatch.copy(inBatch);
-        }
+    @TearDown
+    public void tearDown() {
+        in = (Batch)in.recycle(this);
+        out = (Batch)out.recycle(this);
+    }
+
+    @Benchmark public Batch put() {
+        out.clear(in.cols);
+        out.copy(in);
         return out;
     }
 
@@ -66,16 +57,11 @@ public class PutBench {
 //        return outC;
 //    }
 
-    @Benchmark
-    public List<Batch> putRow() {
-        for (int i = 0, n = in.size(); i < n; i++) {
-            Batch inBatch = in.get(i);
-            Batch outBatch = out.get(i).clear(inBatch.cols);
-            out.set(i, outBatch);
-            for (var b = inBatch; b != null; b = b.next) {
-                for (int r = 0, rows = b.rows; r < rows; r++)
-                    outBatch.putRow(b, r);
-            }
+    @Benchmark public Batch putRow() {
+        out.clear(in.cols);
+        for (var n = in; n != null; n = n.next) {
+            for (int r = 0, rows = n.rows; r < rows; r++)
+                out.putRow(n, r);
         }
         return out;
     }

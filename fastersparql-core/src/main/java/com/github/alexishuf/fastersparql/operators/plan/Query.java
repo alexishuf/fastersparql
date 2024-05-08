@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -38,7 +39,8 @@ public final class Query extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
+    public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         var sparql = weakDedup ? this.sparql.toDistinct(client.cheapestDistinct()) : this.sparql;
         return client.emit(type, sparql, rebindHint);
     }

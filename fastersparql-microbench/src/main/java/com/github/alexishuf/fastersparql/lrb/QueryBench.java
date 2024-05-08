@@ -4,13 +4,12 @@ import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
-import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
 import com.github.alexishuf.fastersparql.lrb.query.PlanRegistry;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
@@ -25,11 +24,13 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.util.IOUtils;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.BenchmarkParams;
@@ -40,7 +41,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntSupplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -50,7 +51,8 @@ import static com.github.alexishuf.fastersparql.FSProperties.OP_WEAKEN_DISTINCT;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.System.setProperty;
-import static java.util.concurrent.TimeUnit.*;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 @State(Scope.Thread)
 @Threads(1)
@@ -111,40 +113,71 @@ public class QueryBench {
     private FederationHandle fedHandle;
     private List<Plan> plans;
     private List<QueryName> queryList;
-    private BoundCounter boundCounter;
-    private RowCounter rowCounter;
-    private RopeLenCounter ropeLenCounter;
-    private TermLenCounter termLenCounter;
+    private BoundCounter<?> boundCounter;
+    private RowCounter<?> rowCounter;
+    private RopeLenCounter<?> ropeLenCounter;
+    private TermLenCounter<?> termLenCounter;
     private int iterationNumber = 0;
     private long iterationStart, lastIterationMs;
     private final MetricsConsumer metricsConsumer = new MetricsConsumer();
     private int lastBenchResult;
+    private final BenchmarkEvent jfrEvent = new BenchmarkEvent();
     private Blackhole bh;
 
-    private static class BoundCounter extends QueryRunner.BoundCounter {
-        public BoundCounter(BatchType<?> batchType) { super(batchType); }
+    private static class BoundCounter<B extends Batch<B>>
+            extends QueryRunner.BoundCounter<B, BoundCounter<B>>
+            implements Orphan<BoundCounter<B>> {
+        public BoundCounter(BatchType<B> batchType) { super(batchType); }
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+        @Override public BoundCounter<B> takeOwnership(Object newOwner) {return takeOwnership0(newOwner);}
     }
 
-    private static final class RowCounter extends BatchConsumer {
+    private static final class RowCounter<B extends Batch<B>>
+            extends BatchConsumer<B, RowCounter<B>>
+            implements Orphan<RowCounter<B>> {
         public int rows;
-        public RowCounter(BatchType<?> batchType) {super(batchType);}
+        public RowCounter(BatchType<B> batchType) {super(batchType);}
         public int rows() { return rows; }
-        @Override public void start(Vars vars)                  { rows = 0; }
-        @Override public void accept(Batch<?> batch)            { rows += batch.totalRows(); }
+        @Override protected void start0(Vars vars)              { rows = 0; }
+
+        @Override public RowCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override public void onBatch(Orphan<B> orphan) {
+            if (orphan == null) return;
+            B b = orphan.takeOwnership(this);
+            rows += b.totalRows();
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B batch) {
+            rows += batch == null ? 0 : batch.totalRows();
+        }
+
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
     }
 
-    private static final class RopeLenCounter extends BatchConsumer {
+    private static final class RopeLenCounter<B extends Batch<B>>
+            extends BatchConsumer<B, RopeLenCounter<B>> implements Orphan<RopeLenCounter<B>> {
         private final TwoSegmentRope tmp = new TwoSegmentRope();
         private int acc;
 
-        public RopeLenCounter(BatchType<?> batchType) {super(batchType);}
+        public RopeLenCounter(BatchType<B> batchType) {super(batchType);}
+
+        @Override public RopeLenCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
         public int len() { return acc; }
 
-        @Override public void start(Vars vars) { acc = 0; }
+        @Override protected void start0(Vars vars) { acc = 0; }
         @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
-        @Override public void accept(Batch<?> batch) {
+
+        @Override public void onBatch(Orphan<B> orphan) {
+            if (orphan == null) return;
+            B b = orphan.takeOwnership(this);
+            onBatchByCopy(b);
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B batch) {
             for (var b = batch; b != null; b = b.next) {
                 for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
@@ -156,20 +189,30 @@ public class QueryBench {
         }
     }
 
-    private static final class TermLenCounter extends BatchConsumer {
-        private final Term tmp = Term.pooledMutable();
+    private static final class TermLenCounter<B extends Batch<B>>
+            extends BatchConsumer<B, TermLenCounter<B>> implements Orphan<TermLenCounter<B>> {
+        private final TermView tmp = new TermView();
         private int acc;
 
-        public TermLenCounter(BatchType<?> batchType) {super(batchType);}
+        public TermLenCounter(BatchType<B> batchType) {super(batchType);}
+        @Override public TermLenCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
         public int len() { return acc; }
 
-        @Override public void start(Vars vars) {
+        @Override public void start0(Vars vars) {
             acc = 0;
         }
         @Override public void finish(@Nullable Throwable error) {
             throwAsUnchecked(error);
         }
-        @Override public void accept(Batch<?> batch) {
+
+        @Override public void onBatch(Orphan<B> orphan) {
+            if (orphan == null) return;
+            B b = orphan.takeOwnership(this);
+            onBatchByCopy(b);
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B batch) {
             for (var b = batch; b != null; b = b.next) {
                 for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
@@ -212,10 +255,11 @@ public class QueryBench {
         if (queryList.isEmpty())
             throw new IllegalArgumentException("No queries selected");
         batchType = batchKind.forSource(srcKind);
-        boundCounter = new BoundCounter(batchType);
-        rowCounter = new RowCounter(batchType);
-        ropeLenCounter = new RopeLenCounter(batchType);
-        termLenCounter = new TermLenCounter(batchType);
+        boundCounter   = new BoundCounter<>  (batchType);
+        rowCounter     = new RowCounter<>    (batchType);
+        ropeLenCounter = new RopeLenCounter<>(batchType);
+        termLenCounter = new TermLenCounter<>(batchType);
+        jfrEvent.className = getClass().getName();
         File dataDirFile = dataDir.toFile();
 
         // -------------
@@ -241,12 +285,20 @@ public class QueryBench {
         }
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
+        triggerClassLoadingOfPooled();
 
-        //watchdog = new Thread(this::watchdog, "watchdog");
-        //watchdog.start();
-        System.out.print("\nThermal cooldown: 5s...");
-        Async.uninterruptibleSleep(5_000);
-        System.out.println(" DONE");
+        watchdog = new Thread(this::watchdog, "watchdog");
+        watchdog.start();
+    }
+
+    private void triggerClassLoadingOfPooled() {
+        if (ArrayAlloc.longsAtLeast(0) != ArrayAlloc.EMPTY_LONG)
+            throw new AssertionError("longsAtLeast(0) != EMPTY_LONG");
+        if (Bytes.atLeast(16).takeOwnership(this).recycle(this) != null)
+            throw new AssertionError("Full pool too early");
+        if (SparqlParser.create().takeOwnership(this).recycle(this) != null)
+            throw new AssertionError("Full pool too early");
+        Primer.primeAll();
     }
 
     @TearDown(Level.Trial) public void trialTearDown() {
@@ -265,7 +317,7 @@ public class QueryBench {
         journal("iterationSetup", iterationNumber);
         //CompressedBatchType.ALT = alt;
         lastBenchResult = -1;
-        PoolCleaner.INSTANCE.sync(); // allow collection of objects leaked from pools
+        BackgroundTasks.sync();
         IOUtils.fsync(500_000); // generous timeout because there should be no I/O
 
         var wOpts  = opts.getWarmup();
@@ -294,9 +346,18 @@ public class QueryBench {
             Async.uninterruptibleSleep(idle);
         }
         iterationStart = System.nanoTime();
+        jfrEvent.iterationNumber = iterationNumber;
+        jfrEvent.warmup = warmup;
+        jfrEvent.begin();
     }
 
     @TearDown(Level.Iteration) public void iterationTearDown() {
+        jfrEvent.end();
+        jfrEvent.commit();
+        if (iterationNumber == 0) {
+            Async.uninterruptibleSleep(50);
+            Primer.primeAll();
+        }
         ++iterationNumber;
         lastIterationMs = (System.nanoTime()-iterationStart)/1_000_000L;
     }
@@ -309,77 +370,116 @@ public class QueryBench {
         return r;
     }
 
-//    private volatile @Nullable Plan watchdogPlan;
-//    private @Nullable StreamNode dbgExecution;
-//    private static final long WATCHDOG_INTERVAL_NS = 5_000_000_000L;
-//    private Thread watchdog;
-//
-//    private void armWatchdog(Plan plan, StreamNode execution) {
-//        ThreadJournal.resetJournals();
-//        ResultJournal.clear();
-//        dbgExecution = execution;
-//        watchdogPlan = plan;
-//        Unparker.unpark(watchdog);
-//    }
-//    private void disarmWatchdog() {
-//        dbgExecution = null;
-//        watchdogPlan = null;
-//        Unparker.unpark(watchdog);
-//    }
-//
-//    @SuppressWarnings("CallToPrintStackTrace") private void watchdog() {
-//        while (true) {
-//            Plan plan;
-//            while ((plan = watchdogPlan) == null) LockSupport.park(this);
-//            StreamNode execution = dbgExecution;
-//
-//            long deadline = System.nanoTime()+WATCHDOG_INTERVAL_NS;
-//            while (watchdogPlan == plan && System.nanoTime() < deadline)
-//                LockSupport.parkNanos(this, WATCHDOG_INTERVAL_NS);
-//            if (watchdogPlan != plan) // disarmed or armed for another query
-//                continue;
-//            watchdogPlan = null;
-//
-//            // find QueryName for current plan
-//            QueryName queryName = null;
-//            for (int i = 0; i < plans.size(); i++) {
-//                if (plans.get(i) == plan)
-//                    queryName = queryList.get(i);
-//            }
-//            System.out.printf("WATCHDOG FIRED for query %s\n", queryName);
-//            if (queryName != null) { // write query SPARQL and .dot and .svg of execution tree
-//                System.out.println(queryName.opaque().sparql());
-//                File dot = new File("/tmp/"+queryName.name()+".dot");
-//                File svg = new File(dot.getPath().replace(".dot", ".svg"));
-//                try (var writer = new FileWriter(dot, UTF_8)) {
-//                    assert execution != null : "execution must not be null";
-//                    writer.append(execution.toDOT(WITH_STATE_AND_STATS));
-//                    execution.renderDOT(svg, WITH_STATE_AND_STATS);
-//                } catch (IOException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//            // dump plan algebra, ResultJournal, ThreadJournal and EmitterService queues
-//            System.out.println(plan);
-//            try {
-//                ResultJournal.dump(System.out);
-//            } catch (IOException e) {e.printStackTrace();}
-//            ThreadJournal.dumpAndReset(System.out, 100);
-//            System.out.println(EmitterService.EMITTER_SVC.dump());
-//            System.out.printf("WATCHDOG FIRED for query %s\n", queryName);
-//        }
-//    }
+    private volatile @Nullable Plan watchdogPlan;
+    private @Nullable StreamNode dbgExecution;
+    private static final long WATCHDOG_INTERVAL_NS = 20_000_000_000L;
+    private Thread watchdog;
+    private boolean skipAll;
 
-    private int execute(Blackhole bh, BatchConsumer consumer, IntSupplier resultGetter) {
+    private void armWatchdog(Plan plan, StreamNode execution) {
+        Watchdog.reset();
+        dbgExecution = execution;
+        watchdogPlan = plan;
+        Unparker.unpark(watchdog);
+    }
+    private void disarmWatchdog() {
+        watchdogPlan = null;
+        dbgExecution = null;
+        Unparker.unpark(watchdog);
+    }
+    private void dump(Plan plan, @Nullable StreamNode streamNode, String tag) {
+        try {
+            // find QueryName for current plan
+            QueryName query = null;
+            for (int i = 0; i < plans.size(); i++) {
+                if (plans.get(i) == plan)
+                    query = queryList.get(i);
+            }
+            Watchdog.spec(query == null ? "UNNAMED" : query.name()+"."+tag)
+                    .plan(plan)
+                    .sparql(query == null ? null : query.opaque().sparql)
+                    .emitterServiceStdOut()
+                    .streamNode(streamNode)
+                    .run();
+        } catch (Throwable e) {
+            System.out.println();
+            //noinspection CallToPrintStackTrace
+            e.printStackTrace();
+        }
+        skipAll = true;
+    }
+
+    private void watchdog() {
+        for (Plan plan; true; ) {
+            while ((plan = watchdogPlan) == null) LockSupport.park(this);
+            StreamNode execution = dbgExecution;
+
+            long deadline = System.nanoTime()+WATCHDOG_INTERVAL_NS;
+            while (watchdogPlan == plan && System.nanoTime() < deadline)
+                LockSupport.parkNanos(this, WATCHDOG_INTERVAL_NS);
+            if (watchdogPlan != plan)
+                continue; // disarmed or armed for another query
+            watchdogPlan = null;
+            dump(plan, execution, "watchdog");
+        }
+    }
+
+    private void drainC1(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC2(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC3(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC4(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC5(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC6(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC7(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC8(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC9(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+    private void drainC10(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
+
+    private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
         this.bh = bh;
+        if (skipAll) return lastBenchResult;
         switch (flowModel) {
             case ITERATE -> {
-                for (Plan plan : plans)
-                    QueryRunner.drain(plan.execute(batchType), consumer);
+                for (int i = 0, plansCount = plans.size(); i < plansCount; i++) {
+                    Plan plan = plans.get(i);
+                    BIt<?> it = plan.execute(batchType);
+                    armWatchdog(plan, it);
+                    try {
+                        var qry = queryList.get(i);
+                        switch (qry) {
+                            case C1  -> drainC1(it, consumer);
+                            case C2  -> drainC2 (it, consumer);
+                            case C3  -> drainC3 (it, consumer);
+                            case C4  -> drainC4 (it, consumer);
+                            case C5  -> drainC5 (it, consumer);
+                            case C6  -> drainC6 (it, consumer);
+                            case C7  -> drainC7 (it, consumer);
+                            case C8  -> drainC8 (it, consumer);
+                            case C9  -> drainC9 (it, consumer);
+                            case C10  -> drainC10(it, consumer);
+                            default -> QueryRunner.drainWild(it, consumer);
+                        }
+                        disarmWatchdog();
+                    } catch (Throwable t) {
+                        disarmWatchdog();
+                        dump(plan, it, "fail");
+                    }
+                    if (skipAll) break;
+                }
             }
             case EMIT -> {
-                for (Plan plan : plans)
-                    QueryRunner.drain(plan.emit(batchType, Vars.EMPTY), consumer);
+                for (Plan plan : plans) {
+                    var em = plan.emit(batchType, Vars.EMPTY);
+                    armWatchdog(plan, (StreamNode)em);
+                    try {
+                        QueryRunner.drainWild(em, consumer);
+                        disarmWatchdog();
+                    } catch (Throwable t) {
+                        disarmWatchdog();
+                        dump(plan, (StreamNode)em, "fail");
+                    }
+                    if (skipAll) break;
+                }
             }
         }
         return checkResult(resultGetter.getAsInt());

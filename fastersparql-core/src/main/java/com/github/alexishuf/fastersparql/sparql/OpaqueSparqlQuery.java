@@ -1,11 +1,10 @@
 package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import org.checkerframework.checker.mustcall.qual.MustCall;
 
 import java.util.Arrays;
 
@@ -37,7 +36,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
     }
 
     public OpaqueSparqlQuery(CharSequence sparql) {
-        this.sparql = SegmentRope.of(sparql);
+        this.sparql = FinalSegmentRope.asFinal(sparql);
         try (var s = new Scan(this.sparql)) {
             this.isGraph = s.isGraph;
             this.publicVars = s.publicVars;
@@ -114,28 +113,32 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         boolean isAsk = b.nPublicVars.isEmpty() && !publicVars.isEmpty();
         if (isAsk)
             b.replaceWithAsk();
-        var name = new SegmentRope(sparql.segment, sparql.utf8, sparql.offset, sparql.len);
-        for (; b.posIdx < varPos.length; b.posIdx += 2) {
-            int vBegin = varPos[b.posIdx], vEnd = varPos[b.posIdx + 1], gap = vEnd-vBegin;
-            // if vBegin points to '(', gap spans the whole "( ... AS ?name)" segment
-            if (sparql.get(vBegin) == '(')
-                aliasVar(name, vEnd);
-            else
-                name.slice(sparql.offset+vBegin+1, vEnd-(vBegin+1));
-            int col = bindingVars.indexOf(name);
-            if (col >= 0 && binding.has(col)) {
-                b.b.append(sparql, b.consumed, vBegin);
-                b.consumed = vEnd;
-                if (vBegin < verbEnd && publicVars.contains(name)) { //erase ?name/(... AS ?name)
-                    b.growth -= gap;
-                    b.nVerbEnd -= gap;
-                } else { // replace ?name with term
-                    b.growth += binding.writeSparql(col, b.b, PrefixAssigner.NOP) - gap;
+        try (var nameView = PooledSegmentRopeView.of(sparql)) {
+            for (; b.posIdx < varPos.length; b.posIdx += 2) {
+                int vBegin = varPos[b.posIdx], vEnd = varPos[b.posIdx + 1], gap = vEnd - vBegin;
+                // if vBegin points to '(', gap spans the whole "( ... AS ?name)" segment
+                if (sparql.get(vBegin) == '(')
+                    aliasVar(nameView, vEnd);
+                else
+                    nameView.slice(sparql.offset + vBegin + 1, vEnd - (vBegin + 1));
+                int col = bindingVars.indexOf(nameView);
+                if (col >= 0 && binding.has(col)) {
+                    b.b.append(sparql, b.consumed, vBegin);
+                    b.consumed = vEnd;
+                    if (vBegin < verbEnd && publicVars.contains(nameView)) {
+                        //erase ?name/(... AS ?name)
+                        b.growth -= gap;
+                        b.nVerbEnd -= gap;
+                    } else {
+                        // replace ?name with term
+                        b.growth += binding.writeSparql(col, b.b, PrefixAssigner.NOP) - gap;
+                    }
+                } else {
+                    // adjust varPos for ?name in the bound sparql
+                    int nBegin = vBegin + b.growth;
+                    b.nVarPos[b.nVarPosSize++] = nBegin;
+                    b.nVarPos[b.nVarPosSize++] = nBegin + gap;
                 }
-            } else { // adjust varPos for ?name in the bound sparql
-                int nBegin = vBegin+ b.growth;
-                b.nVarPos[b.nVarPosSize++] = nBegin;
-                b.nVarPos[b.nVarPosSize++] = nBegin+gap;
             }
         }
         return b.build(isAsk);
@@ -149,17 +152,18 @@ public class OpaqueSparqlQuery implements SparqlQuery {
 
     /* --- --- --- implementation details --- --- --- */
 
-    private void aliasVar(SegmentRope name, int end) {
+    private void aliasVar(SegmentRopeView name, int end) {
         int nameBegin = sparql.reverseSkip(0, end, VAR_MARK)+1;
         int nameEnd = sparql.skip(nameBegin, end, VARNAME);
         name.slice(sparql.offset+nameBegin, nameEnd-nameBegin);
     }
 
+    @MustCall("build")
     private final class Binder {
         final Vars nAllVars;
         Vars nPublicVars;
         Vars nAliasVars;
-        ByteRope b;
+        PooledMutableRope b;
         int [] nVarPos;
         int consumed, posIdx, nVarPosSize, growth, nVerbEnd = verbEnd;
 
@@ -167,7 +171,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             nPublicVars = pub;
             nAliasVars = alias;
             nAllVars = all;
-            b = new ByteRope(sparql.len());
+            b = PooledMutableRope.getWithCapacity(sparql.len);
             nVarPos = new int[varPos.length];
         }
 
@@ -178,7 +182,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 return; // no-op
             nPublicVars = publicVars.minus(bindingVars);
             nAliasVars =  aliasVars.minus(bindingVars);
-            b = new ByteRope(sparql.len() + (binding.size() << 7));
+            b = PooledMutableRope.getWithCapacity(sparql.len() + (binding.size() << 7));
             nVarPos = new int[varPos.length];
         }
 
@@ -211,7 +215,9 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             if (dropModifiers)
                 end = Math.min(end, sparql.skipUntilLast(consumed, end, '}')+1);
             // copy last stretch of sparql that has no vars in it
-            var nQuery = b.append(sparql, consumed, end);
+            var nQuery = b.append(sparql, consumed, end).take();
+            b.close();
+            b = null;
             // nVarPosSize <= nVarsPos.length since a no-op bind would've returned earlier
             nVarPos = copyOf(nVarPos, nVarPosSize);
             return new OpaqueSparqlQuery(nQuery, isGraph, nPublicVars, nAllVars, nAliasVars,
@@ -227,9 +233,10 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         Vars publicVars, allVars, aliasVars = Vars.EMPTY;
         int[] varPositions;
         int nVarPositions, verbBegin, verbEnd;
-        final TermParser termParser = new TermParser();
+        final TermParser termParser;
 
         public Scan(SegmentRope query) {
+            termParser = TermParser.create().takeOwnership(this);
             len = (in = query).len();
             findQueryVerb();
             if (isGraph) {
@@ -250,7 +257,9 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             }
         }
 
-        @Override public void close() { termParser.close(); }
+        @Override public void close() {
+            termParser.recycle(this);
+        }
 
         private static final int[] PROLOGUE = alphabet("PBpb#");
         private void findQueryVerb() {

@@ -8,11 +8,15 @@ import com.github.alexishuf.fastersparql.emit.CollectingReceiver;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
@@ -35,22 +39,26 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 class GatheringEmitterTest {
     private static final Vars X = Vars.of("x");
-    private static final SegmentRope PREFIX = SHARED_ROPES.internPrefix("<http://www.example.org/integers/");
+    private static final FinalSegmentRope PREFIX = SHARED_ROPES.internPrefix("<http://www.example.org/integers/");
 
-    private static CompressedBatch makeExpected(int id, int height, int cancelAt, int failAt) {
+    private static Orphan<CompressedBatch>
+    makeExpected(int id, int height, int cancelAt, int failAt) {
         int rows = Math.min(height, Math.min(failAt, cancelAt));
-        var expected = COMPRESSED.create(1);
-        ByteRope local = new ByteRope();
-        for (int i = 0; i < rows; i++) {
-            expected.beginPut();
-            local.clear().append((long)id*height + i).append('>');
-            expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
-            expected.commitPut();
+        try (var g = new Guard.BatchGuard<CompressedBatch>(MAKE_EXPECTED);
+             var local = PooledMutableRope.get()) {
+            var expected = g.set(COMPRESSED.create(1));
+            for (int i = 0; i < rows; i++) {
+                expected.beginPut();
+                local.clear().append((long)id*height + i).append('>');
+                expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
+                expected.commitPut();
+            }
+            return g.take();
         }
-        return expected;
     }
+    private static final StaticMethodOwner MAKE_EXPECTED = new StaticMethodOwner("GatheringEmitterTest.makeExpected");
 
-    private static class P extends TaskEmitter<CompressedBatch> {
+    private static class P extends TaskEmitter<CompressedBatch, P> implements Orphan<P> {
         private int absRow, relRow;
         private @Nullable CompressedBatch current;
         private final int cancelAt, failAt;
@@ -63,6 +71,10 @@ class GatheringEmitterTest {
             this.cancelAt = cancelAt;
             if (ResultJournal.ENABLED)
                 ResultJournal.initEmitter(this, vars);
+        }
+
+        @Override public P takeOwnership(Object newOwner) {
+            return takeOwnership0(newOwner);
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -83,7 +95,7 @@ class GatheringEmitterTest {
             }
             if (current == null)
                 return COMPLETED;
-            COMPRESSED.recycle(deliver(current.dupRow(relRow)));
+            deliver(current.dupRow(relRow));
             ++relRow;
             ++absRow;
             return state;
@@ -93,25 +105,28 @@ class GatheringEmitterTest {
     record D(int producers, int height, int cancellingProducer, int cancelAt, int failingProducer, int failAt) implements Runnable {
 
         @Override public void run() {
-            var gather = new GatheringEmitter<>(COMPRESSED, X);
+            GatheringEmitter<CompressedBatch> gather = null;
+            CollectingReceiver<CompressedBatch> receiver = null;
             CompressedBatch[] batches = new CompressedBatch[this.producers];
             CompressedBatch actual = null;
             Throwable error = null;
             try {
+                gather = GatheringEmitter.create(COMPRESSED, X).takeOwnership(this);
                 for (int i = 0; i < this.producers; i++) {
                     int cancelAt = i == cancellingProducer ? this.cancelAt : MAX_VALUE;
                     int   failAt = i ==    failingProducer ? this.failAt   : MAX_VALUE;
-                    batches[i] = makeExpected(i, height, cancelAt, failAt);
-                    P p = new P(batches[i], cancelAt, failAt);
-                    gather.subscribeTo(p);
+                    batches[i] = makeExpected(i, height, cancelAt, failAt).takeOwnership(this);
+                    gather.subscribeTo(new P(batches[i], cancelAt, failAt));
                 }
-                var receiver = new CollectingReceiver<>(gather);
+                receiver = CollectingReceiver.create(gather.releaseOwnership(this))
+                                             .takeOwnership(this);
+                gather = null;
                 try {
                     receiver.join();
                 } catch (CompletionException e) {
                     error = e.getCause();
                 }
-                actual = receiver.collected();
+                actual = receiver.take().takeOwnership(this);
                 assertTrue(actual.validate(Batch.Validation.CHEAP));
 
                 // assert error matches expected
@@ -163,8 +178,11 @@ class GatheringEmitterTest {
                 }
 
             } finally {
-                COMPRESSED.recycle(actual);
-                for (CompressedBatch b : batches) COMPRESSED.recycle(b);
+                Owned.recycle(gather, this);
+                Owned.recycle(receiver, this);
+                Owned.recycle(actual, this);
+                for (CompressedBatch b : batches)
+                    Owned.recycle(b, this);
             }
         }
     }

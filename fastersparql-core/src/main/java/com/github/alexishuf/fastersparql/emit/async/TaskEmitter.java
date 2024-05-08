@@ -2,10 +2,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.emit.Emitter;
-import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.Emitters;
-import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.emit.*;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
@@ -15,6 +12,7 @@ import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -26,8 +24,9 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
-public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Task
-                                                      implements Emitter<B> {
+public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E>>
+        extends EmitterService.Task<E>
+        implements Emitter<B, E> {
     private static final Logger log = LoggerFactory.getLogger(TaskEmitter.class);
     private static final VarHandle REQ;
     static {
@@ -43,6 +42,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     protected final BatchType<B> bt;
     protected short threadId, outCols;
     protected final Vars vars;
+    private @Nullable HasFillingBatch<B> downstreamHFB;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
     protected Throwable error = UNSET_ERROR;
 
@@ -62,6 +62,10 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         if (EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
         super.doRelease();
+    }
+
+    @Override protected void onPendingRelease() {
+        cancel();
     }
 
     @Override public String toString() {
@@ -114,6 +118,9 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             if (downstream != null && downstream != receiver)
                 throw new MultipleRegistrationUnsupportedException(this);
             downstream = receiver;
+            //noinspection unchecked
+            downstreamHFB = receiver instanceof HasFillingBatch<?> hfb
+                          ? (HasFillingBatch<B>)hfb : null;
         } finally {
             unlock(st);
         }
@@ -132,9 +139,6 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
         if (grown)
             resume(); // awake() the task or producer
     }
-
-    @Override public void rebindAcquire() { delayRelease(); }
-    @Override public void rebindRelease() { allowRelease(); }
 
     protected void onFirstRequest() {
         moveStateRelease(statePlain(), ACTIVE);
@@ -170,19 +174,48 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
             awake();
     }
 
-    protected @Nullable B deliver(B b) {
+    protected final Orphan<B> beforeDelivery(Orphan<B> orphan) {
+        B b = orphan.takeOwnership(this);
+        try {
+            beforeDelivery(b);
+        } catch (Throwable t) {
+            b.recycle(this);
+            throw t;
+        }
+        return b.releaseOwnership(this);
+    }
+    protected final void beforeDelivery(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
         REQ.getAndAddRelease(this, (long)-b.totalRows());
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onBatchDelivered(b);
+    }
+
+    protected void deliver(Orphan<B> orphan) {
+        orphan = beforeDelivery(orphan);
+        deliver0(orphan);
+    }
+
+    protected final void deliver0(Orphan<B> orphan) {
         try {
-            if (EmitterStats.ENABLED && stats != null)
-                stats.onBatchDelivered(b);
-            return downstream.onBatch(b);
+            downstream.onBatch(orphan);
         } catch (Throwable t) {
-            Emitters.handleEmitError(downstream, this,
-                    (statePlain()&IS_TERM) != 0, t);
-            return null;
+            Emitters.handleEmitError(downstream, this, t, null);
         }
+    }
+
+    protected void deliverByCopy(B b) {
+        beforeDelivery(b);
+        try {
+            downstream.onBatchByCopy(b);
+        } catch (Throwable t) {
+            Emitters.handleEmitError(downstream, this, t, null);
+        }
+    }
+
+    protected @Nullable Orphan<B> pollDownstreamFillingBatch() {
+        return downstreamHFB == null ? null : downstreamHFB.pollFillingBatch();
     }
 
     @Override protected int resetForRebind(int clearFlags, int setFlags) throws RebindException {
@@ -195,7 +228,7 @@ public abstract class TaskEmitter<B extends Batch<B>> extends EmitterService.Tas
     protected void deliverTermination(int current, int termState) {
         if (moveStateRelease(current, termState)) {
             try {
-                switch ((termState &STATE_MASK)) {
+                switch ((termState&STATE_MASK)) {
                     case COMPLETED -> downstream.onComplete();
                     case CANCELLED -> downstream.onCancelled();
                     case FAILED    -> downstream.onError(error);

@@ -17,6 +17,10 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import com.github.alexishuf.fastersparql.util.owned.SpecialOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,11 +37,12 @@ import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxRelease;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
-import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.System.identityHashCode;
 import static java.lang.Thread.currentThread;
 
-public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
+public abstract sealed class GatheringEmitter<B extends Batch<B>>
+        extends AbstractOwned<GatheringEmitter<B>>
+        implements Emitter<B, GatheringEmitter<B>> {
     private static final Logger log = LoggerFactory.getLogger(GatheringEmitter.class);
     private static final Thread NO_OWNER = null;
     private static final VarHandle OWNER, FILLING, REQ, STATS_RCV_LOCK;
@@ -61,7 +66,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private short connectorCount;
     private short requestChunk;
     @SuppressWarnings("unused") private long plainReq;
-    private byte state = CREATED, delayRelease;
+    private byte state = CREATED;
+    private boolean downstreamRecycle;
     private short connectorTerminatedCount;
     private final BatchType<B> batchType;
     private int lastRebindSeq = -1;
@@ -70,7 +76,10 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     @SuppressWarnings("unused") private int plainStatsRcvLock;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
 
-    public GatheringEmitter(BatchType<B> batchType, Vars vars) {
+    public static <B extends Batch<B>> Orphan<GatheringEmitter<B>>
+    create(BatchType<B> batchType, Vars vars) {return new Concrete<>(batchType, vars);}
+
+    protected GatheringEmitter(BatchType<B> batchType, Vars vars) {
         this.vars         = vars;
         this.batchType    = batchType;
         this.requestChunk = (short)Math.min(Short.MAX_VALUE, preferredRequestChunk());
@@ -78,26 +87,56 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             ResultJournal.initEmitter(this, vars);
     }
 
+    @Override public @Nullable GatheringEmitter<B> recycle(Object currentOwner) {
+        internalMarkGarbage(currentOwner);
+        if (currentOwner == SpecialOwner.GARBAGE)
+            return null;
+        lock();
+        try {
+            downstreamRecycle = true;
+            if ((state&IS_TERM_DELIVERED) != 0)
+                doRelease();
+            // else: future onConnectorTerminated() -> markDelivered() -> doRelease()
+        } finally {unlock();}
+        return null;
+    }
 
-    public void subscribeTo(Emitter<B> upstream) {
-        int upChunk = upstream.preferredRequestChunk();
-        if (upChunk > requestChunk)
-            requestChunk = (short)Math.min(Short.MAX_VALUE, upChunk);
+    private void doRelease() {
+        journal("releasing", this);
+        for (int i = 0; i < connectorCount; i++)
+            connectors[i].release();
+        if (EmitterStats.LOG_ENABLED && stats != null)
+            stats.report(log, this);
+
+    }
+
+    private static final class Concrete<B extends Batch<B>> extends GatheringEmitter<B>
+            implements Orphan<GatheringEmitter<B>> {
+        public Concrete(BatchType<B> batchType, Vars vars) {super(batchType, vars);}
+        @Override public GatheringEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+    }
+
+
+    public void subscribeTo(Orphan<? extends Emitter<B, ?>> orphan) {
         beginDelivery();
         if ((state&STATE_MASK) != CREATED)
             throw new RegisterAfterStartException(this);
         try {
-            assert isNovelUpstream(upstream) : "Already subscribed to upstream";
+            var connector = new Connector<>(orphan, this);
+            assert isNovelUpstream(connector.up) : "Already subscribed to upstream";
             if (connectorCount >= connectors.length)
                 connectors = Arrays.copyOf(connectors, connectorCount*2);
-            connectors[connectorCount++] = new Connector<>(upstream, this);
-            bindableVars = bindableVars.union(upstream.bindableVars());
+            int upChunk = connector.up.preferredRequestChunk();
+            if (upChunk > requestChunk)
+                requestChunk = (short)Math.min(Short.MAX_VALUE, upChunk);
+            connectors[connectorCount++] = connector;
+            bindableVars = bindableVars.union(connector.up.bindableVars());
         } finally {
             endDelivery();
         }
     }
 
-    private boolean isNovelUpstream(Emitter<B> upstream) {
+    private boolean isNovelUpstream(Emitter<B, ?> upstream) {
         for (int i = 0, n = connectorCount; i < n; i++) {
             if (connectors[i].up == upstream) return false;
         }
@@ -115,15 +154,12 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     }
 
     @Override public String label(StreamNodeDOT.Label type) {
-        StringBuilder sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
+        var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
         if (type.showState()) {
             int flaggedState = 0xff&state;
             if ((Thread)OWNER.getAcquire(this) != null) flaggedState |= LOCKED_MASK;
-            if ((state&IS_TERM_DELIVERED) != 0 && delayRelease == 0)
+            if ((state&IS_TERM_DELIVERED) != 0 && downstreamRecycle)
                 flaggedState |= RELEASED_MASK;
-            int drBit = numberOfTrailingZeros(DELAY_RELEASE_MASK);
-            int drMax = DELAY_RELEASE_MASK>> drBit;
-            flaggedState |= Math.min(drMax, delayRelease) << drBit;
             sb.append("\nstate=").append(Flags.DEFAULT.render(flaggedState));
             StreamNodeDOT.appendRequested(sb.append(", requested="), plainReq);
         }
@@ -139,6 +175,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
     @Override
     public void subscribe(Receiver<B> receiver) throws RegisterAfterStartException {
+        requireAlive();
         beginDelivery();
         try {
             if (downstream == receiver)
@@ -167,21 +204,6 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         return cancelled;
     }
 
-    @Override public void rebindAcquire() {
-        delayRelease = (byte)Math.min(Byte.MAX_VALUE, delayRelease+1);
-        for (int i = 0, count = connectorCount; i < count; i++)
-            connectors[i].up.rebindAcquire();
-    }
-
-    @Override public void rebindRelease() {
-        boolean release = delayRelease == 1;
-        delayRelease = (byte)Math.max(0, delayRelease-1);
-        for (int i = 0, count = connectorCount; i < count; i++)
-            connectors[i].up.rebindRelease();
-        if (release && EmitterStats.LOG_ENABLED && stats != null)
-            stats.report(log, this);
-    }
-
     @Override public void rebindPrefetch(BatchBinding binding) {
         for (int i = 0; i < connectorCount; i++)
             connectors[i].rebindPrefetch(binding);
@@ -200,6 +222,7 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
         try {
             if ((state&(IS_INIT|IS_TERM)) == 0)
                 throw new RebindStateException(this);
+            requireAlive();
             state = CREATED;
             connectorTerminatedCount = 0;
             REQ.setRelease(this, 0);
@@ -264,18 +287,20 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
 
     private void markDelivered() {
         state |= (byte)IS_TERM_DELIVERED;
-        if (delayRelease == 0) {
-            if (ENABLED) journal("releasing", this);
-            for (int i = 0; i < connectorCount; i++) {
-                if (connectors[i].projector != null)
-                    connectors[i].projector.release();
-            }
-            if (EmitterStats.LOG_ENABLED && stats != null)
-                stats.report(log, this);
-        }
+        if (downstreamRecycle)
+            doRelease();
     }
 
     private void onBatchReceived(B b) {
+        if (stats == null) return;
+        while ((int)STATS_RCV_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
+            Thread.onSpinWait();
+        try {
+            stats.onBatchReceived(b);
+        } finally { STATS_RCV_LOCK.setRelease(this, 0); }
+    }
+
+    private void onBatchReceived(Orphan<B> b) {
         if (stats == null) return;
         while ((int)STATS_RCV_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0)
             Thread.onSpinWait();
@@ -335,9 +360,9 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     private void deliverFilling() {
         try {
             //noinspection unchecked
-            B b = (B) FILLING.getAndSetRelease(this, null);
+            B b = (B) FILLING.getAndSetAcquire(this, null);
             if (b != null)
-                batchType.recycle(deliver(b));
+                deliver(b);
         } catch (Throwable t) {
             unlock();
             throw t;
@@ -363,19 +388,34 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     }
 
     /**
-     * Deliver {@code b} (or a copy of it) to all downstream {@link Receiver}s
-     * @return the result of {@link Receiver#onBatch(Batch)} of some downstream {@link Receiver}.
+     * Deliver {@code b} to {@code downstream} via {@link Receiver#onBatch(Orphan)}
      */
-    private @Nullable B deliver(B b) {
+    private void deliver(B b) {
         if (ResultJournal.ENABLED)
             ResultJournal.logBatch(this, b);
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchDelivered(b);
         try {
-            return downstream.onBatch(b);
+            Orphan<B> orphan = b.releaseOwnership(this);
+            b = null;
+            downstream.onBatch(orphan);
         } catch (Throwable t) {
-            handleEmitError(downstream, this, (state&IS_TERM)!=0, t);
-            return null;
+            handleEmitError(downstream, this, t, b);
+        }
+    }
+
+    /**
+     * Deliver {@code b} to {@code downstream} via {@link Receiver#onBatchByCopy(Batch)}
+     */
+    private void deliverCopy(B b) {
+        if (ResultJournal.ENABLED)
+            ResultJournal.logBatch(this, b);
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onBatchDelivered(b);
+        try {
+            downstream.onBatchByCopy(b);
+        } catch (Throwable t) {
+            handleEmitError(downstream, this, t, null);
         }
     }
 
@@ -405,7 +445,8 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
     /**
      * Receives events from one upstream and safely queue or deliver them via {@code down.deliver*()}
      */
-    private static final class Connector<B extends Batch<B>> implements Receiver<B> {
+    private static final class Connector<B extends Batch<B>>
+            implements Receiver<B> {
         private static final VarHandle CONN_REQ;
         static {
             try {
@@ -414,20 +455,27 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
                 throw new ExceptionInInitializerError(e);
             }
         }
-        final Emitter<B> up;
+        final Emitter<B, ?> up;
         final GatheringEmitter<B> down;
         final BatchType<B> bt;
         int plainConnReq;
-        final BatchMerger<B> projector;
+        BatchMerger<B, ?> projector;
         private boolean completed, cancelled;
         private @Nullable Throwable error;
 
+        public Connector(Orphan<? extends Emitter<B, ?>> orphan,
+                         GatheringEmitter<B> downstream) {
+            this.down = downstream;
+            this.bt   = downstream.batchType;
+            this.up   = orphan.takeOwnership(this);
+            this.up.subscribe(this);
+            var projector = bt.projector(downstream.vars, up.vars());
+            this.projector = projector == null ? null : projector.takeOwnership(this);
+        }
 
-        public Connector(Emitter<B> upstream, GatheringEmitter<B> downstream) {
-            (this.up          = upstream).subscribe(this);
-            this.down         = downstream;
-            this.bt           = downstream.batchType;
-            this.projector    = bt.projector(downstream.vars, upstream.vars());
+        void release() {
+            projector = Owned.safeRecycle(projector, this);
+            up.recycle(this);
         }
 
         void requestNextChunk(int received) {
@@ -480,38 +528,60 @@ public class GatheringEmitter<B extends Batch<B>> implements Emitter<B> {
             return sb.toString();
         }
 
-        @SuppressWarnings("unchecked") @Override public @Nullable B onBatch(B in) {
+        @Override public void onBatch(Orphan<B> orphan) {
             if (EmitterStats.ENABLED && down.stats != null)
-                down.onBatchReceived(in);
-            requestNextChunk(in.totalRows());
+                down.onBatchReceived(orphan);
+            requestNextChunk(Batch.peekTotalRows(orphan));
             if (projector != null)
-                in = projector.projectInPlace(in);
-            B f, b = in;
+                orphan = projector.projectInPlace(orphan);
+            onBatchLoop(orphan);
+        }
+
+        @SuppressWarnings("unchecked") private void onBatchLoop(Orphan<B> orphan) {
+            B f, b = orphan.takeOwnership(down);
             boolean spinNotified = false;
             while (true) {
                 if (down.tryBeginDelivery()) {
                     try {
-                        if ((b = down.deliver(b)) != in)
-                            b = bt.recycle(b);
+                        down.deliver(b);
                         break;
                     } finally { down.endDelivery(); }
                 } else if (FILLING.compareAndExchangeRelease(down, null, b) == null) {
                     // deliver our write to FILLING in case LOCK was released
                     if (down.tryBeginDelivery())  // else: thread owning LOCK will deliver
                         down.endDelivery();
-                    b = null;
                     break;
                 } else if (!spinNotified) {
                     spinNotified = true;
                     EmitterService.beginSpin();
-                } else if ((f=(B)FILLING.getAndSetRelease(down, null)) != null) {
-                    f.append(b); // preserve in, try delivering combined batch
-                    b = f;
+                } else if ((f=(B)FILLING.getAndSetAcquire(down, null)) != null) {
+                    f.requireOwner(down);
+                    f.append(b.releaseOwnership(down));
+                    f.requireOwner(down);
+                    b = f; // continue, trying to deliver the combined batch
                 }
             }
             if (spinNotified)
                 EmitterService.endSpin();
-            return b;
+        }
+
+        @SuppressWarnings("unchecked") @Override public void onBatchByCopy(B b) {
+            if (EmitterStats.ENABLED && down.stats != null)
+                down.onBatchReceived(b);
+            requestNextChunk(b.totalRows());
+            if (projector != null) {
+                onBatchLoop(projector.project(null, b));
+            } else if (down.tryBeginDelivery()) {
+                try {
+                    down.deliverCopy(b);
+                } finally { down.endDelivery(); }
+            } else {
+                B f = (B)FILLING.getAndSetRelease(down, null);
+                if (f == null)
+                    f = bt.create(b.cols).takeOwnership(down);
+                f.copy(b);
+                onBatchLoop(f.releaseOwnership(down));
+            }
         }
 
         @Override public void onComplete() {

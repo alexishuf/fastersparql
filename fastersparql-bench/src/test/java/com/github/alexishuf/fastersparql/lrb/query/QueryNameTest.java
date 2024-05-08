@@ -9,13 +9,15 @@ import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.AbstractWsClientParser;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -98,7 +100,7 @@ class QueryNameTest {
     }
 
     @ParameterizedTest @MethodSource
-    public <B extends Batch<B>>
+    public <B extends Batch<B>, S extends ResultsSerializer<S>>
     void testParseResultsSerializeAndParse(QueryName name, BatchType<B> type,
                                            SparqlResultFormat format) {
         Vars vars = name.parsed().publicVars();
@@ -109,25 +111,29 @@ class QueryNameTest {
 //            expected = prepareExpectedForWS(expected, type);
 
         // serialize
-        var serializer = ResultsSerializer.create(format);
-        ByteRope sink = new ByteRope();
-        serializer.init(vars, vars, false);
-        serializer.serializeHeader(sink);
-        serializer.serialize(expected, sink);
-        serializer.serializeTrailer(sink);
+        try (var sink = PooledMutableRope.get()) {
+            try (var serializerGuard = new Guard<S>(this)) {
+                @SuppressWarnings("unchecked")
+                var serializer = serializerGuard.set((Orphan<S>)ResultsSerializer.create(format));
+                serializer.init(vars, vars, false);
+                serializer.serializeHeader(sink);
+                serializer.serialize(expected, name, sink);
+                serializer.serializeTrailer(sink);
+            }
 
-        //parse
-        try (var parsed = new SPSCBIt<>(type, vars)) {
-            var parser = createParser(format, parsed);
-            parser.feedShared(sink);
-            parser.feedEnd();
-            B acc = type.create(expected.cols);
-            acc.reserveAddLocals(expected.localBytesUsed());
-            for (B b = null; (b = parsed.nextBatch(b)) != null; )
-                acc.copy(b);
-            assertEquals(expected, acc);
-        } catch (BatchQueue.CancelledException | BatchQueue.TerminatedException e) {
-            throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
+            //parse
+            try (var parsed = new SPSCBIt<>(type, vars)) {
+                var parser = createParser(format, parsed);
+                parser.feedShared(sink);
+                parser.feedEnd();
+                B acc = type.create(expected.cols).takeOwnership(this);
+                acc.reserveAddLocals(expected.localBytesUsed());
+                for (B b = null; (b = parsed.nextBatch(b, this)) != null; )
+                    acc.copy(b);
+                assertEquals(expected, acc);
+            } catch (BatchQueue.CancelledException | BatchQueue.TerminatedException e) {
+                throw new RuntimeException("Unexpected "+e.getClass().getSimpleName());
+            }
         }
     }
 

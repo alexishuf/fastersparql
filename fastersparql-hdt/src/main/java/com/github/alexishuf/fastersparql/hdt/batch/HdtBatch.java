@@ -3,9 +3,12 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
@@ -15,57 +18,75 @@ import java.util.Arrays;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.longsAtLeast;
 import static java.lang.System.arraycopy;
 import static java.lang.Thread.currentThread;
 
-public class HdtBatch extends IdBatch<HdtBatch> {
+public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
 
     /* --- --- --- lifecycle --- --- --- */
 
-    public HdtBatch(int terms, short cols, boolean special) {
-        super(terms, cols, special);
+    public HdtBatch(long[] ids, short cols) {
+        super(ids, cols);
         BatchEvent.Created.record(this);
     }
 
-    public static HdtBatch of(int rows, int cols, long... ids) {
-        HdtBatch b = new HdtBatch((short) (rows * cols), (short) cols, true);
-        arraycopy(ids, 0, b.arr, 0, rows*cols);
+    public static Orphan<HdtBatch> of(int rows, int cols, long... ids) {
+        int terms = rows*cols;
+        if (terms > Short.MAX_VALUE)
+            throw new IllegalArgumentException("rows*cols > Short.MAX_VALUE");
+        long[] dstIds = longsAtLeast(rows*cols);
+        arraycopy(ids, 0, dstIds, 0, rows*cols);
+        var b = new Concrete(dstIds, (short)cols);
         b.rows = (short)rows;
         return b;
+    }
+
+    protected static final class Concrete extends HdtBatch implements Orphan<HdtBatch> {
+        public Concrete(long[] ids, short cols) {super(ids, cols);}
+        @Override public HdtBatch takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     /* --- --- --- batch accessors --- --- --- */
 
     @Override public HdtBatchType idType() { return HDT; }
 
-    @Override public HdtBatch dup() {return dup((int)currentThread().threadId());}
-    @Override public HdtBatch dup(int threadId) {
-        HdtBatch b = HDT.createForThread(threadId, cols);
+    @Override public Orphan<HdtBatch> dup() {return dup((int)currentThread().threadId());}
+    @Override public Orphan<HdtBatch> dup(int threadId) {
+        HdtBatch b = HDT.createForThread(threadId, cols).takeOwnership(this);
         b.copy(this);
-        return b;
+        return b.releaseOwnership(this);
     }
 
-    @Override public HdtBatch dupRow(int row) {
+    @Override public Orphan<HdtBatch> dupRow(int row) {
         return dupRow(row, (int)currentThread().threadId());
     }
 
-    @Override public HdtBatch dupRow(int row, int threadId) {
+    @Override public Orphan<HdtBatch> dupRow(int row, int threadId) {
         short cols = this.cols;
-        var b = HDT.createForThread(threadId, cols);
+        var b = HDT.createForThread(threadId, cols).takeOwnership(this);
         b.doPut(this, (short)(row*cols), 0, (short)1, cols);
-        return b;
+        return b.releaseOwnership(this);
     }
 
     /* --- --- --- term-level accessors --- --- --- */
 
-    @Override
-    public boolean equals(@NonNegative int row, @NonNegative int col, HdtBatch other,
-                          int oRow, int oCol) {
-        int cols = this.cols, oCols = other.cols;
+    @Override public boolean equals(@NonNegative int row, long[] ids, int idsOffset) {
+        short rows = this.rows, cols = this.cols;
         //noinspection ConstantValue
-        if (row < 0 || col < 0 || row >= rows || col >= cols || oRow < 0 || oCol < 0
-                    || oRow >= other.rows || oCol >= oCols) throw new IndexOutOfBoundsException();
-        long id = arr[row*cols + col], oId = other.arr[oRow*oCols + oCol];
+        if (row < 0 || row >= rows)
+            throw new IndexOutOfBoundsException(row);
+        for (int i = 0, offset = row*cols; i < cols; i++) {
+            if (!equals(arr[offset+i], ids[idsOffset+i])) return false;
+        }
+        return true;
+    }
+
+    @Override public boolean equals(@NonNegative int row, @NonNegative int col, long id) {
+        return equals(id(row, col), id);
+    }
+
+    public static boolean equals(long id, long oId) {
         if (IdAccess.sameSource(id, oId)) return id == oId;
         if (id == NOT_FOUND || oId == NOT_FOUND) return false;
 
@@ -83,8 +104,8 @@ public class HdtBatch extends IdBatch<HdtBatch> {
         return CharSequence.compare(str, oStr) == 0;
     }
 
-    @Override public @Nullable Term get(@NonNegative int row, @NonNegative int col) {
-        requireUnpooled();
+    @Override public @Nullable FinalTerm get(@NonNegative int row, @NonNegative int col) {
+        requireAlive();
         //noinspection ConstantValue
         if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
 
@@ -95,21 +116,16 @@ public class HdtBatch extends IdBatch<HdtBatch> {
             return null;
 
         // try returning a cached value
-        Term term = cachedTerm(addr);
+        FinalTerm term = cachedTerm(addr);
         if (term == null) cacheTerm(addr, term = IdAccess.toTerm(id));
         return term;
     }
 
-    @Override public boolean getView(@NonNegative int row, @NonNegative int col, Term dest) {
+    @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {
         Term t = get(row, col);
         if (t == null) return false;
-        dest.set(t.shared(), t.local(), t.sharedSuffixed());
+        dest.wrap(t.shared(), t.local(), t.sharedSuffixed());
         return true;
-    }
-
-    @Override public @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col) {
-        Term t = get(row, col);
-        return t == null ? null : new TwoSegmentRope(t.first(), t.second());
     }
 
     @Override
@@ -123,10 +139,6 @@ public class HdtBatch extends IdBatch<HdtBatch> {
 
 
     /* --- --- --- mutators --- --- --- */
-
-    @Override public @Nullable HdtBatch recycle() {
-        return HDT.recycle(this);
-    }
 
     /**
      * Similar to {@link Batch#putConverting(Batch)}, but converts
@@ -148,28 +160,27 @@ public class HdtBatch extends IdBatch<HdtBatch> {
             throw new IllegalArgumentException("other.cols != cols");
         var tail = tail();
         var dict = IdAccess.dict(dictId);
-        var t = Term.pooledMutable();
-        for (; o != null; o = o.next) {
-            o.requireUnpooled();
-            for (short nr, rb = 0, oRows = o.rows; rb < oRows; rb += nr) {
-                int dPos = tail.rows*cols;
-                nr = (short)( (tail.termsCapacity-dPos)/cols );
-                if (nr <= 0) {
-                    tail.tail = null;
-                    nr = (short)( (tail = createTail()).termsCapacity/cols );
-                    dPos = 0;
-                }
-                if (rb+nr > oRows) nr = (short)(oRows-rb);
-                tail.rows += nr;
-                long[] ids = tail.arr;
-                Arrays.fill(tail.hashes, dPos, dPos + nr*cols, 0);
-                for (int r = rb; r < nr; r++) {
-                    for (int c = 0; c < cols; c++, ++dPos)
-                        ids[dPos] = o.getView(r, c, t) ? encode(dictId, dict, t) : 0L;
+        try (var t = PooledTermView.ofEmptyString()) {
+            for (; o != null; o = o.next) {
+                o.requireAlive();
+                for (short nr, rb = 0, oRows = o.rows; rb < oRows; rb += nr) {
+                    int dPos = tail.rows*cols;
+                    nr = (short)( (tail.termsCapacity-dPos)/cols );
+                    if (nr <= 0) {
+                        tail.tail = null;
+                        nr = (short)( (tail = createTail()).termsCapacity/cols );
+                        dPos = 0;
+                    }
+                    if (rb+nr > oRows) nr = (short)(oRows-rb);
+                    tail.rows += nr;
+                    long[] ids = tail.arr;
+                    for (int r = rb; r < nr; r++) {
+                        for (int c = 0; c < cols; c++, ++dPos)
+                            ids[dPos] = o.getView(r, c, t) ? encode(dictId, dict, t) : 0L;
+                    }
                 }
             }
         }
-        t.recycle();
         assert validate();
         return this;
     }
@@ -184,20 +195,18 @@ public class HdtBatch extends IdBatch<HdtBatch> {
         if (other.cols != cols) throw new  IllegalArgumentException("other.cols != cols");
 
         var dict = IdAccess.dict(dictId);
-        var t = Term.pooledMutable();
-
         var dst = tail();
-        int dPos = dst.rows*cols;
-        if (dPos+cols > dst.termsCapacity) {
-            dst = createTail();
-            dPos = 0;
+        try (var t = PooledTermView.ofEmptyString()) {
+            int dPos = dst.rows*cols;
+            if (dPos+cols > dst.termsCapacity) {
+                dst = createTail();
+                dPos = 0;
+            }
+            ++dst.rows;
+            long[] ids = dst.arr;
+            for (int c = 0; c < cols; c++, ++dPos)
+                ids[dPos] = other.getView(row, c, t) ? encode(dictId, dict, t) : 0L;
         }
-        ++dst.rows;
-        long[] ids = dst.arr;
-        Arrays.fill(dst.hashes, dPos, dPos+cols, 0);
-        for (int c = 0; c < cols; c++, ++dPos)
-            ids[dPos] = other.getView(row, c, t) ? encode(dictId, dict, t) : 0L;
-        t.recycle();
         assert dst.validate();
         return this;
     }

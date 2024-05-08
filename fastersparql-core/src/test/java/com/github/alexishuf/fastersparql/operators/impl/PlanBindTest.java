@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -38,7 +39,7 @@ class PlanBindTest {
         /* 5 */ asList("SELECT ?in ?x WHERE {?x :p ?in}", "y,in", "_:l0,_:l1",
                        "SELECT  ?x WHERE {?x :p _:l1}")
         ).map(l -> arguments(
-                l.get(0), // rightSparql
+                l.getFirst(), // rightSparql
                 Vars.of(l.get(1).split(",")), //leftVars
                 Term.termList(l.get(2).split(",")), //leftRow
                 l.get(3) //expectedSparql
@@ -48,9 +49,11 @@ class PlanBindTest {
     @ParameterizedTest @MethodSource
     void testBind(String rightSparql, Vars leftVars, List<Term> leftRow,
                   String expectedSparql) {
-        var right = FS.query(DUMMY, rightSparql);
-        var binding = new BatchBinding(leftVars).attach(TermBatch.of(leftRow), 0);
-        var bound = (Query)right.bound(binding);
-        assertEquals(new OpaqueSparqlQuery(expectedSparql), bound.query());
+        try (var g = new Guard.BatchGuard<TermBatch>(this)) {
+            var right = FS.query(DUMMY, rightSparql);
+            var binding = new BatchBinding(leftVars).attach(g.set(TermBatch.of(leftRow)), 0);
+            var bound = (Query)right.bound(binding);
+            assertEquals(new OpaqueSparqlQuery(expectedSparql), bound.query());
+        }
     }
 }

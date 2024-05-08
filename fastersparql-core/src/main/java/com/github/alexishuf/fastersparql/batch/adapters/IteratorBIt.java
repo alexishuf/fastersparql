@@ -5,13 +5,15 @@ import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Collection;
 import java.util.Iterator;
+
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 
 /** Wrap a plain {@link Iterator} as a {@link BIt}. */
 public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
@@ -52,13 +54,21 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
         T next = it.next();
         return switch (next) {
             case Term[] a -> dest.putRow(a);
-            case Batch<?> b -> { dest.putConverting(b); yield dest; }
+            case Orphan<?> o -> {
+                dest.putConverting((Batch<?>)o.takeOwnership(this));
+                yield dest;
+            }
+            case Batch<?> b -> {
+                dest.putConverting(b);
+                yield dest;
+            }
             case Collection<?> coll -> dest.putRow(coll);
             case Integer i -> { // test cases compatibility
                 if (dest.cols != 1)
                     throw new IllegalArgumentException("expected >1 column, cannot feed integer");
                 dest.beginPut();
-                dest.putTerm(0, Term.splitAndWrap(Rope.of('"', i, SharedRopes.DT_integer)));
+                var local = RopeFactory.make(12).add('"').add(i).take();
+                dest.putTerm(0, Term.wrap(local, DT_integer));
                 dest.commitPut();
                 yield dest;
             }

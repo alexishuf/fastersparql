@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import com.github.alexishuf.fastersparql.store.index.triples.TriplesSorter;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.hdt.HDT;
 import org.rdfhdt.hdt.hdt.HDTManager;
@@ -75,7 +76,7 @@ public class IterationTester implements AutoCloseable {
     }
 
     public static IterationTester
-    createFromHDT(Class<?> ref, String resourcePath, HdtConverter converter) throws IOException {
+    createFromHDT(Class<?> ref, String resourcePath, Hdt2StoreIndexConverter converter) throws IOException {
         var tempDir = Files.createTempDirectory("fastersparql");
         Path hdtPath = tempDir.resolve("origin.hdt");
         List<TestTriple> triples;
@@ -111,9 +112,10 @@ public class IterationTester implements AutoCloseable {
     public static List<TestTriple> triplesFromHDT(Path dir) throws IOException {
         List<TestTriple> triples = new ArrayList<>();
         int dictId = 0;
+        Dict.AbstractLookup<?> lookup = null;
         try (var strings = Dict.load(dir.resolve("strings"));
              HDT hdt = HDTManager.mapHDT(dir.resolve("origin.hdt").toString())) {
-            var lookup = strings.polymorphicLookup();
+            lookup = strings.polymorphicLookup().takeOwnership(TRIPLES_FROM_HDT);
             dictId = IdAccess.register(hdt.getDictionary());
             for (var it = hdt.getTriples().searchAll(); it.hasNext(); ) {
                 TripleID triple = it.next();
@@ -129,12 +131,13 @@ public class IterationTester implements AutoCloseable {
                     fail("Terms missing from Dict");
                 triples.add(new TestTriple(s, p, o));
             }
-
         } finally {
             if (dictId != 0) IdAccess.release(dictId);
+            if (lookup != null) lookup.recycle(TRIPLES_FROM_HDT);
         }
         return triples;
     }
+    private static final StaticMethodOwner TRIPLES_FROM_HDT = new StaticMethodOwner("IterationTester.triplesFromHDT");
 
     private static IterationTester load(Path dir, List<TestTriple> triples) throws IOException {
         Dict strings = null;
@@ -194,11 +197,15 @@ public class IterationTester implements AutoCloseable {
 
     public void testLoadAndLookupStrings() {
         assertNotNull(strings);
-        var lookup = strings.polymorphicLookup();
-        for (int id : terms) {
-            PlainRope string = lookup.get(id);
-            assertNotNull(string);
-            assertEquals(id, lookup.find(string));
+        var lookup = strings.polymorphicLookup().takeOwnership(this);
+        try {
+            for (int id : terms) {
+                PlainRope string = lookup.get(id);
+                assertNotNull(string);
+                assertEquals(id, lookup.find(string));
+            }
+        } finally {
+            lookup.recycle(this);
         }
     }
 

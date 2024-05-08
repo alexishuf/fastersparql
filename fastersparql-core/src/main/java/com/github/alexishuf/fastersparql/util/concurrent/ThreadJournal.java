@@ -107,6 +107,25 @@ public class ThreadJournal {
         } finally { unlockForWrite(); }
     }
 
+    public static String render(Object... args) {
+        var sb = new StringBuilder();
+        for (Object a : args) {
+            String str = render(a);
+            int len = sb.length();
+            if (len > 0) {
+                char c = sb.charAt(len-1);
+                if (c != ' ' && c != '=' && !str.isEmpty() && str.charAt(0) != ' ')
+                    sb.append(' ');
+            }
+            sb.append(str);
+        }
+        return sb.toString();
+    }
+
+    public static String render(Object o) {
+        return o instanceof JournalNamed n ? n.journalName()
+                : DebugJournal.DefaultRenderer.INSTANCE.renderObj(o);
+    }
 
     private static RoleJournal journal() {
         Thread thread = Thread.currentThread();

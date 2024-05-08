@@ -1,7 +1,13 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -9,12 +15,21 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
-import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.LONG;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.HANGMAN;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.min;
 import static java.lang.System.arraycopy;
 import static java.lang.Thread.onSpinWait;
 
 public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
+    public static final int BYTES = 16 /* obj header */
+            + 2*2 /* rows, cols */
+            + 2*4 /* tail+padding */
+            + 2*4 /* arr, cachedTerm */
+            + 3*2 /* short fields */
+            + 2   /* padding */
+            + IdBatchType.PREFERRED_BATCH_TERMS*8;
     private static final VarHandle CACHED_LOCK;
     static {
         try {
@@ -25,44 +40,50 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
     public    final  long[] arr;
-    protected final   int[] hashes;
     public    final short   termsCapacity;
     protected       short   offerRowBase = -1;
     @SuppressWarnings("unused") // access through CACHED_LOCK
     private boolean plainCachedLock;
-    final boolean special;
     private short cachedAddr = -1;
-    private Term cachedTerm;
+    private FinalTerm cachedTerm;
 
-    protected IdBatch(int terms, short cols, boolean special) {
+    protected IdBatch(long[] ids, short cols) {
         super((short)0, cols);
-        this.arr           = longsAtLeastUpcycle(Math.max(terms, cols));
-        this.termsCapacity = (short)min(arr.length, Short.MAX_VALUE);
-        this.hashes        = intsAtLeast(termsCapacity);
-        this.special       = special;
+        if (ids.length < cols)
+            throw new IllegalArgumentException("ids.length < cols");
+        this.arr           = ids;
+        this.termsCapacity = (short)arr.length;
+        updateLeakDetectorRefCapacity();
     }
 
-    @Override final void markGarbage() {
-        if (MARK_POOLED && (int)P.getAndSetRelease(this, P_GARBAGE) != P_POOLED)
-            throw new IllegalStateException("marked non-pooled as garbage");
-        for (var b = this; b != null; b = b.next) {
-            LONG.offer(b.arr, b.termsCapacity);
-            INT.offer(b.hashes, b.hashes.length);
-            //b.arr           = EMPTY_LONG;
-            //b.hashes        = EMPTY_INT;
-            //b.termsCapacity =  0;
-            b.rows            =  0;
-            b.cols            =  0;
-            b.offerRowBase    = -1;
+    @SuppressWarnings("unchecked") @Override public @Nullable B recycle(Object currentOwner) {
+        IdBatchType<B> type = idType();
+        Object nodeOwner = currentOwner;
+        for (B node = (B)this, next; node != null; nodeOwner=node, node=next) {
+            node.internalMarkRecycled(nodeOwner);
+            next = node.next;
+            node.next = null;
+            node.tail = node;
+            BatchEvent.Pooled.record(node);
+            if (type.pool.offer(node) != null) {
+                try {
+                    node.internalMarkGarbage(RECYCLED);
+                } catch (Throwable ignored) { assert false : "markGarbage() failed"; }
+            }
         }
+        return null;
+    }
+
+    @Override protected @Nullable B internalMarkGarbage(Object currentOwner) {
+        super.internalMarkGarbage(currentOwner);
+        LONG.offer(arr, termsCapacity);
+        return null;
     }
 
     @Override protected boolean validateNode(Validation validation) {
         if (!SELF_VALIDATE || validation == Validation.NONE)
             return true;
         if (termsCapacity != arr.length)
-            return false;
-        if (hashes.length < termsCapacity)
             return false;
         return super.validateNode(validation);
     }
@@ -73,7 +94,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     @Override public int       rowsCapacity() { return cols == 0 ? Integer.MAX_VALUE : termsCapacity/cols; }
     @Override public int      termsCapacity() { return termsCapacity; }
-    @Override public int totalBytesCapacity() { return termsCapacity*8 + hashes.length*4; }
+    @Override public int totalBytesCapacity() { return termsCapacity*8; }
 
     @Override public boolean hasCapacity(int terms, int local) { return terms <= termsCapacity; }
 
@@ -83,10 +104,10 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     /* --- --- --- helpers --- --- --- */
 
-    protected Term cachedTerm(int address) {
+    protected FinalTerm cachedTerm(int address) {
         // try returning a cached value
         int cachedAddr;
-        Term cachedTerm;
+        FinalTerm cachedTerm;
         while (!CACHED_LOCK.weakCompareAndSetAcquire(this, false, true)) onSpinWait();
         try {
             cachedAddr = this.cachedAddr;
@@ -95,7 +116,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return cachedAddr == address ? cachedTerm : null;
     }
 
-    protected void cacheTerm(int address, Term term) {
+    protected void cacheTerm(int address, FinalTerm term) {
         while (CACHED_LOCK.weakCompareAndSetAcquire(this, false, true)) onSpinWait();
         try {
             this.cachedAddr = (short)address;
@@ -105,11 +126,9 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
 
     protected B createTail() {
-        B b = idType().create(cols), tail = this.tail;
-        if (tail == null)
-            throw new UnsupportedOperationException("intermediary batch");
+        B tail = this.tail, b = idType().create(cols).takeOwnership(tail);
+        tail.tail = b;
         tail.next = b;
-        tail.tail = null;
         this.tail = b;
         return b;
     }
@@ -117,7 +136,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     /* --- --- --- term-level access --- --- --- */
 
     public long id(int row, int col) {
-        requireUnpooled();
+        requireAlive();
         if (row < 0 || col < 0 || row >= rows || col >= cols)
             throw new IndexOutOfBoundsException("(row, col) out of bounds");
         return arr[row * cols + col];
@@ -132,6 +151,23 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         return node.id(rel, col);
     }
 
+    @Override
+    public boolean equals(@NonNegative int row, @NonNegative int col, B other, int oRow, int oCol) {
+        return equals(row, col, other.id(oRow, oCol));
+    }
+
+    @Override public boolean equals(int row, B other, int oRow) {
+        short cols = this.cols;
+        if (other.cols != cols)
+            throw new IllegalArgumentException("cols mismatch");
+        if (oRow < 0 || oRow >= other.rows)
+            throw new IndexOutOfBoundsException(oRow);
+        return equals(row, other.arr, cols*oRow);
+    }
+
+    public abstract boolean equals(@NonNegative int row, long[] ids, int idsOffset);
+    public abstract boolean equals(@NonNegative int row, @NonNegative int col, long id);
+
     /* --- --- --- mutators --- --- --- */
 
     @SuppressWarnings("unchecked") @Override public final void clear() {
@@ -140,40 +176,28 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         this.cachedTerm = null;
         this.tail       = (B)this;
         if (next != null)
-            next = idType().recycle(next);
+            next.recycle(this);
     }
 
     @SuppressWarnings("unchecked") @Override public final @This B clear(int cols) {
-        if (cols > termsCapacity) {
-            B bigger = idType().create(cols);
-            recycle();
-            return bigger;
-        }
+        if (cols > termsCapacity)
+            throw new IllegalArgumentException("cols too large");
+        if (next != null)
+            next = next.recycle(this);
         this.cols       = (short)cols;
         this.rows       =  0;
         this.cachedAddr = -1;
         this.cachedTerm = null;
         this.tail       = (B)this;
-        if (next != null)
-            this.next = idType().recycle(next);
         return (B)this;
-    }
-
-    public void dropCachedHashes() {
-        for (var b = this; b != null; b = b.next) {
-            int[] hashes = b.hashes;
-            for (int i = 0, end = b.rows*b.cols; i < end; i++)
-                hashes[i] = 0;
-        }
     }
 
     @Override public void abortPut() throws IllegalStateException {
         B tail = tail();
-        tail.requireUnpooled();
+        tail.requireAlive();
         if (tail.offerRowBase < 0) return;
         tail.offerRowBase = -1;
-        if (tail != this && tail.rows == 0)
-            dropTail();
+        dropEmptyTail();
         assert validate();
     }
 
@@ -181,7 +205,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     protected final void doPut(B src, int srcPos, int dstPos, short nRows, short cols) {
         int nTerms = nRows*cols;
         arraycopy(src.arr,    srcPos, arr,    dstPos, nTerms);
-        arraycopy(src.hashes, srcPos, hashes, dstPos, nTerms);
         rows += nRows;
         assert validate();
     }
@@ -195,7 +218,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         } else {
             B dst = tail();
             for (; o != null; o = o.next) {
-                o.requireUnpooled();
+                o.requireAlive();
                 for (short nr, or = 0, oRows = o.rows; or < oRows; or += nr) {
                     nr = (short) (dst.termsCapacity / cols - dst.rows);
                     if (nr <= 0)
@@ -207,23 +230,41 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         }
     }
 
-    @Override public void append(B other) {
+    @Override protected boolean copySingleNodeIfFast(B nonEmpty) {
+        B tail = this.tail;
+        short cols = nonEmpty.cols, rows = nonEmpty.rows;
+        int dstPos = tail.rows*cols, nTerms = rows*cols;
+        if (dstPos+nTerms > tail.termsCapacity)
+            return false; // does not fit
+        arraycopy(nonEmpty.arr,    0, tail.arr,    dstPos, nTerms);
+        tail.rows += rows;
+        return true;
+    }
+
+    @Override public void append(Orphan<B> orphan) {
         short cols = this.cols;
-        if (other.cols != cols)
+        if (peekColumns(orphan) != cols)
             throw new IllegalArgumentException("cols mismatch");
         if (rows == 0)
-            other = copyFirstNodeToEmpty(other);
-        B dst = tail(), src = other, prev = null;
-        for (; src != null; src = (prev=src).next) {
-            src.requireUnpooled();
-            short dstPos = (short)(dst.rows*cols), srcRows = src.rows;
-            if (dstPos + (src.rows)*cols > dst.termsCapacity)
-                break;
-            dst.doPut(src, 0, dstPos, srcRows, cols); // copy contents
+            orphan = copyFirstNodeToEmpty(orphan);
+        B dst = tail(), src = null;
+        try {
+            while (orphan != null) {
+                src = orphan.takeOwnership(dst);
+                orphan = null;
+                short dstPos = (short)(dst.rows*cols), srcRows = src.rows;
+                if (dstPos + (src.rows)*cols <= dst.termsCapacity) {
+                    dst.doPut(src, 0, dstPos, srcRows, cols); // copy contents
+                    orphan = src.detachHead();
+                    src = src.recycle(dst);
+                }
+            }
+            if (src != null)
+                src = quickAppend0(src);
+        } finally {
+            if (   src != null)    src.recycle(dst);
+            if (orphan != null) orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
         }
-        if (src != null)
-            other = quickAppendRemainder(other, prev, src);
-        idType().recycle(other); // append() caller always looses ownership of other
         assert validate();
     }
 
@@ -237,9 +278,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             end = cols;
         }
         long[] arr    = dst.arr;
-        int [] hashes = dst.hashes;
         for (int i = begin; i < end; i++)     arr[i] = 0;
-        for (int i = begin; i < end; i++)  hashes[i] = 0;
         dst.offerRowBase = begin;
     }
 
@@ -278,9 +317,21 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         assert validate();
     }
 
+    public final void putRow(long[] ids, int offset) {
+        var tail = this.tail;
+        short cols = this.cols, rows = tail.rows;
+        int dst = rows*cols;
+        if (dst+cols > tail.termsCapacity) {
+            tail = createTail();
+            dst = rows =0;
+        }
+        tail.rows = (short)(rows+1);
+        arraycopy(ids, offset, tail.arr, dst, cols);
+    }
+
     @Override public final void putRow(B other, int row) {
         short cols = this.cols;
-        other.requireUnpooled();
+        other.requireAlive();
         if (other.cols != cols) throw new IllegalArgumentException("other.cols != cols");
         if (row >= other.rows)
             throw new IndexOutOfBoundsException("row >= other.rows");
@@ -301,45 +352,47 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         }
         short cols = this.cols;
         if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
-        Term t = Term.pooledMutable();
-        for (short oRows; other != null; other = other.next) {
-            other.requireUnpooled();
-            if ((oRows = other.rows) <= 0)
-                continue; // skip empty batches
-            for (int r = 0; r < oRows; r++) {
-                beginPut();
-                for (int c = 0; c < cols; c++) {
-                    if (other.getView(r, c, t))
-                        putTerm(c, t);
+        try (var t = PooledTermView.ofEmptyString()) {
+            for (short oRows; other != null; other = other.next) {
+                other.requireAlive();
+                if ((oRows = other.rows) <= 0)
+                    continue; // skip empty batches
+                for (int r = 0; r < oRows; r++) {
+                    beginPut();
+                    for (int c = 0; c < cols; c++) {
+                        if (other.getView(r, c, t))
+                            putTerm(c, t);
+                    }
+                    commitPut();
                 }
-                commitPut();
             }
         }
-        t.recycle();
     }
 
     @Override public final void putRowConverting(Batch<?> other, int row) {
         short cols = this.cols;
-        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
-        if (MARK_POOLED) {
-            this .requireUnpooled();
-            other.requireUnpooled();
-        }
+        if (other.cols != cols)
+            throw new IllegalArgumentException("cols mismatch");
+        this .requireAlive();
+        other.requireAlive();
 
-        Term t = Term.pooledMutable();
-        beginPut();
-        for (int c = 0; c < cols; c++) {
-            if (other.getView(row, c, t))
-                putTerm(c, t);
+        try (var t = PooledTermView.ofEmptyString()) {
+            beginPut();
+            for (int c = 0; c < cols; c++) {
+                if (other.getView(row, c, t))
+                    putTerm(c, t);
+            }
+            commitPut();
+        } catch (Throwable t) {
+            abortPut();
+            throw t;
         }
-        commitPut();
-        t.recycle();
     }
 
     /* --- --- --- operation objects --- --- --- */
 
-    @SuppressWarnings("UnnecessaryLocalVariable")
-    public static class Merger<B extends IdBatch<B>> extends BatchMerger<B> {
+    public static abstract sealed class Merger<B extends IdBatch<B>>
+            extends BatchMerger<B, Merger<B>> {
         private final IdBatchType<B> idBatchType;
         private final short outColumns;
 
@@ -349,25 +402,32 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             this.outColumns  = (short)sources.length;
         }
 
-        private B setupDst(B offer, boolean inplace) {
+        protected static final class Concrete<B extends IdBatch<B>>
+                extends Merger<B> implements Orphan<Merger<B>> {
+            public Concrete(BatchType<B> batchType, Vars outVars, short[] sources) {
+                super(batchType, outVars, sources);
+            }
+            @Override public Merger<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        private B setupDst(Orphan<B> offer, boolean inplace) {
             int cols = outColumns;
             if (offer != null) {
-                if (offer.rows == 0 || inplace)
-                    offer.cols = (short)cols;
-                else if (offer.cols != cols)
+                B b = offer.takeOwnership(this);
+                if (b.rows == 0 || inplace)
+                    b.cols = (short)cols;
+                else if (b.cols != cols)
                     throw new IllegalArgumentException("dst.cols != outColumns");
-                return offer;
+                return b;
             }
-            return idBatchType.create(cols);
+            return idBatchType.create(cols).takeOwnership(this);
         }
 
         private B createTail(B root) {
             return root.setTail(idBatchType.create(outColumns));
         }
 
-        protected B mergeWithMissing(B dst, B left, int leftRow, B right) {
-            long[] lIds    = left.arr;
-            int [] lHashes = left.hashes;
+        protected Orphan<B> mergeWithMissing(B dst, B left, int leftRow, B right) {
             int l = leftRow*left.cols;
             B tail = dst.tail();
             for (int rows = right == null || right.rows == 0 ? 1 : right.totalRows(), nr
@@ -378,39 +438,34 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                     d = 0;
                 }
                 long[] dIds    = tail.arr;
-                int [] dHashes = tail.hashes;
                 tail.rows += (short)(nr=min(nr, rows));
                 for (int e = d+nr*sources.length; d < e; d += sources.length) {
                     for (int c = 0, s; c < sources.length; c++) {
-                        if ((s=sources[c]) > 0) {
-                            dIds   [d+c] = lIds   [l+(--s)];
-                            dHashes[d+c] = lHashes[l+s];
-                        } else {
-                            dIds   [d+c] = 0L;
-                            dHashes[d+c] = 0;
-                        }
+                        if ((s=sources[c]) > 0)
+                            dIds[d+c] = left.arr[l+(--s)];
+                        else
+                            dIds[d+c] = 0L;
                     }
                 }
             }
             assert tail.validate();
-            return dst;
+            return dst.releaseOwnership(this);
         }
 
         @SuppressWarnings("UnnecessaryLocalVariable")
-        @Override public final B merge(@Nullable B dst, B left, int leftRow, @Nullable B right) {
-            dst = setupDst(dst, false);
+        @Override public final Orphan<B> merge(@Nullable Orphan<B> dstOffer, B left, int leftRow,
+                                               @Nullable B right) {
+            var dst = setupDst(dstOffer, false);
             if (sources.length == 0)
-                return mergeThin(dst, right);
+                return mergeThin(dst, right).releaseOwnership(this);
             if (right == null || right.rows*right.cols == 0)
                 return mergeWithMissing(dst, left, leftRow, right);
 
             long[] lIds    = left.arr;
-            int [] lHashes = left.hashes;
             short l = (short)(leftRow*left.cols), rc = right.cols;
             B tail = dst.tail();
             for (; right != null; right = right.next) {
                 long[] rIds    = right.arr;
-                int [] rHashes = right.hashes;
                 for (short rr = 0, rRows = right.rows, nr; rr < rRows; rr += nr) {
                     if ((nr=(short)(tail.termsCapacity/sources.length-tail.rows)) <= 0) {
                         tail = createTail(dst);
@@ -420,41 +475,36 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                     short d = (short)(tail.rows*tail.cols);
                     tail.rows += nr;
                     long[] dIds    = tail.arr;
-                    int [] dHashes = tail.hashes;
                     for (short r = (short)(rr*rc), re = (short)((rr+nr)*rc); r < re; r+=rc) {
                         for (int c = 0, src; c < sources.length; c++, ++d) {
-                            if ((src = sources[c]) == 0) {
-                                dIds   [d] = 0L;
-                                dHashes[d] = 0;
-                            } else if (src > 0) {
-                                dIds   [d] = lIds[src=l+src-1];
-                                dHashes[d] = lHashes[src];
-                            } else {
-                                dIds   [d] = rIds[src=r-src-1];
-                                dHashes[d] = rHashes[src];
-                            }
+                            if      ((src = sources[c]) == 0) dIds[d] = 0L;
+                            else if (src > 0)                 dIds[d] = lIds[l + src - 1];
+                            else                              dIds[d] = rIds[r - src - 1];
                         }
                     }
                 }
             }
             assert dst.validate();
-            return dst;
+            return dst.releaseOwnership(this);
         }
 
-        @Override public final B project(B dst, B in) {
+        @Override public final Orphan<B> project(Orphan<B> dst, B in) {
+            if (dst == in)
+                return projectInPlace(dst);
+            return project0(setupDst(dst, false), in, in.cols).releaseOwnership(this);
+        }
+
+        private B project0(B dst, B in, short ic) {
             short[] cols = columns;
             if (cols == null) throw new UnsupportedOperationException("not a projecting merger");
-            boolean inplace = dst == in;
-            short ic = in.cols;
-            dst = setupDst(dst, inplace);
+            boolean inPlace = dst == in;
             if (cols.length == 0)
                 return mergeThin(dst, in);
-            B tail = inplace ? dst : dst.tail();
+            B tail = inPlace ? dst : dst.tail();
             for (; in != null; in = in.next) {
-                long[]    iIds = in.arr,    dIds;
-                int [] iHashes = in.hashes, dHashes;
+                long[] dIds;
                 for (short ir = 0, iRows = in.rows, d, nr; ir < iRows; ir += nr) {
-                    if (inplace) {
+                    if (inPlace) {
                         d              = 0;
                         (tail=in).rows = nr = iRows;
                         tail.cols      = (short)cols.length;
@@ -466,47 +516,56 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                         }
                         tail.rows += nr = (short)min((tail.termsCapacity-d)/cols.length, iRows-ir);
                     }
-                    dIds    = tail.arr;
-                    dHashes = tail.hashes;
+                    dIds = tail.arr;
                     for (short i=(short)(ir*ic), ie=(short)((ir+nr)*ic); i < ie; i+=ic) {
-                        for (int c = 0, src, iPos; c < cols.length; c++, ++d) {
-                            if ((src = cols[c]) < 0) {
-                                dIds   [d] = 0L;
-                                dHashes[d] = 0;
-                            } else {
-                                dIds   [d] = iIds   [iPos=i+src];
-                                dHashes[d] = iHashes[iPos];
-                            }
-                        }
+                        for (int c = 0, src; c < cols.length; c++, ++d)
+                            dIds[d] = (src = cols[c]) < 0 ? 0L : in.arr[i + src];
                     }
                 }
             }
+            assert dst != null;
             assert dst.validate();
             return dst;
         }
 
-        @Override public final B projectInPlace(B b) {
-            if (b == null || b.rows == 0 || outColumns == 0)
-                return projectInPlaceEmpty(b);
-            var dst = project(safeInPlaceProject ? b : null, b);
-            if (dst != b)
-                b.recycle();
-            return dst;
+        @Override public final Orphan<B> projectInPlace(Orphan<B> orphan) {
+            if (peekRows(orphan) == 0 || outColumns == 0)
+                return projectInPlaceEmpty(orphan);
+            short ic = peekColumns(orphan);
+            var dst = setupDst(safeInPlaceProject ? orphan : null, safeInPlaceProject);
+            var in = safeInPlaceProject ? dst : orphan.takeOwnership(this);
+            try {
+                return project0(dst, in, ic).releaseOwnership(this);
+            } finally {
+                if (in != dst) in.recycle(this);
+            }
         }
 
-        @Override public B processInPlace(B b) { return projectInPlace(b); }
+        @Override public Orphan<B> processInPlace(Orphan<B> b) { return projectInPlace(b); }
 
-        @Override public @Nullable B onBatch(B batch) {
-            if (batch == null) return null;
-            int rcvRows = batch.totalRows();
-            return beforeOnBatch(batch) ? afterOnBatch(projectInPlace(batch), rcvRows) : batch;
+        @Override public void onBatch(Orphan<B> batch) {
+            if (batch != null) {
+                int rcvRows = peekTotalRows(batch);
+                if (beforeOnBatch(batch))
+                    afterOnBatch(projectInPlace(batch), rcvRows);
+            }
+        }
+        @Override public void onBatchByCopy(B batch) {
+            if (batch != null) {
+                int rcvRows = batch.totalRows();
+                if (beforeOnBatch(batch))
+                    afterOnBatch(project(fillingBatch(), batch), rcvRows);
+            }
         }
 
-        @Override public final B projectRow(@Nullable B dst, B in, int row) {
+        @Override public final Orphan<B> projectRow(@Nullable Orphan<B> dstOffer, B in, int row) {
             var cols = columns;
             if (cols == null)
                 throw new UnsupportedOperationException("not a projecting merger");
-            B tail = (dst = setupDst(dst, false)).tail();
+            in.requireAlive();
+            if (row >= in.rows)
+                throw new IndexOutOfBoundsException(row);
+            B dst = setupDst(dstOffer, false), tail = dst.tail;
             int d = tail.rows*tail.cols;
             if (d+tail.cols > tail.termsCapacity) {
                 tail = createTail(dst);
@@ -514,79 +573,94 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             }
             ++tail.rows;
 
-            long[] dIds    = tail.arr   , iIds    = in.arr   ;
-            int [] dHashes = tail.hashes, iHashes = in.hashes;
-            for (int c = 0, src, i = row*in.cols; c < cols.length; c++) {
-                dIds   [d+c] = (src=cols[c]) < 0 ? 0L : iIds   [i+src];
-                dHashes[d+c] =  src          < 0 ? 0  : iHashes[i+src];
-            }
+            long[] dIds = tail.arr;
+            for (int c = 0, src, i = row*in.cols; c < cols.length; c++)
+                dIds   [d+c] = (src=cols[c]) < 0 ? 0L : in.arr[i+src];
             assert tail.validate();
-            return dst;
+            return dst.releaseOwnership(this);
         }
 
-        @Override public B mergeRow(@Nullable B dst, B left, int leftRow, B right, int rightRow) {
-            B tail = (dst = setupDst(dst, false)).tailUnchecked();
+        @Override public Orphan<B> mergeRow(@Nullable Orphan<B> dstOffer,
+                                            B left, int leftRow, B right, int rightRow) {
+            left.requireAlive();
+            right.requireAlive();
+            if ( leftRow >=  left.rows) throw new IndexOutOfBoundsException( leftRow);
+            if (rightRow >= right.rows) throw new IndexOutOfBoundsException(rightRow);
+            B dst = setupDst(dstOffer, false), tail = dst.tail;
             if (tail.cols > 0) {
                 int d = tail.rows * tail.cols;
                 short l = (short)(leftRow * left.cols), r = (short)(rightRow * right.cols);
-                long[] dIds = tail.arr, lIds = left.arr, rIds = right.arr;
+                long[] dIds = tail.arr;
                 if (d + tail.cols > dIds.length) {
                     dIds = (tail = createTail(dst)).arr;
                     d = 0;
                 }
-                int[] dHsh = tail.hashes, lHsh = left.hashes, rHsh = right.hashes;
-                short s, i;
+                short s;
                 for (int c = 0; c < sources.length; c++, d++) {
-                    if ((s = sources[c]) > 0) {
-                        dIds[d] = lIds[i=(short)(l+s-1)];
-                        dHsh[d] = lHsh[i];
-                    } else if (s < 0) {
-                        dIds[d] = rIds[i=(short)(r-s-1)];
-                        dHsh[d] = rHsh[i];
-                    } else {
-                        dIds[d] = 0L;
-                        dHsh[d] = 0;
-                    }
+                    if      ((s = sources[c]) > 0) dIds[d] =  left.arr[l+s-1];
+                    else if ( s < 0)               dIds[d] = right.arr[r-s-1];
+                    else                           dIds[d] = 0L;
                 }
             }
             tail.rows++;
             assert tail.validate();
-            return dst;
+            return dst.releaseOwnership(this);
         }
     }
 
-    public static final class Filter<B extends IdBatch<B>> extends BatchFilter<B> {
-        private final Filter<B> before;
+    public static abstract sealed class Filter<B extends IdBatch<B>>
+            extends BatchFilter<B, Filter<B>> {
+        private final Filter<B> beforeFilter;
         private final Merger<B> projector;
-        private final IdBatchType<B> idBatchType;
 
-        public Filter(BatchType<B> batchType, Vars vars, @Nullable Merger<B> projector,
-                      RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
+        @SuppressWarnings("unchecked")
+        public Filter(BatchType<B> batchType, Vars vars, @Nullable Orphan<Merger<B>> projector,
+                      Orphan<? extends RowFilter<B, ?>> rowFilter,
+                      @Nullable Orphan<? extends BatchFilter<B, ?>> before) {
             super(batchType, vars, rowFilter, before);
-            assert projector == null || projector.vars.equals(vars);
-            this.projector = projector;
-            this.before = (Filter<B>)before;
-            this.idBatchType = (IdBatchType<B>)batchType;
+            this.projector = Orphan.takeOwnership(projector, this);
+            assert this.projector == null || this.projector.vars.equals(vars);
+            this.beforeFilter = (Filter<B>)this.before;
         }
 
-        @Override public B processInPlace(B b) { return filterInPlace(b); }
-
-        @Override public @Nullable B onBatch(B batch) {
-            if (batch == null) return null;
-            int rcvRows = batch.totalRows();
-            return beforeOnBatch(batch) ? afterOnBatch(filterInPlace(batch), rcvRows) : batch;
+        @Override protected void doRelease() {
+            Owned.safeRecycle(projector, this);
+            super.doRelease();
         }
 
-        @Override public B filterInPlace(B in) {
-            if (before != null)
-                in = before.filterInPlace(in);
-            if (in == null || (in.rows*outColumns) == 0)
-                return filterEmpty(in, in, in);
+        protected static final class Concrete<B extends IdBatch<B>> extends Filter<B> implements Orphan<Filter<B>> {
+            public Concrete(BatchType<B> batchType, Vars vars,
+                            @Nullable Orphan<Merger<B>> projector,
+                            Orphan<? extends RowFilter<B, ?>> rowFilter,
+                            @Nullable Orphan<? extends BatchFilter<B, ?>> before) {
+                super(batchType, vars, projector, rowFilter, before);
+            }
+            @Override public Filter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        @Override public Orphan<B> processInPlace(Orphan<B> b) { return filterInPlace(b); }
+
+        @Override public void onBatch(Orphan<B> batch) {
+            if (batch != null) {
+                int rcvRows = peekTotalRows(batch);
+                if (beforeOnBatch(batch))
+                    afterOnBatch(filterInPlace(batch), rcvRows);
+            }
+        }
+
+        @Override public Orphan<B> filterInPlace(Orphan<B> inOrphan) {
+            if (beforeFilter != null)
+                inOrphan = beforeFilter.filterInPlace(inOrphan);
+            if (inOrphan == null)
+                return null;
             var p = this.projector;
             if (p != null && rowFilter.targetsProjection()) {
-                in = p.projectInPlace(in);
+                inOrphan = p.projectInPlace(inOrphan);
                 p = null;
             }
+            var in = inOrphan.takeOwnership(this);
+            if (in.rows*outColumns == 0)
+                return filterEmpty(in).releaseOwnership(this);
             if (!rowFilter.isNoOp()) {
                 B b = in, prev = in;
                 short cols = in.cols, rows;
@@ -595,7 +669,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                     rows          = b.rows;
                     int d         = 0;
                     long[] ids    = b.arr;
-                    int [] hashes = b.hashes;
                     decision = DROP;
                     for (short r = 0, start; r < rows && decision != TERMINATE; r++) {
                         start = r;
@@ -603,7 +676,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                         if (r > start) {
                             int n = (r-start)*cols, srcPos = start*cols;
                             arraycopy(ids, srcPos, ids, d, n);
-                            arraycopy(hashes, srcPos, hashes, d, n);
                             d += (short) n;
                         }
                     }
@@ -612,16 +684,17 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                         b = filterInPlaceSkipEmpty(b, prev);
                     if (decision == TERMINATE) {
                         cancelUpstream();
-                        if (b.next != null) b.next = idBatchType.recycle(b.next);
-                        if (in.rows ==   0) in     = idBatchType.recycle(in);
+                        if (b.next != null) b.next = b.next.recycle(b);
+                        if (in.rows ==   0) in     = in.recycle(this);
                     }
                     b = (prev = b).next;
                 }
                 in = filterInPlaceEpilogue(in, prev);
             }
+            var resultOrphan = Owned.releaseOwnership(in, this);
             if (p != null && in != null && in.rows > 0)
-                in = p.projectInPlace(in);
-            return in;
+                resultOrphan = p.projectInPlace(resultOrphan);
+            return resultOrphan;
         }
     }
 }

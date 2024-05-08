@@ -3,12 +3,15 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.MINIMAL;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.SIMPLE;
 
-public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> {
+public abstract class BatchMerger<B extends Batch<B>, P extends BatchMerger<B, P>>
+        extends BatchProcessor<B, P> {
     protected final short[] sources;
     public final short @Nullable [] columns;
     public final boolean safeInPlaceProject;
@@ -86,34 +89,18 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
         return sb.toString();
     }
 
-    public abstract B projectInPlace(B batch);
+    public abstract Orphan<B> projectInPlace(Orphan<B> batch);
 
-    /**
-     * Performs a projection ({@link #project(Batch, Batch)} using {@code b} as both the input
-     * and the destination (if possible). If {@code b} cannot be safely and efficiently used as
-     * the destination, this method will return a new batch and {@code b} will be recycled before
-     * this call returns.
-     *
-     * <p>Callers <strong>MUST</strong> cede ownership of {@code b} and take ownership of the batch
-     * returned by this call (which MAY be {@code b}:</p>
-     *
-     * <pre>{@code
-     *   b = merger.projectInPlace(b);
-     * }</pre>
-     *
-     * @param b the input batch to be projected
-     * @return a projection of {@code b}, which MAY be {@code b} itself.
-     */
-    protected final B projectInPlaceEmpty(B b) {
-        if (b == null) return null;
-        short rows = b.rows;
-        b = b.clear(sources.length);
-        b.rows = rows;
-        return b;
+    /** Implements {@link #projectInPlace(Orphan)} for {@code null} or empty inputs*/
+    protected final Orphan<B> projectInPlaceEmpty(Orphan<B> orphan) {
+        B b = Orphan.takeOwnership(orphan, this);
+        for (B node = b; node != null; node = node.next)
+            node.cols = (short)sources.length;
+        return Owned.releaseOwnership(b, this);
     }
 
     /**
-     * Performs a {@link #merge(Batch, Batch, int, Batch)} or {@link #project(Batch, Batch)}
+     * Performs a {@link #merge(Orphan, Batch, int, Batch)} or {@link #project(Orphan, Batch)}
      * operation when {@code this.sources.lenght == 0}.
      *
      * <p>If {@code dst == in}, {@link Batch#clear(int)} will be called to turn {@code dst}
@@ -121,8 +108,8 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * {@code in.rows} zero-column rows.</p>
      *
      * @param dst the batch that will receive the zero-with rows
-     * @param in the {@code right} parameter from {@link #merge(Batch, Batch, int, Batch)} or the
-     *           {@code in} parameter from {@link #project(Batch, Batch)}.
+     * @param in the {@code right} parameter from {@link #merge(Orphan, Batch, int, Batch)} or the
+     *           {@code in} parameter from {@link #project(Orphan, Batch)}.
      * @return {@code dst}
      */
     protected final B mergeThin(B dst, @Nullable B in) {
@@ -140,7 +127,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * @return batch that received the projected rows. {@code dest} (if non-null), a
      * recycled batch or a newly allocated batch.
      */
-    public abstract B project(B dest, B in);
+    public abstract Orphan<B> project(Orphan<B> dest, B in);
 
     /**
      * Appends a projection of the {@code row}-th row in {@code in} to {@code dst}.
@@ -152,7 +139,7 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * @param in the source batch containing a row to be projected
      * @param row the row in {@code in} to be projected.
      */
-    public abstract B projectRow(@Nullable B dst, B in, int row);
+    public abstract Orphan<B> projectRow(@Nullable Orphan<B> dst, B in, int row);
 
     /**
      * Add {@code right.rows} to {@code dest} (or to a new {@link Batch} if {@code null})
@@ -166,11 +153,11 @@ public abstract class BatchMerger<B extends Batch<B>> extends BatchProcessor<B> 
      * @param right   batch of rows to merge with {@code left}'s {@code leftRow}
      * @return {@code dest}, if not null, else a new {@link Batch}.
      */
-    public abstract B merge(@Nullable B dest, B left, int leftRow, @Nullable B right);
+    public abstract Orphan<B> merge(@Nullable Orphan<B> dest, B left, int leftRow, @Nullable B right);
 
     /**
-     * Equivalent to {@link #merge(Batch, Batch, int, Batch)} where right would be a
+     * Equivalent to {@link #merge(Orphan, Batch, int, Batch)} where right would be a
      * batch containing only the {@code rightRow}-th row of the {@code right} given in this call.
      */
-    public abstract B mergeRow(@Nullable B dest, B left, int leftRow, B right, int rightRow);
+    public abstract Orphan<B> mergeRow(@Nullable Orphan<B> dest, B left, int leftRow, B right, int rightRow);
 }

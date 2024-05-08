@@ -7,10 +7,31 @@ import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUns
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 
 
-public interface Emitter<B extends Batch<B>> extends StreamNode, Rebindable, Requestable {
-    /** Set of vars naming the columns in batches delivered to {@link Receiver#onBatch(Batch)} */
+public interface Emitter<B extends Batch<B>, E extends Emitter<B, E>>
+        extends StreamNode, Rebindable, Requestable, Owned<E> {
+
+    @SuppressWarnings("unchecked") static <B extends Batch<B>> BatchType<B>
+    peekBatchType(Orphan<? extends Emitter<B, ?>> orphan) {
+        return ((Emitter<B, ?>)orphan).batchType();
+    }
+
+    static BatchType<?> peekBatchTypeWild(Orphan<? extends Emitter<?, ?>> orphan) {
+        return ((Emitter<?, ?>)orphan).batchType();
+    }
+
+    static Vars peekVars(Orphan<? extends Emitter<?, ?>> orphan) {
+        return ((Emitter<?, ?>)orphan).vars();
+    }
+
+    static Vars bindableVars(Orphan<? extends Emitter<?, ?>> orphan) {
+        return ((Emitter<?, ?>)orphan).bindableVars();
+    }
+
+    /** Set of vars naming the columns in batches delivered to {@link Receiver#onBatch(Orphan)} */
     Vars vars();
 
     /**

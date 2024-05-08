@@ -7,6 +7,8 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.openjdk.jmh.annotations.*;
 
 import java.util.ArrayList;
@@ -30,32 +32,33 @@ public class ResultsSerializerBench {
 
     private RopeTypeHolder ropeTypeHolder;
     private Vars vars;
-    private final List<List<Batch>> batchLists = new ArrayList<>();
+    private final List<Batch> batchLists = new ArrayList<>();
     private int nextBatchList = 0;
 
     @Setup(Level.Trial) public void setup() {
         BatchType bt = Workloads.parseBatchType(typeName);
         ropeTypeHolder = new RopeTypeHolder(ropeType);
-        List<Batch> seed = Workloads.uniformCols(Workloads.<Batch>fromName(bt, sizeName), bt);
-        batchLists.add(seed);
-        Workloads.repeat(seed, nLists-1, batchLists);
-        vars = Workloads.makeVars(seed);
+        batchLists.add(Workloads.fromName(bt, sizeName).takeOwnership(this));
+        Workloads.repeat(batchLists.getFirst(), nLists-1, batchLists, this);
+        vars = Workloads.makeVars(batchLists.getFirst());
     }
 
     @TearDown(Level.Trial) public void tearDown() {
         ropeTypeHolder.close();
+        for (Batch b : batchLists)
+            b.recycle(this);
     }
 
-    @Benchmark public Rope serialize() {
-        ResultsSerializer serializer = ResultsSerializer.create(format);
-        ByteSink sink = ropeTypeHolder.byteSink();
-        serializer.init(vars, vars, false);
-        serializer.serializeHeader(sink.touch());
-        List<Batch> batches = batchLists.get(nextBatchList);
-        nextBatchList = (nextBatchList+1) % batchLists.size();
-        for (Batch b : batches)
-            serializer.serialize(b, sink);
-        serializer.serializeTrailer(sink);
-        return ropeTypeHolder.takeRope(sink);
+    @Benchmark public <S extends ResultsSerializer<S>> Rope serialize() {
+        try (var serializerGuard = new Guard<S>(this)) {
+            var serializer = serializerGuard.set((Orphan<S>)ResultsSerializer.create(format));
+            ByteSink sink = ropeTypeHolder.byteSink();
+            serializer.init(vars, vars, false);
+            serializer.serializeHeader(sink.touch());
+            nextBatchList = (nextBatchList+1) % batchLists.size();
+            serializer.serialize(batchLists.get(nextBatchList), this, sink);
+            serializer.serializeTrailer(sink);
+            return ropeTypeHolder.takeRope(sink);
+        }
     }
 }

@@ -1,14 +1,15 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledSegmentRopeView;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
-import com.github.alexishuf.fastersparql.store.index.HdtConverter;
+import com.github.alexishuf.fastersparql.store.index.Hdt2StoreIndexConverter;
 import com.github.alexishuf.fastersparql.store.index.dict.*;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import org.openjdk.jmh.annotations.*;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
@@ -21,16 +22,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.ID_MASK;
-import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.lookup;
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 @State(Scope.Thread)
 @Threads(1)
@@ -51,7 +47,8 @@ public class DictGetBench {
 
     private Path sourceDir, currentDir;
     private Dict dict;
-    private Dict.AbstractLookup lookup;
+    private Dict.AbstractLookup<?> lookup;
+    private LocalityCompositeDict.Lookup compLookup;
     private int dictId;
     private Path hdtSource;
     private HDT hdt;
@@ -71,7 +68,7 @@ public class DictGetBench {
             if (is == null) throw new RuntimeException("Resource NYT.hdt not found");
             if (is.transferTo(out) == 0) throw new RuntimeException("Empty NYT.hdt");
         }
-        new HdtConverter().optimizeLocality(optimizeLocality).standaloneDict(standalone)
+        new Hdt2StoreIndexConverter().optimizeLocality(optimizeLocality).standaloneDict(standalone)
                 .convert(hdtSource, sourceDir);
 
         Random random = new Random(seed);
@@ -136,7 +133,9 @@ public class DictGetBench {
             Files.copy(shared, sharedCopy);
         Files.copy(strings, stringsCopy);
         IOUtils.fsync(10_000);
-        lookup = (dict = Dict.load(currentDir.resolve("strings"))).polymorphicLookup();
+        dict = Dict.load(currentDir.resolve("strings"));
+        lookup = dict.polymorphicLookup().takeOwnership(this);
+        compLookup = lookup instanceof LocalityCompositeDict.Lookup l ? l : null;
         if (dict instanceof LocalityCompositeDict lcd)
             dictId = IdTranslator.register(lcd);
 
@@ -157,6 +156,7 @@ public class DictGetBench {
         if (hdtDictId != 0)
             IdAccess.release(hdtDictId);
         hdtDictId = 0;
+        lookup = lookup.recycle(this);
         dict.close();
         if (hdt != null) {
             hdt.close();
@@ -167,23 +167,15 @@ public class DictGetBench {
 
     private int get(SortedStandaloneDict.Lookup l) {
         int acc = 0;
-        SegmentRope tmp = new SegmentRope();
-        for (int id : queries) {
-            //noinspection DataFlowIssue
-            tmp.wrap(l.get(id));
-            acc += tmp.len;
-        }
+        for (int id : queries)
+            acc += Objects.requireNonNull(l.get(id)).len;
         return acc;
     }
 
     private int get(LocalityStandaloneDict.Lookup l) {
         int acc = 0;
-        SegmentRope tmp = new SegmentRope();
-        for (int id : queries) {
-            //noinspection DataFlowIssue
-            tmp.wrap(l.get(id));
-            acc += tmp.len;
-        }
+        for (int id : queries)
+            acc += Objects.requireNonNull(l.get(id)).len;
         return acc;
     }
 
@@ -191,7 +183,6 @@ public class DictGetBench {
         int acc = 0;
         var tmp = new TwoSegmentRope();
         for (int id : queries) {
-            //noinspection DataFlowIssue
             tmp.shallowCopy(l.get(id));
             acc += tmp.len;
         }
@@ -202,7 +193,6 @@ public class DictGetBench {
         int acc = 0;
         var tmp = new TwoSegmentRope();
         for (int id : queries) {
-            //noinspection DataFlowIssue
             tmp.shallowCopy(l.get(id));
             acc += tmp.len;
         }
@@ -234,18 +224,27 @@ public class DictGetBench {
                 acc += IdAccess.toTerm(sourced).len;
             }
         } else {
-            for (int id : queries) {
-                TwoSegmentRope tsr = lookup(dictId).get(id & ID_MASK);
-                if (tsr == null) throw new NullPointerException();
-                SegmentRope shared = new SegmentRope(tsr.fst, tsr.fstOff, tsr.fstLen);
-                SegmentRope local = new SegmentRope(tsr.snd, tsr.sndOff, tsr.sndLen);
-                boolean isLit = tsr.fstLen > 0 && tsr.fst.get(JAVA_BYTE, 0) == '"';
-                if (isLit) {
-                    var tmp = shared;
-                    shared = local;
-                    local = tmp;
+            try (var view0 = PooledSegmentRopeView.ofEmpty();
+                 var view1 = PooledSegmentRopeView.ofEmpty();
+                 var term = PooledTermView.ofEmptyString()) {
+                for (int id : queries) {
+                    var tsr = compLookup.get(id & ID_MASK);
+                    if (tsr == null)
+                        throw new NullPointerException();
+                    view0.wrap(tsr.fst, tsr.fstU8, tsr.fstOff, tsr.fstLen);
+                    view1.wrap(tsr.snd, tsr.sndU8, tsr.sndOff, tsr.sndLen);
+                    boolean isLit = view0.len > 0 && view0.get(0) == '"';
+                    SegmentRopeView shared, local;
+                    if (isLit) {
+                        shared = view1;
+                        local = view0;
+                    } else {
+                        shared = view0;
+                        local = view1;
+                    }
+                    term.wrap(shared, local, isLit);
+                    acc += term.len;
                 }
-                acc += new Term(shared, local, isLit).len;
             }
         }
         return acc;

@@ -5,10 +5,15 @@ import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import com.github.alexishuf.fastersparql.util.owned.TempOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.*;
@@ -17,12 +22,15 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.BatchConsumer {
+import static com.github.alexishuf.fastersparql.batch.dedup.Dedup.strongForever;
+
+public abstract class QueryChecker<B extends Batch<B>>
+        extends QueryRunner.BatchConsumer<B, QueryChecker<B>> {
     private static final String OK = "No errors";
     public final Vars vars;
     private final QueryName queryName;
-    private final @Nullable StrongDedup<B> expected;
-    private final @Nullable StrongDedup<B> observed;
+    private @Nullable StrongDedup<B> expected;
+    private @Nullable StrongDedup<B> observed;
     private final int expectedRows;
     public B unexpected;
     private int rows;
@@ -31,27 +39,19 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
 
     public QueryChecker(BatchType<B> batchType, QueryName queryName){
         super(batchType);
-        vars = queryName.parsed().publicVars();
         this.queryName = queryName;
-        B original = queryName.expected(batchType);
-        if (original == null) {
-            expectedRows = 0;
-            expected = observed = null;
-            unexpected = batchType.create(vars.size());
-        } else {
-            B sanitized = queryName.amputateNumbers(batchType, original);
-            int rows = sanitized.totalRows();
-            expectedRows = rows;
-            expected = StrongDedup.strongForever(batchType, rows, sanitized.cols);
-            for (var n = sanitized; n != null; n = n.next) {
-                for (int r = 0, nRows = n.rows; r < nRows; r++)
-                    expected.add(n, r);
-            }
-            observed = StrongDedup.strongForever(batchType, rows, sanitized.cols);
-            unexpected = batchType.create(sanitized.cols);
-            if (sanitized != original)
-                batchType.recycle(sanitized);
-        }
+        B original     = queryName.expected(batchType);
+        vars           = queryName.parsed().publicVars();
+        expectedRows   = original == null ? 0 : original.totalRows();
+        init(original);
+    }
+
+    @Override public @Nullable QueryChecker<B> recycle(Object currentOwner) {
+        super.recycle(currentOwner);
+        expected = Owned.safeRecycle(expected, this);
+        observed = Owned.safeRecycle(observed, this);
+        unexpected = Owned.safeRecycle(unexpected, this);
+        return null;
     }
 
     @Override public final void finish(@Nullable Throwable error) {
@@ -62,7 +62,7 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
                 explanation(); // generates explanation, allowing unexpected to be recycled
         } finally {
             if (unexpected != null && explanation != null)
-                unexpected = unexpected.recycle();
+                unexpected = unexpected.recycle(this);
         }
     }
 
@@ -120,29 +120,37 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         }
     }
 
-    @SuppressWarnings("unused") private void serialize(File dest, Object rows) {
-        List<SegmentRope> lines = new ArrayList<>();
-        ResultsSerializer.ChunkConsumer<ByteRope> chunkConsumer = lines::add;
-        var sink = new ByteRope();
-        var serializer = new TsvSerializer();
-        serializer.init(vars, vars, false);
-        serializer.serializeHeader(sink);
-        if (rows instanceof Dedup<?> d) {
-            d.forEach(b -> {
-                var reassemble = new ResultsSerializer.LeakingReassemble<B>();
-                //noinspection unchecked
-                serializer.serialize((B)b, sink, Integer.MAX_VALUE,
-                                     reassemble, chunkConsumer);
-            });
-        } else if (rows instanceof Batch<?> b) {
-            var reassemble = new ResultsSerializer.LeakingReassemble<B>();
-            //noinspection unchecked
-            serializer.serialize((B)b, sink, Integer.MAX_VALUE,
-                                  reassemble, chunkConsumer);
-        } else {
-            throw new IllegalArgumentException("Unsupported type for rows="+rows);
+     @SuppressWarnings({"unchecked", "unused", "RedundantCast"})
+     private void serialize(File dest, Object rows) {
+        List<FinalSegmentRope> lines = new ArrayList<>();
+        ResultsSerializer.ChunkConsumer<FinalSegmentRope> chunkConsumer = lines::add;
+        try (var sink = PooledMutableRope.get();
+             var serializerGuard = new Guard<TsvSerializer>(this)) {
+            var serializer = serializerGuard.set(TsvSerializer.create());
+            serializer.init(vars, vars, false);
+            serializer.serializeHeader(sink);
+            if (rows instanceof Dedup<?, ?> d) {
+                ((Dedup<B, ?>)d).forEach(b -> {
+                    try (var tmp = new TempOwner<>(b);
+                         var reassemble = new ResultsSerializer.Reassemble<B>()) {
+                        serializer.serialize(tmp.releaseOwnership(), sink, Integer.MAX_VALUE,
+                                reassemble, chunkConsumer);
+                        tmp.restoreOwnership(reassemble.take());
+                    }
+                });
+            } else if (rows instanceof Batch<?> b) {
+                try (var tmp = new TempOwner<>((B) b);
+                     var reassemble = new ResultsSerializer.Reassemble<B>()) {
+                    serializer.serialize(tmp.releaseOwnership(), sink, Integer.MAX_VALUE,
+                            reassemble, chunkConsumer);
+                    tmp.restoreOwnership(reassemble.take());
+                }
+            } else {
+                throw new IllegalArgumentException("Unsupported type for rows="+rows);
+            }
+            serializer.serializeTrailer(sink);
+            lines.add(sink.take());
         }
-        serializer.serializeTrailer(sink);
         lines.sort(Comparator.naturalOrder());
         try (var out = new FileOutputStream(dest)) {
             for (int i = 0, n = vars.size(); i < n; i++) {
@@ -157,7 +165,6 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
             throw new RuntimeException(e);
         }
     }
-
 
     public interface RowConsumer {
         boolean accept(Batch<?> batch, int row);
@@ -174,23 +181,65 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
         });
     }
 
-    @Override public void start(Vars vars) {
-        rows        = 0;
+    @Override protected void start0(Vars vars) {
+        assert this.vars.equals(vars);
+        init(null);
+    }
+
+    private void init(@Nullable B original) {
+        rows = 0;
         explanation = null;
-        if (observed != null) {
-            if (unexpected == null)//noinspection unchecked
-                unexpected = (B)batchType.create(vars.size());
-            else
-                unexpected.clear();
-            observed.clear(observed.cols());
-            assert observed.cols() == vars.size();
+        int cols = vars.size();
+        if (unexpected == null)
+            unexpected = batchType.create(cols).takeOwnership(this);
+        else
+            unexpected.clear(cols);
+        if (observed == null || expected == null) {
+            if (original == null)
+                original = queryName.expected(batchType);
+            if (original != null) {
+                if (expected == null)
+                    initExpected(original);
+                int exRows = original.totalRows();
+                if (observed == null)
+                    observed = strongForever(batchType, exRows, cols).takeOwnership(this);
+                else
+                    observed.clear(cols);
+            } else {
+                expected = Owned.recycle(expected, this);
+                observed = Owned.recycle(observed, this);
+            }
         }
     }
 
-    @Override public void accept(Batch<?> gb) {
-        //noinspection unchecked
-        B amputated = queryName.amputateNumbers((BatchType<B>) batchType, (B)gb);
-        for (B node = amputated; node != null; node = node.next) {
+    private void initExpected(B original) {
+        B sanitized = queryName.isAmputateNumberNoOp() ? original
+                : queryName.amputateNumbers(original.dup()).takeOwnership(this);
+        assert expectedRows == original.totalRows();
+        expected = strongForever(batchType, rows, sanitized.cols).takeOwnership(this);
+        for (var n = sanitized; n != null; n = n.next) {
+            for (int r = 0, nRows = n.rows; r < nRows; r++)
+                expected.add(n, r);
+        }
+        if (sanitized != original)
+            sanitized.recycle(this);
+    }
+
+    @Override public void onBatch(Orphan<B> orphan) {
+        B b = queryName.amputateNumbers(orphan).takeOwnership(this);
+        check(b);
+        b.recycle(this);
+    }
+
+    @Override public void onBatchByCopy(B batch) {
+        if (queryName.isAmputateNumberNoOp())
+            check(batch);
+        else
+            super.onBatchByCopy(batch);
+    }
+
+    private void check(B batch) {
+        for (B node = batch; node != null; node = node.next) {
             rows += node.rows;
             if (expected == null || observed == null) return;
             for (int r = 0, rows = node.rows; r < rows; r++) {
@@ -200,7 +249,5 @@ public abstract class QueryChecker<B extends Batch<B>> extends QueryRunner.Batch
                     observed.add(node, r);
             }
         }
-        if (amputated != gb)
-            Batch.recycle(amputated);
     }
 }

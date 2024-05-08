@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.emit;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 public interface Receiver<B extends Batch<B>> extends StreamNode {
     /**
@@ -22,10 +22,23 @@ public interface Receiver<B extends Batch<B>> extends StreamNode {
      * </ul>
      *
      * @param batch a batch, whose ownership is transferred from the caller to this method
-     * @return {@code batch} if the caller remains the exclusive owner of the unmodified
-     *         {@code batch}, {@code null} if the caller lost its ownership of {@code batch}.
      */
-    @Nullable B onBatch(B batch);
+    void onBatch(Orphan<B> batch);
+
+    /**
+     * Similar to {@link #onBatch(Orphan)}, but {@code batch} ownership remains with the caller,
+     * and {@code batch} contents are not modified.
+     *
+     * <p>Implementers of this method should fully process the batch within this call, use
+     * {@link Batch#dup()} or {@link Batch#copy(Batch)} its contents to somewhere else.</p>
+     *
+     * @param batch a batch which will not be modified and whose reference will not
+     *              be kept by the implementation after this method returns.
+     */
+    default void onBatchByCopy(B batch) {
+        if (batch != null && batch.rows > 0)
+            onBatch(batch.dup());
+    }
 
     /**
      * Called once the {@link Emitter} has exhausted its data source and no more batches

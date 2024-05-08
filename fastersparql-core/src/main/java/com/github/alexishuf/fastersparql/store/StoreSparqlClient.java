@@ -2,7 +2,10 @@ package com.github.alexishuf.fastersparql.store;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
-import com.github.alexishuf.fastersparql.batch.*;
+import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.BItCancelledException;
+import com.github.alexishuf.fastersparql.batch.EmptyBIt;
+import com.github.alexishuf.fastersparql.batch.SingletonBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -32,9 +35,7 @@ import com.github.alexishuf.fastersparql.fed.SingletonFederator;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.TripleRoleSet;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
@@ -42,6 +43,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
@@ -51,10 +53,9 @@ import com.github.alexishuf.fastersparql.store.index.dict.LexIt;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
-import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -73,7 +74,6 @@ import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.RecursiveTask;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.type.Batch.recycle;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
@@ -82,10 +82,11 @@ import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
-import static com.github.alexishuf.fastersparql.util.concurrent.ArrayPool.*;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.*;
 import static com.github.alexishuf.fastersparql.util.concurrent.ResultJournal.rebindEmitter;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static com.github.alexishuf.fastersparql.util.owned.Orphan.takeOwnership;
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 import static java.lang.Math.max;
@@ -102,22 +103,23 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private static final boolean PREFER_NATIVE = FSProperties.storePreferIds();
     private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
             (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
-    private static final LIFOPool<SegmentRope[]> PREFIXES_POOL
-            = new LIFOPool<>(SegmentRope[].class, 16);
+    private static final LIFOPool<FinalSegmentRope[]> PREFIXES_POOL = new LIFOPool<>(
+            FinalSegmentRope[].class, "StoreSparqlClient.PREFIXES_POOL", 16,
+            16/*obj*/ + 2*4/*Rope*/ + 8+2*4/*SegmentRope*/ + 2*4 /*SegmentRopeView*/);
 
     private final LocalityCompositeDict dict;
     private final int dictId;
     private final Triples spo, pso, ops;
     private final SingletonFederator federator;
-    private final SegmentRope[] prefixes;
+    private final FinalSegmentRope[] prefixes;
     private final boolean hugeDict;
 
     /* --- --- --- lifecycle --- --- --- */
 
     public StoreSparqlClient(SparqlEndpoint ep) {
         super(ep);
-        SegmentRope[] prefixes = PREFIXES_POOL.get();
-        this.prefixes = prefixes == null ? new SegmentRope[PREFIXES_MASK+1] : prefixes;
+        FinalSegmentRope[] prefixes = PREFIXES_POOL.get();
+        this.prefixes = prefixes == null ? new FinalSegmentRope[PREFIXES_MASK+1] : prefixes;
         this.bindingAwareProtocol = true;
         this.cheapestDistinct = DistinctType.WEAK;
         this.localInProcess = true;
@@ -210,7 +212,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
     public int estimate(TriplePattern tp) { return federator.estimate(tp, null); }
 
     private final class StoreSingletonFederator extends SingletonFederator {
-        private final int dictId;
         private final Triples spo, pso, ops;
         private final int avgS, avgP, avgO, avgSP, avgSO, avgPO;
         private final float invAvgSP, invAvgSO, invAvgPO;
@@ -220,7 +221,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.spo    = parent.spo;
             this.pso    = parent.pso;
             this.ops    = parent.ops;
-            this.dictId = parent.dictId;
             var compute = ForkJoinPool.commonPool().invoke(new ComputeAvgPairs());
             this.avgS   = compute.avgS;
             this.avgP   = compute.avgP;
@@ -271,13 +271,18 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override public int estimate(TriplePattern t, @Nullable Binding binding) {
-            var l = lookup(dictId);
-            long s = t.s.type() == VAR ? 0 : l.find(t.s);
-            long p = t.p.type() == VAR ? 0 : l.find(t.p);
-            long o = t.o.type() == VAR ? 0 : l.find(t.o);
+            long s, p, o;
             var vars = binding == null ? t.freeRoles() : t.freeRoles(binding);
-            if (vars == EMPTY)
-                return 1; // short circuit for ask queries
+            var lookup = dict.lookup().takeOwnership(this);
+            try {
+                s = t.s.type() == VAR ? 0 : lookup.find(t.s);
+                p = t.p.type() == VAR ? 0 : lookup.find(t.p);
+                o = t.o.type() == VAR ? 0 : lookup.find(t.o);
+                if (vars == EMPTY)
+                    return 1; // short circuit for ask queries
+            } finally {
+                lookup.recycle(this);
+            }
 
             // we cannot delegate estimation if we have a GROUND dummy term. Doing so would get
             // estimate == 0 even for expensive queries. When returning an avg*, field is not
@@ -342,9 +347,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return (int) min(I_MAX, estimate);
         }
 
-        @Override
-        protected <B extends Batch<B>> Emitter<B> convert(BatchType<B> dest, Emitter<?> in) {
-            return converterFromStore(dest, in);
+        @SuppressWarnings({"unchecked", "unused"}) @Override
+        protected <I extends Batch<I>, B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+        convert(BatchType<B> dst, Orphan<? extends Emitter<?, ?>> in) {
+            return converterFromStore(dst, (Orphan<? extends Emitter<StoreBatch, ?>>) in);
         }
 
         @Override protected Plan bind2client(Plan plan, QueryMode mode) {
@@ -396,20 +402,25 @@ public class StoreSparqlClient extends AbstractSparqlClient
         Plan plan = SparqlParser.parse(sparql);
         Plan meat = supportedQueryMeat(plan);
         BIt<StoreBatch> storeIt = null;
-        var l = meat == null ? null : lookup(dictId);
-        if (meat instanceof TriplePattern tp) {
-            Modifier m = plan instanceof Modifier mod ? mod : null;
-            // if possible, push projection to when turning Triple.* iterators into batches
-            Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
-            storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
-                    tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
-                    tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
-                    tp.freeRoles());
-            if (m != null) // apply the modifier. executeFor() detects a no-op
-                storeIt = m.executeFor(storeIt, null, false);
-            storeIt.metrics(Metrics.createIf(plan));
-        } else if (meat != null) {
-            storeIt = queryBGP(plan == sparql ? plan.deepCopy() : plan, l);
+        var l = meat == null ? null : dict.lookup().takeOwnership(this);
+        try {
+            if (meat instanceof TriplePattern tp) {
+                Modifier m = plan instanceof Modifier mod ? mod : null;
+                // if possible, push projection to when turning Triple.* iterators into batches
+                Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
+                storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
+                        tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
+                        tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
+                        tp.freeRoles());
+                if (m != null) // apply the modifier. executeFor() detects a no-op
+                    storeIt = m.executeFor(storeIt, null, false);
+                storeIt.metrics(Metrics.createIf(plan));
+            } else if (meat != null) {
+                storeIt = queryBGP(plan == sparql ? plan.deepCopy() : plan, l);
+            }
+        } finally {
+            if (l != null)
+                l.recycle(this);
         }
         if (meat == null || storeIt == null)
             return federator.execute(batchType, plan);
@@ -519,10 +530,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return switch (varRoles) {
             case EMPTY -> {
                 if (spo.contains(si, pi, oi)) {
-                    var b = TYPE.create(vars.size());
+                    var b = TYPE.create(vars.size()).takeOwnership(this);
                     b.beginPut();
                     b.commitPut();
-                    yield new SingletonBIt<>(b, TYPE, vars);
+                    yield new SingletonBIt<>(b.releaseOwnership(this), TYPE, vars);
                 }
                 yield new EmptyBIt<>(TYPE, vars);
             }
@@ -536,29 +547,34 @@ public class StoreSparqlClient extends AbstractSparqlClient
         };
     }
 
-    @Override public <B extends Batch<B>> Emitter<B>
+    @SuppressWarnings("unchecked") @Override
+    public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         Plan plan = SparqlParser.parse(sparql);
         var tp = (plan.type == MODIFIER ? plan.left : plan) instanceof TriplePattern t ? t : null;
         Modifier m = plan instanceof Modifier mod ? mod : null;
         boolean convertBefore = m != null && !m.filters.isEmpty() && bt != TYPE;
-        Emitter<?> em;
+        Orphan<? extends Emitter<?, ?>> em;
         if (tp != null) {
             Vars tpVars = (m != null && m.filters.isEmpty() ? m : tp).publicVars();
-            em = new TPEmitter(tp, tpVars);
+            var tpEm = new TPEmitter(tp, tpVars);
+            em = tpEm;
             if (convertBefore)
-                em = converterFromStore(bt, em);
+                em = converterFromStore(bt, tpEm);
             if (m != null) // apply any modification required (projection may be done already)
-                em = m.processed(em);
+                em = m.processed((Orphan<? extends Emitter<B,?>>)em);
         } else {
             if (convertBefore)
                 plan = plan.left();
             em = federator.emit(maybeNative(bt), plan, rebindHint);
-            if (convertBefore)
-                em =  m.processed(converterFromStore(bt, em));
+            if (convertBefore) {
+                var conv = converterFromStore(bt, (Orphan<? extends Emitter<StoreBatch, ?>>)em);
+                em =  m.processed(conv);
+            }
         }
-        //noinspection unchecked
-        return bt.equals(em.batchType()) ? (Emitter<B>)em : converterFromStore(bt, em);
+        return bt.equals(Emitter.peekBatchTypeWild(em))
+                ? (Orphan<? extends Emitter<B, ?>>) em
+                : converterFromStore(bt, (Orphan<? extends Emitter<StoreBatch, ?>>)em);
     }
 
     @Override public <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
@@ -567,51 +583,55 @@ public class StoreSparqlClient extends AbstractSparqlClient
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
         Vars outVars = bq.resultVars();
         BIt<B> it;
-        var l = lookup(dictId);
-        var tp = (right.type == MODIFIER ? right.left : right) instanceof TriplePattern t
-               ? t : null;
-        if (tp != null) {
-            long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
-            boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
-                         || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
-                         || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
-            if (empty) {
-                it = new EmptyBIt<>(bq.bindings.batchType(), outVars);
-            } else {
-                var notifier = new BindingNotifier(bq);
-                if (right instanceof Modifier m && !m.filters.isEmpty()) {
-                    var split = Optimizer.splitFilters(m.filters);
-                    if (split != m.filters) {
-                        var m2 = m == bq.query ? (Modifier)m.copy() : m;
-                        m2.filters = split;
-                        right = m2;
+        var l = dict.lookup().takeOwnership(this);
+        try {
+            var tp = (right.type == MODIFIER ? right.left : right) instanceof TriplePattern t
+                   ? t : null;
+            if (tp != null) {
+                long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
+                boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
+                        || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
+                        || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
+                if (empty) {
+                    it = new EmptyBIt<>(bq.bindings.batchType(), outVars);
+                } else {
+                    var notifier = new BindingNotifier(bq);
+                    if (right instanceof Modifier m && !m.filters.isEmpty()) {
+                        var split = Optimizer.splitFilters(m.filters);
+                        if (split != m.filters) {
+                            var m2 = m == bq.query ? (Modifier)m.copy() : m;
+                            m2.filters = split;
+                            right = m2;
+                        }
                     }
+                    it = new StoreBindingBIt<>(bq.bindings, bq.type, right, tp, s, p, o,
+                            outVars, notifier, notifier, l);
                 }
-                it = new StoreBindingBIt<>(bq.bindings, bq.type, right, tp, s, p, o,
-                                           outVars, notifier, notifier, l);
-            }
-        } else {
-            Plan rightJoin = right.type == MODIFIER ? right.left() : right;
-            if (bq.type == BindType.JOIN && rightJoin.type == JOIN
-                                         && canExecuteRightBGP(rightJoin, 0)) {
-                if (right == bq.query) {
-                    right = right.copy();
-                    if (right.type == MODIFIER)
-                        right.left = rightJoin.copy();
-                }
-                right = federator.shallowOptimize(right, bq.bindings.vars());
-                it = bindWithModifiedBGP(bq, right, outVars, l);
             } else {
-                it = null;
+                Plan rightJoin = right.type == MODIFIER ? right.left() : right;
+                if (bq.type == BindType.JOIN && rightJoin.type == JOIN
+                        && canExecuteRightBGP(rightJoin, 0)) {
+                    if (right == bq.query) {
+                        right = right.copy();
+                        if (right.type == MODIFIER)
+                            right.left = rightJoin.copy();
+                    }
+                    right = federator.shallowOptimize(right, bq.bindings.vars());
+                    it = bindWithModifiedBGP(bq, right, outVars, l);
+                } else {
+                    it = null;
+                }
+                if (it == null)
+                    it = new ClientBindingBIt<>(bq, this);
             }
-            if (it == null)
-                it = new ClientBindingBIt<>(bq, this);
+        } finally {
+            l.recycle(this);
         }
         return it;
     }
 
-    @Override public <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
-                                                            Vars rebindHint) {
+    @Override public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(EmitBindQuery<B> bq, Vars rebindHint) {
         Plan right = bq.query instanceof Plan p ? p : SparqlParser.parse(bq.query);
         if (right instanceof Modifier m0 && !m0.filters.isEmpty())
             right = splitFiltersForLexicalJoin(m0);
@@ -763,7 +783,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //        }
 //    }
 
-    private static final class PrefetchTask extends EmitterService.Task {
+    private static abstract sealed class PrefetchTask extends EmitterService.Task<PrefetchTask> {
         private static final byte CHUNK_ROWS = 8;
         private static final VarHandle ASYNC_DONE, ASYNC_BOTTOM;
         static {
@@ -802,10 +822,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private PrefetchTask(short dictId, LocalityCompositeDict dict, TPEmitter tpEmitter) {
             super(EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
             this.dictId       = dictId;
-            this.syncLookup   = dict.lookup();
-            this.asyncLookup  = dict.lookup();
-            this.syncView     = TwoSegmentRope.pooled();
-            this.asyncView    = TwoSegmentRope.pooled();
+            this.syncLookup   = dict.lookup().takeOwnership(this);
+            this.asyncLookup  = dict.lookup().takeOwnership(this);
+            this.syncView     = new TwoSegmentRope();
+            this.asyncView    = new TwoSegmentRope();
             this.unsrcIds     = longsAtLeast(TYPE.preferredTermsPerBatch()>>1);
             this.tpEmitter    = tpEmitter;
             this.sId          = asyncLookup.find(tpEmitter.tp.s);
@@ -813,17 +833,25 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.oId          = asyncLookup.find(tpEmitter.tp.o);
         }
 
-        @Override public String toString() {
-            return String.format("StoreSparqlClient$PrefetchTask@%x", System.identityHashCode(this));
+        private static final class Concrete extends PrefetchTask implements Orphan<PrefetchTask> {
+            private Concrete(short dictId, LocalityCompositeDict dict, TPEmitter tpEmitter) {
+                super(dictId, dict, tpEmitter);
+            }
+            @Override public PrefetchTask takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
         @Override protected void doRelease() {
             binding   = null;
-            asyncView.recycle();
-            syncView .recycle();
-            unsrcIds      = ArrayPool.LONG .offerToNearest(unsrcIds,           unsrcIds.length);
-            skelCol2InCol = ArrayPool.SHORT.offerToNearest(skelCol2InCol, skelCol2InCol.length);
+            syncLookup .recycle(this);
+            asyncLookup.recycle(this);
+            unsrcIds      = recycleLongsAndGetEmpty(unsrcIds);
+            rowSkels      = recycleLongsAndGetEmpty(rowSkels);
+            skelCol2InCol = recycleShortsAndGetEmpty(skelCol2InCol);
             super.doRelease();
+        }
+
+        @Override public String journalName() {
+            return "Store$PrefetchTask@"+Integer.toHexString(System.identityHashCode(this));
         }
 
         void setInCols(int sInCol, int pInCol, int oInCol) {
@@ -860,7 +888,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             try {
                 if (rows*unsrcIdsCols > unsrcIds.length)
                     unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
-                if (rows*rowSkelCols > (rowSkels == null ? 0 : rowSkels.length))
+                if (rows*rowSkelCols > rowSkels.length)
                     rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
                 this.requestedBindingBatch = bb;
                 this.binding               = binding;
@@ -896,12 +924,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return snapshot;
         }
 
-        /**
-         * Safely release pooled resources. This will wait if {@link #task(int)} is running,
-         * but future executions of {@link #task(int)} will fail due to the resources
-         * being released
-         */
-        void release() {
+        @Override protected void onPendingRelease() {
             short snapshot = stop();
             try {
                 if (moveStateRelease(statePlain(), COMPLETED))
@@ -965,7 +988,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     unsrcIds[base+pOutCol] = toUnsourcedId(pInCol, r, b, asyncLookup, asyncView);
                 if (oInCol >= 0)
                     unsrcIds[base+oOutCol] = toUnsourcedId(oInCol, r, b, asyncLookup, asyncView);
-                if (rowSkelCols != 0) {
+                if (rowSkelCols > 0) {
                     int rsBase = r*rowSkelCols;
                     short[] skelCol2InCol = this.skelCol2InCol;
                     for (int c = 0; c < rowSkelCols; c++) {
@@ -983,7 +1006,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
     }
 
-    private final class TPEmitter extends TaskEmitter<StoreBatch> {
+    private final class TPEmitter extends TaskEmitter<StoreBatch, TPEmitter>
+            implements Orphan<TPEmitter> {
         private static final int LIMIT_TICKS       = 1;
         private static final int DEADLINE_CHK      = 0x3f;
         private static final int HAS_UNSET_OUT     = 0x01000000;
@@ -995,6 +1019,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private byte outCol0, outCol1, outCol2;
         private final short dictId = (short)StoreSparqlClient.this.dictId;
         private byte freeRoles;
+        //private byte yields;
         private boolean retry;
         private Object it;
         private long[] rowSkels = EMPTY_LONG;
@@ -1014,7 +1039,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.cols         = (byte) cols;
             this.tp           = tp;
             this.bindableVars = tp.allVars();
-            this.pref = new PrefetchTask(dictId, dict, this);
+            this.pref = new PrefetchTask.Concrete(dictId, dict, this).takeOwnership(this);
             BatchBinding empty = BatchBinding.ofEmpty(TYPE);
             rebindPrefetch(empty);
             rebind(empty);
@@ -1028,20 +1053,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void doRelease() {
             try {
-                pref.release();
+                pref.recycle(this);
                 releaseRef();
             } finally {
                 super.doRelease();
             }
         }
 
-        @Override public void rebindRelease() {
-            try {
-                rebindPrefetchEnd();
-            } finally {
-                super.rebindRelease();
-            }
-        }
+        @Override public TPEmitter takeOwnership(Object o) {return takeOwnership0(o);}
 
         @Override public boolean cancel() {
             boolean cancelled;
@@ -1055,7 +1074,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return cancelled;
         }
 
-        private int bindingVarsChanged(int state, Vars bindingVars) {
+        private int bindingVarsChanged(Vars bindingVars) {
             if (ENABLED)
                 journal("bindingVarsChanged bindingVars", bindingVars, "em=", this);
             lastBindingsVars = bindingVars;
@@ -1089,8 +1108,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (o1 != -1 && o1 != o0            ) ++colsSet;
                 if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
                 pref.setupBindSkel(colsSet < cols, vars, bindingVars);
-                return colsSet < cols ?   setFlagsRelease(state, HAS_UNSET_OUT)
-                                      : clearFlagsRelease(state, HAS_UNSET_OUT);
+                return colsSet < cols ?   setFlagsRelease(HAS_UNSET_OUT)
+                                      : clearFlagsRelease(HAS_UNSET_OUT);
             } finally {
                 pref.allowRun(snapshot);
             }
@@ -1106,7 +1125,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if ((st&STATE_MASK) != CREATED && (st & IS_TERM) == 0)
                     return; // not rebind()able
                 if (!binding.vars.equals(lastBindingsVars))
-                    st = bindingVarsChanged(st, binding.vars);
+                    st = bindingVarsChanged(binding.vars);
                 pref.request(binding);
             } finally { unlock(st); }
         }
@@ -1124,7 +1143,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             try {
                 if (EmitterStats.ENABLED && stats != null) stats.onRebind(binding);
                 if (ResultJournal.ENABLED)                 rebindEmitter(this, binding);
-                if (!bVars.equals(lastBindingsVars))       st = bindingVarsChanged(st, bVars);
+                if (!bVars.equals(lastBindingsVars))       st = bindingVarsChanged(bVars);
 
                 int dstRow = pref.awaitRow(binding);
                 int base = pref.unsrcIdsCols*dstRow;
@@ -1161,8 +1180,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
             long limit = requested();
             if (limit <= 0)
                 return state;
-            int termState = state;
-            StoreBatch b = TYPE.createForThread(threadId, cols);
+
+            var b = Orphan.takeOwnership(TYPE.createForThread(threadId, cols), this);
+//            var b = Orphan.takeOwnership(TYPE.pollForThread(threadId, cols), this);
+//            if (b == null) {
+//                if (++yields < 4)
+//                    return state;
+//                yields = 0;
+//                b = TYPE.createForThread(threadId, cols).takeOwnership(this);
+//            }
             short sLimit = (short) min(b.termsCapacity/ max(1, cols), limit);
             retry = false;
             switch (freeRoles) {
@@ -1172,15 +1198,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 case PRE_OBJ_BITS,SUB_OBJ_BITS,SUB_PRE_BITS ->   fillPair(b, sLimit);
                 case                       SUB_PRE_OBJ_BITS ->   fillScan(b, sLimit);
             }
-            if (!retry)
-                termState = COMPLETED;
             int rows = b.rows; // fill*() only fills up to b.arr.length
             if (rows > 0) {
                 journal("produced rows=", rows, "upd req=", requested());
-                b = deliver(b);
+                deliver(b.releaseOwnership(this));
+            } else {
+                b.recycle(this);
             }
-            TYPE.recycleForThread(threadId, b);
-            return termState;
+            return retry ? state : COMPLETED;
         }
 
         @SuppressWarnings("SameReturnValue") private void fillAsk(StoreBatch b) {
@@ -1205,7 +1230,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
-            b.dropCachedHashes();
         }
 
         private void fillPair(StoreBatch b, short limit) {
@@ -1223,7 +1247,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
-            b.dropCachedHashes();
         }
 
         private void fillSubKey(StoreBatch b, short limit) {
@@ -1240,7 +1263,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
-            b.dropCachedHashes();
         }
 
         private void fillScan(StoreBatch b, short limit) {
@@ -1259,34 +1281,43 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
             }
             b.rows = rows;
-            b.dropCachedHashes();
         }
     }
 
     public static boolean ALT = true;
 
-    private <B extends Batch<B>> Emitter<B>
-    converterFromStore(BatchType<B> bt, Emitter<?> upstream) {
-        //noinspection unchecked
-        var conv =  new FromStoreConverter<>(bt, (Emitter<StoreBatch>)upstream);
+    private <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    converterFromStore(BatchType<B> bt, Orphan<? extends Emitter<StoreBatch, ?>> upstream) {
+        var conv =  new FromStoreConverter<>(bt, upstream);
         if (ALT && hugeDict && conv.cols() > 0)
-            return new AsyncStage<>(conv);
+            return AsyncStage.create(conv);
         return conv;
     }
 
-    private final class FromStoreConverter<B extends Batch<B>> extends ConverterStage<StoreBatch, B> {
+    private final class FromStoreConverter<B extends Batch<B>>
+            extends ConverterStage<StoreBatch, B, FromStoreConverter<B>>
+            implements Orphan<FromStoreConverter<B>> {
         private final LocalityCompositeDict.Lookup lookup;
         private int avgRowLocalLen;
 
-        public FromStoreConverter(BatchType<B> type, Emitter<StoreBatch> upstream) {
+        public FromStoreConverter(BatchType<B> type,
+                                  Orphan<? extends Emitter<StoreBatch, ?>> upstream) {
             super(type, upstream);
-            this.lookup = dict.lookup();
-            avgRowLocalLen = 12*upstream.vars().size();
+            this.lookup = dict.lookup().takeOwnership(this);
+            avgRowLocalLen = 12*this.upstream.vars().size();
         }
 
-        @Override public @Nullable StoreBatch onBatch(StoreBatch batch) {
-            if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(batch);
-            B dst = batchType.createForThread(threadId, cols);
+        @Override public FromStoreConverter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override protected void doRelease() {
+            Owned.safeRecycle(lookup, this);
+            super.doRelease();
+        }
+
+        @Override public void onBatchByCopy(StoreBatch batch) {
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onBatchPassThrough(batch);
+            B dst = batchType.createForThread(threadId, cols).takeOwnership(this);
             short rows, rll = (short)avgRowLocalLen;
             for (var b = batch; b != null; b = b.next) {
                 dst.reserveAddLocals((rows=b.rows) * rll);
@@ -1295,24 +1326,25 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     putRowConverting(dst, ids, cols, r*cols);
             }
             avgRowLocalLen = (7*rll + dst.avgLocalBytesUsed())>>3;
-            batchType.recycleForThread(threadId, downstream.onBatch(dst));
-            return batch;
+            downstream.onBatch(dst.releaseOwnership(this));
         }
 
         private short cols() { return cols; }
 
-        private SegmentRope shared(TwoSegmentRope t, byte fst) {
+        private FinalSegmentRope shared(TwoSegmentRope t, byte fst) {
             return switch (fst) {
                 case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
                 case '<' -> {
-                    if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
+                    if (t.fstLen == 0 || t.sndLen == 0) yield FinalSegmentRope.EMPTY;
                     int slot = (int)(t.fstOff & PREFIXES_MASK);
                     var cached = prefixes[slot];
-                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
-                        prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
+                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst) {
+                        cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
+                        prefixes[slot] = cached;
+                    }
                     yield cached;
                 }
-                case '_' -> ByteRope.EMPTY;
+                case '_' -> FinalSegmentRope.EMPTY;
                 default -> throw new IllegalArgumentException("Not an RDF term");
             };
         }
@@ -1600,7 +1632,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //
 //    }
 
-    private final class StoreBindingEmitter<B extends Batch<B>> extends BindingStage<B> {
+    private final class StoreBindingEmitter<B extends Batch<B>>
+            extends BindingStage<B, StoreBindingEmitter<B>>
+            implements Orphan<StoreBindingEmitter<B>> {
         private static final LocalityCompositeDict.LocalityLexIt [] EMPTY_LEX_ITS
                 = new LocalityCompositeDict.LocalityLexIt[0];
         /** The right operand algebra used to create this emitter. Immutable */
@@ -1625,7 +1659,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private long lexBindingCols;
         private final short leftCols;
         private @MonotonicNonNull TwoSegmentRope lexView;
-        private @MonotonicNonNull SegmentRope localView;
+        private @MonotonicNonNull SegmentRopeView localView;
         /** {@code bb} from last {@code rebind(bb)}, but all batches are instances of {@code B} */
         private @MonotonicNonNull BatchBinding convIntBinding;
         /** batches used in {@code convIntBinding} and owned by {@code this} */
@@ -1634,15 +1668,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
         public StoreBindingEmitter(EmitBindQuery<B> bq, Plan right,
                                    Vars rebindHint) {
             super(bq.bindings, bq.type, bq, bq.resultVars(),
-                  emit(bq.bindings.batchType(), right,
+                  emit(bq.batchType(), right,
                        bq.bindingsVars().union(rebindHint)));
-            int bindingsVarsCount = bq.bindings.vars().size();
+            int bindingsVarsCount = bq.bindingsVars().size();
             if (bindingsVarsCount > Short.MAX_VALUE)
                 throw new IllegalArgumentException("Too many binding vars");
             this.leftCols  = (short)bindingsVarsCount;
             rightPlan      = right;
             lexIts         = EMPTY_LEX_ITS;
-            lexItsCols     = ArrayPool.EMPTY_INT;
+            lexItsCols     = ArrayAlloc.EMPTY_INT;
             if (right instanceof Modifier m && !m.filters.isEmpty()) {
                 tmpRightFilters = new ArrayList<>(m.filters);
                 updateExtRebindVars(BatchBinding.ofEmpty(batchType()));
@@ -1658,46 +1692,48 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (lexJoinBinding != null) {
                 lexBatch = (B)lexJoinBinding.batch;
                 nextLexBatch = (B)requireNonNull(nextLexJoinBinding).batch;
-                lexJoinBinding.attach(batchType.recycle(lexBatch), 0);
+                lexJoinBinding.attach(Batch.safeRecycle(lexBatch, this), 0);
             }
             if (nextLexBatch != lexBatch)
-                batchType.recycle(nextLexBatch);
+                Batch.safeRecycle(nextLexBatch, this);
             if (convBindingBatches != null) {
                 for (int i = 0, n = convBindingBatches.size(); i < n; i++)
-                    convBindingBatches.set(i, batchType.recycle(convBindingBatches.get(i)));
+                    convBindingBatches.set(i, Batch.safeRecycle(convBindingBatches.get(i), this));
                 // detach recycled batches from binding, in case is is reachable elsewhere
                 for (var bb = convIntBinding; bb != null; bb = bb.remainder)
                     bb.attach(null, 0);
             }
+            lookup = Owned.safeRecycle(lookup, this);
         }
+
+        @Override public StoreBindingEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
 
         private BatchBinding createLexJoinBinding(BatchBinding lexJoinBinding,
                                                   Plan right, List<Expr> mFilters, Vars leftVars) {
             Vars rightBindingVars = null;
-            var term = Term.pooledMutable();
-            var varRope = ByteRope.pooled(16);
-            for (SegmentRope name : right.allVars()) {
-                varRope.len = 1;
-                varRope.append(name).u8()[0] = '?';
-                term.set(ByteRope.EMPTY, varRope, false);
-                Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
-                if (leftVar != term) {
-                    if (rightBindingVars == null)
-                        rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
-                    int i = rightBindingVars.indexOf(leftVar);
-                    if (i >= 0)
-                        rightBindingVars.set(i, name);
+            try (var term = PooledTermView.ofEmptyString();
+                 var varRope = PooledMutableRope.getWithCapacity(16)) {
+                for (SegmentRope name : right.allVars()) {
+                    varRope.len = 1;
+                    varRope.append(name).u8()[0] = '?';
+                    term.wrap(FinalSegmentRope.EMPTY, varRope, false);
+                    Term leftVar = leftLexJoinVar(mFilters, term, leftVars);
+                    if (leftVar != term) {
+                        if (rightBindingVars == null)
+                            rightBindingVars = Vars.fromSet(leftVars, leftVars.size());
+                        int i = rightBindingVars.indexOf(leftVar);
+                        if (i >= 0)
+                            rightBindingVars.set(i, name);
+                    }
                 }
             }
-            varRope.recycle();
-            term.recycle();
             if (rightBindingVars != null) {
                 if (lexJoinBinding == null)
                     lexJoinBinding = new BatchBinding(rightBindingVars);
                 else
                     lexJoinBinding.vars(rightBindingVars);
                 //noinspection unchecked
-                B b = batchType.empty((B)lexJoinBinding.batch, rightBindingVars.size());
+                B b = batchType.empty((B)lexJoinBinding.batch, this, rightBindingVars.size());
                 b.beginPut();
                 b.commitPut();
                 lexJoinBinding.attach(b, 0);
@@ -1750,7 +1786,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 cb = (B)b;
             } else {
                 cr = 0;
-                cb = batchType.empty(convBindingBatches.get(i), b.cols);
+                cb = batchType.empty(convBindingBatches.get(i), this, b.cols);
                 convBindingBatches.set(i, cb);
                 if (cb instanceof StoreBatch sb) sb.putRowConverting(b, src.row, dictId);
                 else                             cb.putRowConverting(b, src.row);
@@ -1792,14 +1828,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 this.lexBindingCols = lexBindingCols;
 
                 // update filters on upstream
-                for (Emitter<?> em = rightUpstream(); em != null; ) {
-                    if (em instanceof BatchFilter<?> bf) {
+                for (Emitter<?, ?> em = rightUpstream(); em != null; ) {
+                    if (em instanceof BatchFilter<?, ?> bf) {
                         em = null;
-                        if (bf.rowFilter instanceof Modifier.Filtering<?> f)
+                        if (bf.rowFilter instanceof Modifier.Filtering<?, ?> f)
                             f.setFilters(tmpRightFilters);
                         else if ((em = bf.before) == null)
                             em = bf.upstream();
-                    } else if (em instanceof Stage<?,?> s) {
+                    } else if (em instanceof Stage<?,?,?> s) {
                         em = s.upstream();
                     } else {
                         throw new IllegalArgumentException("No Filtering found in right upstream");
@@ -1810,13 +1846,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (nextLexJoinBinding == null)
                     nextLexJoinBinding = new BatchBinding(lexJoinBinding.vars);
                 //noinspection unchecked
-                nextLexJoinBinding.batch = batchType.empty((B)nextLexJoinBinding.batch, nVars);
+                nextLexJoinBinding.batch = batchType.empty((B)nextLexJoinBinding.batch, this, nVars);
                 if (lookup == null)
-                    lookup = dict.lookup();
+                    lookup = dict.lookup().takeOwnership(this);
                 if (lexView == null)
                     lexView = new TwoSegmentRope();
                 if (localView == null)
-                    localView = new SegmentRope();
+                    localView = new SegmentRopeView();
                 if (convIntBinding == null) {
                     convBindingBatches = new ArrayList<>();
                     convIntBinding = new BatchBinding(union);
@@ -1829,7 +1865,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
-        @Override protected void rebind(BatchBinding binding, Emitter<B> rightEmitter) {
+        @Override protected void rebind(BatchBinding binding, Emitter<B, ?> rightEmitter) {
             if (lexJoinBinding != null)
                 binding = lexRebindInternal(binding);
             super.rebind(binding, rightEmitter);
@@ -1892,13 +1928,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (nextLexBatch instanceof StoreBatch sb) {
                 sb.putTerm(dstCol, source(id, dictId));
             } else if ((local = lookup.getLocal(id)) != null) {
-                nextLexBatch.putTerm(dstCol, lookup.getShared(id), local,
+                nextLexBatch.putTerm(dstCol, FinalSegmentRope.asFinal(lookup.getShared(id)), local,
                                      0, local.len, lookup.sharedSuffixed(id));
             }
         }
 
         @Override protected boolean lexContinueRight(BatchBinding binding,
-                                                     Emitter<B> rightEmitter) {
+                                                     Emitter<B, ?> rightEmitter) {
             BatchBinding lexJoinBinding = this.lexJoinBinding;
             if (lexJoinBinding == null)
                 return false;
@@ -2139,18 +2175,18 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private int lr;
         private B rb;
         private @Nullable B fb;
-        private final @Nullable BatchMerger<B> merger;
+        private final @Nullable BatchMerger<B, ?> merger;
         private final TripleRoleSet tpFreeRoles;
         private final long s, p, o;
         private long sNotLex, pNotLex, oNotLex;
         private final byte sLeftCol, pLeftCol, oLeftCol;
         private final byte kCol, skCol, vCol, tpFreeCols;
-        private final short dictId, prbCols;
+        private final short dictId;
         private boolean rEnd, rEmpty;
         private final boolean rightSingleRow;
         private final TwoSegmentRope ropeView;
-        private final @Nullable BatchMerger<B> preFilterMerger;
-        private final @Nullable BatchFilter<B> rightFilter;
+        private final @Nullable BatchMerger<B, ?> preFilterMerger;
+        private final @Nullable BatchFilter<B, ?> rightFilter;
         private final boolean hasLexicalJoin;
         private final LocalityCompositeDict.@Nullable LocalityLexIt sLexIt, pLexIt, oLexIt;
         private final TriplePattern tp;
@@ -2222,7 +2258,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (oLeftCol < 0 && tp.o.isVar()) { tpFreeRolesBits |= 1; tpFree.add(tp.o); }
             tpFreeRoles = TripleRoleSet.fromBitset(tpFreeRolesBits);
             this.tpFreeCols = (byte) tpFree.size();
-            this.rb = batchType.create(tpFreeCols);
+            this.rb = batchType.create(tpFreeCols).takeOwnership(this);
 
             // setup index iterators for tp
             byte sCol = (byte)tpFree.indexOf(tp.s);
@@ -2281,14 +2317,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 if (needsLeftVars) {
                     procRightFree = leftVars.union(tpFree);
-                    preFilterMerger = batchType.merger(procRightFree, leftVars, tpFree);
-                    fb = batchType.create(procRightFree.size());
+                    preFilterMerger = batchType.merger(procRightFree, leftVars, tpFree).takeOwnership(this);
+                    fb = batchType.create(procRightFree.size()).takeOwnership(this);
                 } else {
                     procRightFree = tpFree;
                     preFilterMerger = null;
                 }
-                rightFilter = (BatchFilter<B>)m.processorFor(batchType, procRightFree, null, m.distinct);
-                rightFilter.rebindAcquire();
+                var proc = m.processorFor(batchType, procRightFree, null, m.distinct);
+                rightFilter = (BatchFilter<B, ?>)proc.takeOwnership(this);
             } else {
                 procRightFree = tpFree;
                 m = null;
@@ -2297,7 +2333,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
             if (procRightFree.size() > Short.MAX_VALUE)
                 throw new IllegalArgumentException("Too many (>32767) left+right columns");
-            this.prbCols = (short) procRightFree.size();
             this.rightSingleRow = switch (bindType) {
                 case JOIN, LEFT_JOIN           -> m != null && m.limit == 1;
                 case EXISTS, NOT_EXISTS, MINUS -> true;
@@ -2305,8 +2340,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.rEnd = true;
             this.rEmpty = true;
             this.merger = !bindType.isJoin() || procRightFree.equals(projection) ? null
-                    : batchType.merger(projection, leftVars, procRightFree);
-            this.lb = batchType.create(leftVars.size());
+                    : batchType.merger(projection, leftVars, procRightFree).takeOwnership(this);
+            this.lb = batchType.create(leftVars.size()).takeOwnership(this);
             acquireRef();
         }
 
@@ -2328,19 +2363,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 // close() and failures from nextBatch() are rare. Rarely generating garbage is
                 // cheaper than precisely tracking whether lb ownership is with this or with left,
                 if (cause == null) {
-                    batchType.recycle(lb);
-                    lb = null; // signals exhaustion to nextBatch()
+                    lb = Batch.safeRecycle(lb, this); // signals exhaustion to nextBatch()
                 }
                 // if we arrived here from close(), nextBatch() may be concurrently executing.
                 // it is cheaper to leak rb and fb than to synchronize
                 if (!(cause instanceof BItCancelledException)) {
-                    rb = batchType.recycle(rb);
-                    fb = batchType.recycle(fb);
+                    rb = Batch.safeRecycle(rb, this);
+                    fb = Batch.safeRecycle(fb, this);
                 }
-                if (rightFilter != null) {
-                    rightFilter.rebindRelease();
-                    rightFilter.release();
-                }
+                Owned.safeRecycle(rightFilter, this);
             } finally {
                 try {
                     super.cleanup(cause);
@@ -2357,13 +2388,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return did;
         }
 
-        @Override public @Nullable B nextBatch(@Nullable B b) {
+        @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
             if (lb == null) return null; // already exhausted
             boolean locked = false;
             try {
                 long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
                 long innerDeadline = rightSingleRow ? Timestamp.ORIGIN-1 : startNs+minWaitNs;
-                b = batchType.empty(b, nColumns);
+                B b = orphan == null ? batchType.create(nColumns).takeOwnership(this)
+                                     : orphan.takeOwnership(this).clear(nColumns);
                 do {
                     lock();
                     locked = true;
@@ -2407,9 +2439,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     rEnd = rb.rows == 0;
                     B prb = rb;
                     if (!rEnd && rightFilter != null) {
-                        if (preFilterMerger != null) //noinspection DataFlowIssue fb != null
-                            prb = fb = preFilterMerger.merge(fb = fb.clear(prbCols), lb, lr, rb);
-                        prb = rightFilter.filterInPlace(prb);
+                        if (preFilterMerger != null) {
+                            var dst = Owned.releaseOwnership(fb, this);
+                            fb = null;
+                            prb = fb = preFilterMerger.merge(dst, lb, lr, rb).takeOwnership(this);
+                        }
+                        var prbOrphan = prb.releaseOwnership(this);
+                        prb = takeOwnership(rightFilter.filterInPlace(prbOrphan), this);
                         if (preFilterMerger == null)
                             rb = prb; // filterInPlace() may have recycled rb
                         if (prb.rows == 0) {
@@ -2433,7 +2469,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                     else           rb = b;
                                     b = prb;
                                 } else {
-                                    b = merger.merge(b, lb, lr, prb);
+                                    b = merger.merge(b.releaseOwnership(this), lb, lr, prb)
+                                              .takeOwnership(this);
                                 }
                             }
                             case EXISTS,NOT_EXISTS,MINUS -> b.putRow(lb, lr);
@@ -2453,8 +2490,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
                     bindingNotifier.bindQuery.metrics.batch(b.totalRows());
-                if (b.rows == 0) b = handleEmptyBatch(b);
-                else             onNextBatch(b);
+                return b.rows == 0 ? handleEmptyBatch(b) : onNextBatch(b.releaseOwnership(this));
             } catch (Throwable t) {
                 if (state() == State.ACTIVE)
                     onTermination(t);
@@ -2464,11 +2500,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (locked)
                     unlock();
             }
-            return b;
         }
 
-        @SuppressWarnings("SameReturnValue") private B handleEmptyBatch(B batch) {
-            batchType.recycle(recycle(batch));
+        private Orphan<B> handleEmptyBatch(B batch) {
+            batch.recycle(this);
             onTermination(null);
             return null;
         }
@@ -2481,10 +2516,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (skCol >= 0) tail.doPutTerm(skCol, source(skId, dictId));
                 if ( vCol >= 0) tail.doPutTerm(vCol,  source( vId, dictId));
             } else {
-                var lookup = lookup(dictId);
-                if ( kCol >= 0) convertTerm(rb, kCol,   kId, lookup);
-                if (skCol >= 0) convertTerm(rb, skCol, skId, lookup);
-                if ( vCol >= 0) convertTerm(rb, vCol,   vId, lookup);
+                var lookup = dict.lookup().takeOwnership(this);
+                try {
+                    if ( kCol >= 0) convertTerm(rb, kCol,   kId, lookup);
+                    if (skCol >= 0) convertTerm(rb, skCol, skId, lookup);
+                    if ( vCol >= 0) convertTerm(rb, vCol,   vId, lookup);
+                } finally {
+                    lookup.recycle(this);
+                }
             }
             rb.commitPut();
         }
@@ -2493,24 +2532,26 @@ public class StoreSparqlClient extends AbstractSparqlClient
             TwoSegmentRope t = lookup.get(id);
             if (t == null) return;
             byte fst = t.get(0);
-            SegmentRope sh = switch (fst) {
+            FinalSegmentRope sh = switch (fst) {
                 case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
                 case '<' -> {
-                    if (t.fstLen == 0 || t.sndLen == 0) yield ByteRope.EMPTY;
+                    if (t.fstLen == 0 || t.sndLen == 0) yield FinalSegmentRope.EMPTY;
                     int slot = (int)(t.fstOff & PREFIXES_MASK);
                     var cached = prefixes[slot];
-                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst)
-                        prefixes[slot] = cached = new SegmentRope(t.fst, t.fstOff, t.fstLen);
+                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst) {
+                        cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
+                        prefixes[slot] = cached;
+                    }
                     yield cached;
                 }
-                case '_' -> ByteRope.EMPTY;
+                case '_' -> FinalSegmentRope.EMPTY;
                 default -> throw new IllegalArgumentException("Not an RDF term");
             };
             int localOff = fst == '<' ? sh.len : 0;
             dest.putTerm(col, sh, t, localOff, t.len-sh.len, fst == '"');
         }
 
-        private boolean resetLexIt(LexIt lexIt, byte leftCol) {
+        private boolean resetLexIt(LexIt<?> lexIt, byte leftCol) {
             if (!lb.getRopeView(lr, leftCol, ropeView)) return false;
             lexIt.find(ropeView);
             return lexIt.advance();
@@ -2546,7 +2587,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (oLexIt != null) oLexIt.end();
         }
 
-        private long lexRebindCol(LexIt lexIt, byte leftCol, long fallback,
+        private long lexRebindCol(LexIt<?> lexIt, byte leftCol, long fallback,
                                   B lb, int lr, LocalityCompositeDict.Lookup l) {
             if (leftCol < 0) return fallback;
             if (lexIt == null && lb instanceof StoreBatch sb) {
@@ -2571,20 +2612,24 @@ public class StoreSparqlClient extends AbstractSparqlClient
             } else {
                 if (++lr >= lb.rows) {
                     lr = 0;
-                    B n = lb.dropHead();
+                    B n = lb.dropHead(this);
                     if (n != null) {
                         lb = n;
                     } else {
-                        lb = left.nextBatch(null);
+                        lb = Orphan.takeOwnership(left.nextBatch(null), this);
                         if (startBindingNotifier != null) startBindingNotifier.startBinding();
                         if (lb == null) return false;
                     }
                 }
                 rEmpty = true;
-                var l = lookup(dictId);
-                sNotLex = s = lexRebindCol(sLexIt, sLeftCol, this.s, lb, lr, l);
-                pNotLex = p = lexRebindCol(pLexIt, pLeftCol, this.p, lb, lr, l);
-                oNotLex = o = lexRebindCol(oLexIt, oLeftCol, this.o, lb, lr, l);
+                var l = dict.lookup().takeOwnership(this);
+                try {
+                    sNotLex = s = lexRebindCol(sLexIt, sLeftCol, this.s, lb, lr, l);
+                    pNotLex = p = lexRebindCol(pLexIt, pLeftCol, this.p, lb, lr, l);
+                    oNotLex = o = lexRebindCol(oLexIt, oLeftCol, this.o, lb, lr, l);
+                } finally {
+                    l.recycle(this);
+                }
             }
             rebind(s, p, o);
             return true;
@@ -2595,7 +2640,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return rebindLexical();
             if (++lr >= lb.rows) {
                 lr = 0;
-                B n = lb.dropHead();
+                B n = lb.dropHead(this);
                 if (n != null) {
                     lb = n;
                 } else {
@@ -2604,11 +2649,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     B nextLB = null;
                     unlock();
                     try { //
-                        nextLB = left.nextBatch(null);
+                        nextLB = Orphan.takeOwnership(left.nextBatch(null), this);
                     } finally {
                         lock();
                         if (isTerminated()) // tryCancel()/close() while unlocked
-                            nextLB = batchType.recycle(nextLB); // abort rebind
+                            nextLB = Batch.safeRecycle(nextLB, this); // abort rebind
                     }
                     if ((lb = nextLB) == null)
                         return false;
@@ -2619,18 +2664,22 @@ public class StoreSparqlClient extends AbstractSparqlClient
             B lb = this.lb;
             int lr = this.lr;
             long s, p, o;
-            var l = lookup(dictId);
-            if (lb instanceof StoreBatch sb) {
-                s = sLeftCol < 0 ? this.s : translate(sb.id(lr, sLeftCol), dictId, l);
-                p = pLeftCol < 0 ? this.p : translate(sb.id(lr, pLeftCol), dictId, l);
-                o = oLeftCol < 0 ? this.o : translate(sb.id(lr, oLeftCol), dictId, l);
-            } else {
-                s = sLeftCol >= 0 && lb.getRopeView(lr, sLeftCol, ropeView)
-                        ? l.find(ropeView) : this.s;
-                p = pLeftCol >= 0 && lb.getRopeView(lr, pLeftCol, ropeView)
-                        ? l.find(ropeView) : this.p;
-                o = oLeftCol >= 0 && lb.getRopeView(lr, oLeftCol, ropeView)
-                        ? l.find(ropeView) : this.o;
+            var l = dict.lookup().takeOwnership(this);
+            try {
+                if (lb instanceof StoreBatch sb) {
+                    s = sLeftCol < 0 ? this.s : translate(sb.id(lr, sLeftCol), dictId, l);
+                    p = pLeftCol < 0 ? this.p : translate(sb.id(lr, pLeftCol), dictId, l);
+                    o = oLeftCol < 0 ? this.o : translate(sb.id(lr, oLeftCol), dictId, l);
+                } else {
+                    s = sLeftCol >= 0 && lb.getRopeView(lr, sLeftCol, ropeView)
+                            ? l.find(ropeView) : this.s;
+                    p = pLeftCol >= 0 && lb.getRopeView(lr, pLeftCol, ropeView)
+                            ? l.find(ropeView) : this.p;
+                    o = oLeftCol >= 0 && lb.getRopeView(lr, oLeftCol, ropeView)
+                            ? l.find(ropeView) : this.o;
+                }
+            } finally {
+                l.recycle(this);
             }
             rebind(s, p, o);
             return true;

@@ -1,9 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.emit.Emitter;
-import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.Receiver;
-import com.github.alexishuf.fastersparql.emit.Stage;
+import com.github.alexishuf.fastersparql.emit.*;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.NoDownstreamException;
@@ -13,28 +10,32 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.stream.Stream;
 
-public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implements Stage<B, B> {
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.HANGMAN;
+
+public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcessor<B, P>>
+        extends Stateful<P>
+        implements Stage<B, B, P> {
     protected static final int EXPECT_CANCELLED  = 0x80000000;
-    protected static final int ASSUME_THREAD_SAFE = 0x40000000;
 
     protected static final Flags PROC_FLAGS = Flags.DEFAULT.toBuilder()
             .flag(EXPECT_CANCELLED, "EXPECT_CANCELLED")
-            .flag(ASSUME_THREAD_SAFE, "ASSUME_THREAD_SAFE")
             .build();
 
-    protected @MonotonicNonNull Emitter<B> upstream;
+    protected @Nullable Emitter<B, ?> upstream;
     protected @MonotonicNonNull Receiver<B> downstream;
     public final BatchType<B> batchType;
     public final Vars vars;
     public Vars bindableVars = Vars.EMPTY;
+    private @Nullable HasFillingBatch<B> downstreamHFB;
     protected final EmitterStats stats = EmitterStats.createIfEnabled();
-
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -45,27 +46,15 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         this.vars      = outVars;
     }
 
-    /**
-     * Notifies that this processor will not be used anymore and that it may release
-     * resources it holds (e.g., pooled objects).
-     */
-    public final void release() {
-        if (upstream != null || downstream != null)
-            throw new IllegalStateException("release() called on a BatchProcessor being used as a Stage.");
-        if (moveStateRelease(statePlain(), CANCELLED))
-            markDelivered(CANCELLED);
+    @Override protected void onPendingRelease() {
+        cancel();
     }
 
-    /**
-     * Once called, writes and reads to {@code recycled} will <strong>NOT</strong> be atomic. Thus,
-     * the caller promises to only interact with the processor from a single thread.
-     *
-     * <p>Calling this method when this processor is used as an {@link Emitter}/{@link Receiver},
-     * is not necessary.</p>
-     */
-    public final void assumeThreadSafe() {
-        setFlagsRelease(statePlain(), ASSUME_THREAD_SAFE);
+    @Override protected void doRelease() {
+        Owned.safeRecycle(upstream, this);
+        super.doRelease();
     }
+
 
     /* --- --- --- processing --- --- --- */
 
@@ -80,14 +69,14 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
      * @param b the batch to process
      * @return a batch with the result of the processing, which may be {@code b} itself.
      */
-    public abstract B processInPlace(B b);
+    public abstract Orphan<B> processInPlace(Orphan<B> b);
 
     /**
      * {@link Emitter#cancel()}s upstream, but treat {@link #onCancelled()} as
      * {@link #onComplete()}
      */
     protected void cancelUpstream() {
-        setFlagsRelease(statePlain(), EXPECT_CANCELLED);
+        setFlagsRelease(EXPECT_CANCELLED);
         if (upstream != null)
             upstream.cancel();
     }
@@ -97,18 +86,22 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     /* --- --- --- Stage --- --- --- */
 
-    @Override public @This Stage<B, B> subscribeTo(Emitter<B> e) {
+    @SuppressWarnings("unchecked") @Override
+    public @This P subscribeTo(Orphan<? extends Emitter<B, ?>> orphan) {
         if (this.upstream == null) {
-            this.upstream = e;
-            e.subscribe(this);
-            bindableVars = bindableVars.union(e.bindableVars());
-        } else if (this.upstream != e) {
+            var upstream = orphan.takeOwnership(this);
+            this.upstream = upstream;
+            upstream.subscribe(this);
+            bindableVars = bindableVars.union(upstream.bindableVars());
+        } else if (this.upstream != orphan) {
+            if (orphan != null)
+                orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
             throw new MultipleRegistrationUnsupportedException(this);
         }
-        return this;
+        return (P)this;
     }
 
-    @Override public Emitter<B> upstream() { return upstream; }
+    @Override public Emitter<B, ?> upstream() { return upstream; }
 
     /* --- --- --- Emitter --- --- --- */
 
@@ -117,18 +110,14 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     @Override
     public final void subscribe(Receiver<B> r) throws MultipleRegistrationUnsupportedException {
-        if      (this.downstream == null) this.downstream = r;
-        else if (this.downstream !=    r) throw new MultipleRegistrationUnsupportedException(this);
-    }
-
-    @Override public void rebindAcquire() {
-        if (upstream != null) upstream.rebindAcquire();
-        delayRelease();
-    }
-
-    @Override public void rebindRelease() {
-        if (upstream != null) upstream.rebindRelease();
-        allowRelease();
+        if (downstream == null) {
+            downstream = r;
+            //noinspection unchecked
+            downstreamHFB = r instanceof HasFillingBatch<?> hfb
+                          ? (HasFillingBatch<B>)hfb : null;
+        } else if (downstream != r) {
+            throw new MultipleRegistrationUnsupportedException(this);
+        }
     }
 
     @Override public void rebindPrefetch(BatchBinding binding) {
@@ -141,6 +130,7 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
         resetForRebind(0, 0);
+        requireAlive();
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         if (upstream != null)
@@ -157,18 +147,25 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
 
     @Override public final boolean cancel() {
-        return upstream != null && upstream.cancel();
+        if (upstream == null) {
+            if (moveStateRelease(state(), CANCELLED))
+                markDelivered(CANCELLED);
+            return false;
+        } else {
+            return upstream.cancel();
+        }
     }
 
     @Override public void request(long rows) throws NoReceiverException {
         if (rows <= 0)
             return;
-        if (upstream == null)
-            throw new NoUpstreamException(this);
-        int state = statePlain();
-        if ((state&IS_INIT) != 0)
-            moveStateRelease(state, ACTIVE);
-        upstream.request(rows);
+        var upstream = this.upstream;
+        if (upstream != null) {
+            int st = statePlain();
+            if ((st&IS_INIT) != 0)
+                moveStateRelease(st, ACTIVE);
+            upstream.request(rows);
+        }
     }
 
     @Override public final Stream<? extends StreamNode> upstreamNodes() {
@@ -177,8 +174,8 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
     /* --- --- --- Receiver --- --- --- */
 
     /**
-     * Must be called at entry of every {@link #onBatch(Batch)} implementation.
-     * @param batch see {@link Receiver#onBatch(Batch)}
+     * Must be called at entry of every {@link #onBatch(Orphan)} implementation.
+     * @param batch see {@link Receiver#onBatch(Orphan)}
      * @return Whether the batch should be processed/delivered downstream.
      */
     protected final boolean beforeOnBatch(B batch) {
@@ -191,29 +188,44 @@ public abstract class BatchProcessor<B extends Batch<B>> extends Stateful implem
         return true;
     }
 
+    /** Equivalent to {@link #beforeOnBatch(Batch)} */
+    protected final boolean beforeOnBatch(Orphan<B> orphan) {
+        B b = orphan.takeOwnership(this);
+        boolean process = beforeOnBatch(b);
+        b.releaseOwnership(this);
+        return process;
+    }
+
+    protected @Nullable Orphan<B> fillingBatch() {
+        return downstreamHFB == null ? null : downstreamHFB.pollFillingBatch();
+    }
+
     /**
-     * Must be called by every {@link #onBatch(Batch)} implementation after
-     * the batch has been processed and only if {@link #beforeOnBatch(Batch)} returned true.
+     * Must be called by every {@link #onBatch(Orphan)} implementation after
+     * the batch has been processed and only if {@link #beforeOnBatch(Orphan)} returned true.
      * This method will deliver the processed batch downstream.
-     * @param batch see {@link Receiver#onBatch(Batch)}
+     * @param orphan see {@link Receiver#onBatch(Orphan)}
      * @param receivedRows {@link Batch#totalRows()} before the batch was processed.
-     * @return The reference that the {@link #onBatch(Batch)} method must return.
      */
-    protected @Nullable B afterOnBatch(@Nullable B batch, long receivedRows) {
+    protected void afterOnBatch(@Nullable Orphan<B> orphan, long receivedRows) {
         if (downstream == null) {
             throw new NoDownstreamException(this);
         } else if (upstream == null) {
             throw new NoUpstreamException(this);
-        } else if (batch == null) {
+        } else if (orphan == null) {
             cancelUpstream();
-        } else if (batch.rows > 0) {
-            if (EmitterStats.ENABLED && stats != null)
-                stats.onBatchDelivered(batch);
-            if (ResultJournal.ENABLED)
-                ResultJournal.logBatch(this, batch);
-            batch = downstream.onBatch(batch);
+        } else {
+            B batch = orphan.takeOwnership(this);
+            if (batch.rows == 0) {
+                batch.recycle(this);
+            } else {
+                if (EmitterStats.ENABLED && stats != null)
+                    stats.onBatchDelivered(batch);
+                if (ResultJournal.ENABLED)
+                    ResultJournal.logBatch(this, batch);
+                downstream.onBatch(batch.releaseOwnership(this));
+            }
         }
-        return batch;
     }
 
     @Override public final void onComplete() {

@@ -2,10 +2,10 @@ package com.github.alexishuf.fastersparql.emit;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.emit.async.BatchEmitter;
-import com.github.alexishuf.fastersparql.emit.async.EmptyEmitter;
-import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,50 +16,74 @@ public class Emitters {
     private static final Logger log = LoggerFactory.getLogger(Emitters.class);
     private static final boolean LOG_DEBUG = log.isDebugEnabled();
 
-    public static <B extends Batch<B>> EmptyEmitter<B> empty(BatchType<B> batchType, Vars vars) {
-        return new EmptyEmitter<>(batchType, vars, null);
+    public static <B extends Batch<B>> Orphan<EmptyEmitter<B>> empty(BatchType<B> batchType, Vars vars) {
+        return EmptyEmitter.create(batchType, vars, null);
     }
 
     @SuppressWarnings("unused")
-    public static <B extends Batch<B>> EmptyEmitter<B> error(BatchType<B> batchType, Vars vars, Throwable error) {
-        return new EmptyEmitter<>(batchType, vars, error);
+    public static <B extends Batch<B>> Orphan<EmptyEmitter<B>> error(BatchType<B> batchType, Vars vars, Throwable error) {
+        return EmptyEmitter.create(batchType, vars, error);
     }
 
-    public static <B extends Batch<B>> BatchEmitter<B> ofBatch(Vars vars, B batch) {
-        return new BatchEmitter<>(vars, batch);
+    public static <B extends Batch<B>> Orphan<BatchEmitter<B>> ofBatch(Vars vars, Orphan<B> batch) {
+        return BatchEmitter.create(vars, batch);
     }
 
-    public static <B extends Batch<B>> Emitter<B> withVars(Vars vars, Emitter<B> in) {
-        var projector = in.batchType().projector(vars, in.vars());
-        return projector == null ? in : projector.subscribeTo(in);
+    public static <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    withVars(Vars vars, Orphan<? extends Emitter<B, ?>> in) {
+        var orphanProjector = Emitter.peekBatchType(in).projector(vars, Emitter.peekVars(in));
+        if (orphanProjector == null) return in;
+        return orphanProjector.takeOwnership(WITH_VARS).subscribeTo(in).releaseOwnership(WITH_VARS);
     }
+    private static final StaticMethodOwner WITH_VARS = new StaticMethodOwner("Emitters.withVars");
 
-    public static <B extends Batch<B>> void discard(Emitter<B> em) {
+    public static <B extends Batch<B>> void discard(Orphan<? extends Emitter<B, ?>> em) {
         if (em == null)
             return;
+        DiscardingReceiver<B> receiver = null;
         try {
-            em.subscribe(new DiscardingReceiver<>());
-        } catch (MultipleRegistrationUnsupportedException ignored) {}
-        try {
-            em.cancel();
+            receiver = DiscardingReceiver.create(em).takeOwnership(DISCARD);
+            receiver.cancel(true);
         } catch (Throwable t) {
             log.error("Ignoring {} while discarding {}", t.getClass().getSimpleName(), em, t);
+        } finally {
+            if (receiver != null)
+                receiver.recycle(DISCARD);
         }
     }
+    private static final StaticMethodOwner DISCARD = new StaticMethodOwner("Emitters.discard");
 
-    @SuppressWarnings("unused") public static <B extends Batch<B>> B collect(Emitter<B> e) {
-        return new CollectingReceiver<>(e).join();
+    @SuppressWarnings("unused")
+    public static <B extends Batch<B>> Orphan<B> collect(Orphan<? extends Emitter<B, ?>> e) {
+        var receiver = CollectingReceiver.create(e).takeOwnership(COLLECT);
+        try {
+            return receiver.take();
+        } finally {receiver.recycle(COLLECT);}
+    }
+    private static final StaticMethodOwner COLLECT = new StaticMethodOwner("Emitters.collect");
+
+    public static <B extends Batch<B>> boolean ask(Orphan<? extends Emitter<B, ?>> e) {
+        var receiver = AskReceiver.create(e).takeOwnership(ASK);
+        try {
+            return receiver.has();
+        } finally {receiver.recycle(ASK);}
+    }
+    private static final StaticMethodOwner ASK = new StaticMethodOwner("Emitters.ask");
+
+    public static void handleEmitError(Receiver<?> downstream,
+                                       Emitter<?, ?> upstream,
+                                       Throwable emitError,
+                                       @Nullable Batch<?> batch) {
+        handleEmitError(downstream, upstream, emitError, batch, upstream);
     }
 
-    public static <B extends Batch<B>> boolean ask(Emitter<B> e) {
-        return new AskReceiver<>(e).has();
-    }
-
-    public static void handleEmitError(Receiver<?> downstream, Emitter<?> upstream,
-                                       boolean emitterTerminated,
-                                       Throwable emitError) {
+    public static void handleEmitError(Receiver<?> downstream,
+                                       Emitter<?, ?> upstream,
+                                       Throwable emitError,
+                                       @Nullable Batch<?> batch,
+                                       @Nullable Object batchOwner) {
         if (ENABLED) journal("deliver failed, rcv=", downstream, ", on", upstream);
-        if (emitterTerminated) {
+        if (upstream.isTerminated()) {
             log.debug("{}.onBatch() failed, will not cancel {}: terminated or terminating",
                     downstream, upstream, emitError);
         } else {
@@ -70,9 +94,10 @@ public class Emitters {
                 log.info("Ignoring {}.cancel() failure", upstream, cancelError);
             }
         }
+        Batch.safeRecycle(batch, batchOwner);
     }
 
-    public static void handleTerminationError(Receiver<?> downstream, Emitter<?> upstream,
+    public static void handleTerminationError(Receiver<?> downstream, Emitter<?, ?> upstream,
                                               Throwable error) {
         if (ENABLED) journal("handleTerminationError, rcv=", downstream, ", on", upstream);
         String name = error.getClass().getSimpleName();

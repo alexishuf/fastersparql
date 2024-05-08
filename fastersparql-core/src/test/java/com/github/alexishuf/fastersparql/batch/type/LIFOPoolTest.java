@@ -29,7 +29,7 @@ class LIFOPoolTest {
 
     @Test
     void testSingleThread() {
-        var pool = new LIFOPool<>(D.class, 23);
+        var pool = new LIFOPool<>(D.class, "pool",  23, 24);
         for (int i = 0; i < 23; i++)
             assertNull(pool.offer(new D(0, i)), "i="+i);
         D last = new D(0, 23);
@@ -48,7 +48,7 @@ class LIFOPoolTest {
     void testConcurrentWithLoss() throws Exception {
         int threadItems = 500_000;
         int capacity = 8;
-        LIFOPool<D> pool = new LIFOPool<>(D.class, capacity);
+        LIFOPool<D> pool = new LIFOPool<>(D.class, "pool", capacity, 24);
         AtomicInteger accepted = new AtomicInteger();
         List<D> taken = Collections.synchronizedList(new ArrayList<>(threadItems));
         List<D> objects = new ArrayList<>(threadItems);
@@ -96,7 +96,7 @@ class LIFOPoolTest {
     @RepeatedTest(4) void testConcurrentNoLoss() throws Exception {
         int threads = getRuntime().availableProcessors();
         int threadItems = 500_000/threads;
-        var pool = new LIFOPool<>(D.class, threads);
+        var pool = new LIFOPool<>(D.class, "pool", threads, 24);
         try (var exec = newFixedThreadPool(threads)) {
             List<Future<?>> tasks = new ArrayList<>();
             List<D> objects = new ArrayList<>();

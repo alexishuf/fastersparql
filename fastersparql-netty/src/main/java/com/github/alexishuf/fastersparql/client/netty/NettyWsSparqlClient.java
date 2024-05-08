@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClient;
 import com.github.alexishuf.fastersparql.client.netty.ws.NettyWsClientHandler;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.HasFillingBatch;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
@@ -22,7 +23,8 @@ import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfigurat
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledSegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -32,7 +34,13 @@ import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsExce
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
+import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.Channel;
@@ -115,8 +123,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
-                                                     Vars rebindHint) {
+    protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         return new WsEmitter<>(bt, sparql.publicVars(), sparql, null);
     }
 
@@ -124,10 +132,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         return new WsBIt<>(bq.batchType(), bq.resultVars(), bq.query, bq);
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query,
-                                                               Vars rebindHint) {
-        BatchType<B> bt = query.bindings.batchType();
-        return new WsEmitter<>(bt, query.resultVars(), query.query, query);
+    @Override protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(EmitBindQuery<B> query, Vars rebindHint) {
+        return new WsEmitter<>(query.batchType(), query.resultVars(), query.query, query);
     }
 
     /* --- --- --- helper methods --- --- --- */
@@ -229,14 +236,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             return this;
         }
 
-        @Override public @Nullable B nextBatch(@Nullable B offer) {
-            B b = super.nextBatch(offer);
-            if (b != null) {
-                pendingRows -= b.totalRows();
+        @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
+            var orphan = super.nextBatch(offer);
+            if (orphan != null) {
+                pendingRows -= Batch.peekTotalRows(orphan);
                 if (pendingRows <= maxItems>>1 && notTerminated())
                     h.requestRows(pendingRows = maxItems);
             }
-            return b;
+            return orphan;
         }
 
         @Override protected boolean mustPark(int offerRows, long queuedRows) {
@@ -274,11 +281,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     while ((req=(long)BIND_REQUEST.getAcquire(this)) <= 0 && notTerminated())
                         LockSupport.park();
                     bindings.maxBatch((int) Math.min(Integer.MAX_VALUE, req));
-                    B b = bindings.nextBatch(null);
-                    if (b == null)
+                    var orphan = bindings.nextBatch(null);
+                    if (orphan == null)
                         break;
-                    BIND_REQUEST.getAndAddRelease(this, -(long)b.totalRows());
-                    h.sendBatch(b);
+                    BIND_REQUEST.getAndAddRelease(this, -(long)Batch.peekTotalRows(orphan));
+                    h.sendBatch(orphan);
                 }
             } catch (Throwable t) {
                 termCause = t;
@@ -334,7 +341,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
 
     private class WsHandler<B extends Batch<B>>
-            implements NettyWsClientHandler, ChannelBound,
+            implements NettyWsClientHandler, ChannelBound, HasFillingBatch<B>,
                        ResultsSerializer.ChunkConsumer<ByteBuf> {
         private static final VarHandle BINDINGS_LOCK, REQ_ROWS, RELEASE_LOCK;
         static {
@@ -386,21 +393,19 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         private final WsBitsetRunnable bsRunnable = new WsBitsetRunnable(this);
         private final WsParser<B> parser;
         private final ByteBufSink bbSink = new ByteBufSink(ByteBufAllocator.DEFAULT);
-        private ByteBufRopeView bbView = ByteBufRopeView.create();
+        private ByteBufRopeView bbView = new ByteBufRopeView(PooledSegmentRopeView.ofEmpty());
         private @Nullable ChannelHandlerContext ctx;
         private int st;
-        private final BatchType<B> bt;
         private WsSerializer serializer;
         private final @Nullable BindType bindType;
         @SuppressWarnings("unused") private int plainBindingsLock;
         @SuppressWarnings("unused") private long plainRequestRows;
-        private final ByteRope reqRowsMsg = new ByteRope(REQ_ROWS_MSG_CAP).append(REQUEST);
+        private final MutableRope reqRowsMsg = new MutableRope(REQ_ROWS_MSG_CAP).append(REQUEST);
         private final byte[] reqRowsU8 = reqRowsMsg.u8();
         private final TextWebSocketFrame reqRowsFrame = new TextWebSocketFrame(wrappedBuffer(reqRowsU8));
         private @Nullable B receivedBindings;
         private @Nullable Throwable bindingsError;
         private ChannelRecycler channelRecycler = ChannelRecycler.CLOSE;
-        private final Vars usefulBindingsVars;
         private final Vars bindingsVars, usefulBindingsVars;
         private @Nullable String info;
         private final WsStreamNode<B> parent;
@@ -412,7 +417,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             parser.h = this;
             this.parser = parser;
             this.parent = parent;
-            this.bt = parser.batchType();
             if (bindQuery == null) {
                 serializer = null;
                 bindingsVars = Vars.EMPTY;
@@ -421,7 +425,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } else {
                 bindingsVars = bindQuery.bindingsVars();
                 usefulBindingsVars = parent.vars().intersection(bindingsVars);
-                serializer = WsSerializer.create(NORMAL_HINT);
+                serializer = WsSerializer.create(NORMAL_HINT).takeOwnership(this);
                 bindType = bindQuery.type;
             }
             bsRunnable.executor(netty.executor());
@@ -448,7 +452,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             B batch = receivedBindings;
             receivedBindings = null;
             BINDINGS_LOCK.setRelease(this, 0);
-            bt.recycle(batch);
+            Batch.recycle(batch, this);
         }
 
         @SuppressWarnings("unused") private void doRetry() {
@@ -484,17 +488,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                         st |= ST_RELEASED;
                         try {
                             doReleaseReceivedBindings();
-                            if (serializer != null)
-                                serializer.recycle();
-                            bbView.recycle();
-                            bbSink.release();
+                            bbView.close();
+                            bbSink.close();
                             if (reqRowsFrame.refCnt() > 1)
                                 reqRowsFrame.release();
+                            reqRowsMsg.close();
                             releaseRef();
                         } catch (Throwable t) {
                             log.error("Error while releasing resources for {}", this, t);
                         } finally {
-                            serializer = null;
+                            serializer = Owned.safeRecycle(serializer, this);
                             bbView = null;
                         }
                     }
@@ -624,10 +627,20 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             bsRunnable.sched(actions);
         }
 
-        protected void sendBatch(B b) {
+        @Override public @Nullable Orphan<B> pollFillingBatch() {
+            Orphan<B> tail;
             while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
             try {
-                receivedBindings = quickAppend(receivedBindings, b);
+                if ((tail=Batch.detachDistinctTail(receivedBindings)) != null)
+                    journal("pollFillingBatch rows=", Batch.peekRows(tail), "on", this);
+            } finally { BINDINGS_LOCK.setRelease(this, 0); }
+            return tail;
+        }
+
+        protected void sendBatch(Orphan<B> b) {
+            while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            try {
+                receivedBindings = quickAppend(receivedBindings, this, b);
             } finally { BINDINGS_LOCK.setRelease(this, 0); }
             bsRunnable.sched(AC_SEND_BATCH);
         }
@@ -645,10 +658,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 BINDINGS_LOCK.setRelease(this, 0);
                 if (batch != null) {
                     if (batch.rows > 0) {
-                        serializer.serialize(batch, bbSink.touch(), REC_MAX_FRAME_LEN,
+                        serializer.serialize(batch.releaseOwnership(this),
+                                             bbSink.touch(), REC_MAX_FRAME_LEN,
                                              parser, this);
                     } else {
-                        bt.recycle(batch);
+                        Batch.recycle(batch, this);
                     }
                 }
             } else  {
@@ -765,8 +779,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             assert inEventLoop() : "not in event loop";
             st = (st&~ST_CONNECTING) | ST_ATTACHED | ((st&ST_SEND_CANCEL) == 0 ? ST_SEND_QUERY : 0);
             parent.setChannel(ctx.channel());
-            if (bbView == null)
-                bbView = ByteBufRopeView.create();
             bbSink.alloc(ctx.alloc());
             bsRunnable.sched(AC_SEND_QUERY);
         }
@@ -830,8 +842,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } else if ((st&ST_RELEASED) != 0) {
                 throw new IllegalStateException(this+" released, cannot handle frame, st="+parent.renderState());
             } else {
-                if (bbView == null)
-                    bbView = ByteBufRopeView.create();
                 st |= ST_GOT_FRAMES;
                 try {
                     parser.feedShared(bbView.wrapAsSingle(f.content()));
@@ -857,13 +867,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    private final class WsEmitter<B extends Batch<B>> extends CallbackEmitter<B>
-            implements  Receiver<B>, WsStreamNode<B> {
+    private final class WsEmitter<B extends Batch<B>> extends CallbackEmitter<B, WsEmitter<B>>
+            implements WsStreamNode<B>, Orphan<WsEmitter<B>> {
         private final SparqlQuery query;
         private final WsHandler<B> h;
         private final @Nullable EmitBindQuery<B> bindQuery;
         private @Nullable Binding binding;
         private final Vars bindableVars;
+        private final Emitter<B, ?> leftEmitter;
         private @Nullable Channel lastChannel;
 
         public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
@@ -874,31 +885,31 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             this.bindQuery = bindQuery;
             if (bindQuery == null) {
                 bindableVars = query.allVars();
+                leftEmitter = null;
             } else  {
-                bindableVars = bindQuery.bindings.vars().union(query.allVars());
-                bindQuery.bindings.subscribe(this);
+                bindableVars = bindQuery.bindingsVars().union(query.allVars());
+                leftEmitter = bindQuery.bindings.takeOwnership(this);
+                leftEmitter.subscribe(new BindingsReceiver());
             }
         }
 
+        @Override public WsEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override protected void doRelease() {
+            super.doRelease();
+            Owned.safeRecycle(leftEmitter, this);
+            h.release();
+        }
+
         /* --- --- --- rebind --- --- --- */
-
-        @Override public void rebindAcquire() {
-            if (bindQuery != null) bindQuery.bindings.rebindAcquire();
-            super.rebindAcquire();
-        }
-
-        @Override public void rebindRelease() {
-            if (bindQuery != null) bindQuery.bindings.rebindRelease();
-            super.rebindRelease();
-        }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
             int st = resetForRebind(CLEAR_ON_REBIND, LOCKED_MASK);
             try {
                 assert binding.batch != null && binding.row < binding.batch.rows : "bad binding";
                 this.binding = binding;
-                if (this.bindQuery != null)
-                    bindQuery.bindings.rebind(binding);
+                if (leftEmitter != null)
+                    leftEmitter.rebind(binding);
                 h.reset();
             } finally {
                 unlock(st);
@@ -910,7 +921,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- StreamNode --- --- --- */
 
         @Override public Stream<? extends StreamNode> upstreamNodes() {
-            return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
+            return bindQuery == null ? Stream.empty() : Stream.of(leftEmitter);
         }
 
         /* --- --- --- ChannelBound --- --- --- */
@@ -949,7 +960,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void beforeSendBindQuery() {
             long requested = requested();
             assert bindQuery != null;
-            Emitter<B> bindings = bindQuery.bindings;
+            Emitter<B, ?> bindings = leftEmitter;
             if (requested > 0) {
                 int chunk = min(bindings.preferredRequestChunk(),
                                 preferredRequestChunk());
@@ -969,23 +980,48 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             public EmitWsParser(EmitBindQuery<B> bindQuery) { super(WsEmitter.this, bindQuery); }
 
             @Override protected void handleBindRequest(long n) {
-                if (bindQuery == null)
+                if (leftEmitter == null)
                     throw new UnsupportedOperationException();
-                ((EmitBindQuery<B>)bindQuery).bindings.request(n);
+                leftEmitter.request(n);
             }
             @Override protected void onPing() {h.sendPingAck();}
         }
 
         /* --- --- --- bindings Receiver --- --- --- */
 
-        @Override public @Nullable B onBatch(B batch) {
-            if (batch == null || batch.rows == 0)
-                return batch;
-            h.sendBatch(batch);
-            return null;
+        private final class BindingsReceiver implements Receiver<B>, HasFillingBatch<B> {
+            @Override public Stream<? extends StreamNode> upstreamNodes() {
+                return Stream.ofNullable(leftEmitter);
+            }
+            @Override public String label(StreamNodeDOT.Label type) {
+                return WsEmitter.this.label(type);
+            }
+            @Override public String journalName() {
+                return WsEmitter.this.journalName()+".B";
+            }
+            @Override public void onBatch(Orphan<B> orphan) {
+                if (Batch.peekRows(orphan) == 0)
+                    Orphan.recycle(orphan);
+                else
+                    h.sendBatch(orphan);
+            }
+            @Override public void onBatchByCopy(B batch) {
+                if (batch == null || batch.rows == 0)
+                    return;
+                Orphan<B> orphan = h.pollFillingBatch();
+                if (orphan == null)
+                    orphan = bt.create(batch.cols);
+                B f = orphan.takeOwnership(this);
+                f.copy(batch);
+                h.sendBatch(f.releaseOwnership(this));
+            }
+            @Override public @Nullable Orphan<B> pollFillingBatch() {
+                return h.pollFillingBatch();
+            }
+            @Override public void  onComplete()            { h.sendBindingTerm(null); }
+            @Override public void onCancelled()            { h.sendBindingTerm(CancelledException.INSTANCE); }
+            @Override public void onError(Throwable cause) { h.sendBindingTerm(cause); }
         }
-        @Override public void  onComplete() { h.sendBindingTerm(null); }
-        @Override public void onCancelled() { h.sendBindingTerm(CancelledException.INSTANCE); }
-        @Override public void onError(Throwable cause) { h.sendBindingTerm(cause); }
+
     }
 }

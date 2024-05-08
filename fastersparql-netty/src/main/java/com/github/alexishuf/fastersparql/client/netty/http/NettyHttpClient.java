@@ -1,6 +1,9 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
-import com.github.alexishuf.fastersparql.client.netty.util.*;
+import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
+import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -20,7 +23,6 @@ import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.Charset;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.function.Supplier;
@@ -138,12 +140,11 @@ public final class NettyHttpClient implements AutoCloseable {
     public static FullHttpRequest makeRequest(HttpMethod method, String pathAndParams,
                                               @Nullable String accept,
                                               String contentType,
-                                              CharSequence body, Charset charset) {
-        ByteBuf bb =  NettyRopeUtils.wrap(body, charset);
-        var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method, pathAndParams, bb);
+                                              ByteBuf body) {
+        var req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method, pathAndParams, body);
         HttpHeaders headers = req.headers();
         headers.set(CONTENT_TYPE, contentType);
-        headers.set(CONTENT_LENGTH, bb.readableBytes());
+        headers.set(CONTENT_LENGTH, body.readableBytes());
         if (accept != null)
             headers.set(ACCEPT, accept);
         return req;

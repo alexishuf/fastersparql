@@ -1,9 +1,9 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.openjdk.jmh.annotations.*;
 
 import java.util.ArrayList;
@@ -13,7 +13,6 @@ import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import static com.github.alexishuf.fastersparql.lrb.Workloads.fromName;
-import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
 
 @SuppressWarnings("rawtypes")
 @State(Scope.Thread)
@@ -39,13 +38,13 @@ public class RopeHasBench {
         rt = new RopeTypeHolder(ropeType);
         ByteSink sink = rt.byteSink().touch();
         int terms = 0;
-        var batches = uniformCols(fromName(TermBatchType.TERM, sizeName), TermBatchType.TERM);
-        for (TermBatch b : batches)
-            terms += b.totalRows()*b.cols;
-        int[] offsets = new int[terms+1];
-        terms = 0;
-        for (TermBatch b : batches) {
-            for (var n = b; n != null; n = n.next) {
+        try (var g = new Guard.BatchGuard<>(this)) {
+            var queue = g.set(fromName(TermBatchType.TERM, sizeName));
+            for (var n = queue; n != null; n = n.next)
+                terms += n.totalRows()*n.cols;
+            int[] offsets = new int[terms+1];
+            terms = 0;
+            for (var n = queue; n != null; n = n.next) {
                 for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
                         if (n.termType(r, c) != null) {
@@ -55,22 +54,22 @@ public class RopeHasBench {
                     }
                 }
             }
+            offsets[terms] = sink.len();
+            leftContainer = rt.takeRope(sink);
+            rightContainer = rt.takeRope(rt.byteSink().append(leftContainer));
+            List<SegmentRope> ropes = new ArrayList<>(terms);
+            for (int i = 0; i < terms; i++) {
+                SegmentRope sub = leftContainer.sub(offsets[i], offsets[i + 1]);
+                if (sub.len == 0) throw new AssertionError("empty string");
+                ropes.add(sub);
+            }
+            Collections.shuffle(ropes, new Random(seed));
+            left = ropes.toArray(SegmentRope[]::new);
+            right = new SegmentRope[terms];
+            for (int i = 0; i < left.length; i++)
+                right[i] = rightContainer.sub((int)left[i].offset, (int)(left[i].offset+left[i].len));
         }
-        offsets[terms] = sink.len();
 
-        leftContainer = rt.takeRope(sink);
-        rightContainer = rt.takeRope(rt.byteSink().append(leftContainer));
-        List<SegmentRope> ropes = new ArrayList<>(terms);
-        for (int i = 0; i < terms; i++) {
-            SegmentRope sub = leftContainer.sub(offsets[i], offsets[i + 1]);
-            if (sub.len == 0) throw new AssertionError("empty string");
-            ropes.add(sub);
-        }
-        Collections.shuffle(ropes, new Random(seed));
-        left = ropes.toArray(SegmentRope[]::new);
-        right = new SegmentRope[terms];
-        for (int i = 0; i < left.length; i++)
-            right[i] = rightContainer.sub((int) left[i].offset, (int) (left[i].offset+left[i].len));
     }
 
     @TearDown(Level.Trial) public void tearDown() {

@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.util.UriUtils;
+import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -19,7 +20,8 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -38,7 +40,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
      *  If some variable is not bound at evaluation time, an {@link UnboundVarException}
      *  will be thrown. Unbound vars do not raise an error on the discarded branches of
      *  {@code IF(cond, true, false)} and {@code COALESCE(...)} functions. */
-    Term eval(Binding binding); 
+    Term eval(Binding binding);
 
     ExprEvaluator evaluator(Vars vars);
 
@@ -60,9 +62,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     int toSparql(ByteSink<?, ?> out, PrefixAssigner prefixAssigner);
 
     default Rope toSparql() {
-        ByteRope r = new ByteRope();
-        toSparql(r, PrefixAssigner.NOP);
-        return r;
+        try (var r = PooledMutableRope.get()) {
+            toSparql(r, PrefixAssigner.NOP);
+            return r.take();
+        }
     }
 
     /** Add all vars used in {@code e} to {@code out} and return the number of vars
@@ -92,10 +95,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         @Override public Term eval(Binding binding) {
-            try (var it = filter.bound(binding).execute(COMPRESSED).eager()) {
-                var batch = it.nextBatch(null);
-                COMPRESSED.recycle(batch);
-                return (batch != null) ^ negate ? TRUE : FALSE;
+            var bound = filter.bound(binding);
+            try (var g = new ItGuard<>(this, bound.execute(COMPRESSED).eager())) {
+                return g.advance() ^ negate ? TRUE : FALSE;
             }
         }
 
@@ -114,13 +116,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 this.negate  = e.negate();
                 this.binding = new BatchBinding(vars);
             }
-
+            @Override public void close() {}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 binding.attach(batch, row);
-                try (var it = filter.execute(COMPRESSED, binding, true).eager().tempEager()) {
-                    var b = it.nextBatch(null);
-                    COMPRESSED.recycle(b);
-                    return (batch != null) ^ negate ? TRUE : FALSE;
+                try (var g = new ItGuard<>(this,
+                        filter.execute(COMPRESSED, binding, true).eager())) {
+                    return g.advance() ^ negate ? TRUE : FALSE;
                 }
             }
         }
@@ -135,7 +136,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner) {
             int oldLen = out.len();
             int indent = 0;
-            if (out instanceof ByteRope r) {
+            if (out instanceof MutableRope r) {
                 if (r.len() != 0) {
                     int lineBegin = r.reverseSkip(0, r.len, Rope.UNTIL_LF);
                     if (r.get(lineBegin) == '\n') lineBegin++;
@@ -148,9 +149,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         @Override public String toString() {
-            var sb = new ByteRope(256);
-            toSparql(sb, PrefixAssigner.NOP);
-            return sb.toString();
+            try (var sb = PooledMutableRope.getWithCapacity(256)) {
+                toSparql(sb, PrefixAssigner.NOP);
+                return sb.toString();
+            }
         }
     }
 
@@ -218,9 +220,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         @Override public final String toString() {
-            var sb = new ByteRope(33);
-            toSparql(sb, PrefixAssigner.NOP);
-            return sb.toString();
+            try (var sb = PooledMutableRope.getWithCapacity(33)) {
+                toSparql(sb, PrefixAssigner.NOP);
+                return sb.toString();
+            }
         }
     }
 
@@ -248,7 +251,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 this.unaryFunction = f;
                 this.in = f.in.evaluator(vars);
             }
-
+            @Override public void close() {in.close();}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 return unaryFunction.eval(in.evaluate(batch, row));
             }
@@ -286,6 +289,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 this.rExpr = r;
                 this.l = l.evaluator(vars);
                 this.r = r.evaluator(vars);
+            }
+            @Override public void close() {
+                l.close();
+                r.close();
             }
         }
     }
@@ -511,24 +518,23 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         private static final class MinusEval extends Eval {
-            private final ByteRope tmpLocal = new ByteRope(12);
-            private final Term result = Term.mutable();
+            private final MutableRope tmp = new MutableRope(12);
+            private final TermView result = new TermView();
 
-            public MinusEval(Vars vars, UnaryFunction f) {
-                super(vars, f);
-            }
+            public MinusEval(Vars vars, UnaryFunction f) {super(vars, f);}
+            @Override public void close() {tmp.close();}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term in = this.in.evaluate(batch, row);
                 Expr.requireLiteral(unaryFunction.in, in);
                 SegmentRope sh = in.shared(), local = in.first();
                 if (!in.isNumeric())
                     throw new InvalidExprTypeException(unaryFunction.in, in, "numeric");
-                tmpLocal.clear().ensureFreeCapacity(local.len+1).append('"');
+                tmp.clear().ensureFreeCapacity(local.len+1).append('"');
                 if (local.get(1) == '-')
-                    tmpLocal.append(local, 2, local.len);
+                    tmp.append(local, 2, local.len);
                 else
-                    tmpLocal.append('-').append(local, 1, local.len);
-                result.set(sh, tmpLocal, true);
+                    tmp.append('-').append(local, 1, local.len);
+                result.wrap(sh, tmp, true);
                 return result;
             }
         }
@@ -632,6 +638,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 for (int i = 0; i < evals.length; i++)
                     evals[i] = args[i].evaluator(vars);
             }
+            @Override public void close() {
+                for (ExprEvaluator e : evals) e.close();
+            }
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term key = evals[0].evaluate(batch, row);
                 if (key == null) throw new InvalidExprTypeException(args[0], null, "bound");
@@ -669,15 +678,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     if (term.datatypeSuff() == SharedRopes.DT_string)
                         yield term;
                     int endLex = term.endLex();
-                    ByteRope tmp = new ByteRope(endLex + 1).append(term.first(), 0, endLex).append('"');
-                    yield new Term(EMPTY, tmp, true);
+                    var local = RopeFactory.make(endLex+1).add(term, 0, endLex)
+                                           .add('"').take();
+                    yield new FinalTerm(EMPTY, local, true);
                 }
                 case IRI -> {
-                    ByteRope tmp = new ByteRope(term.toArray(0, term.len));
-                    byte[] u8 = tmp.u8();
-                    u8[0] = '"';
-                    u8[term.len-1] = '"';
-                    yield new Term(EMPTY, tmp, true);
+                    var local = RopeFactory.make(term.len).add('"')
+                            .add(term, 1, term.len-1).add('"').take();
+                    yield new FinalTerm(EMPTY, local, true);
                 }
                 default -> throw new InvalidExprTypeException(in, term, "literal/IRI");
             };
@@ -692,9 +700,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         public Lang(Expr in) { super(in); }
         @Override public Term eval(Term term) {
             Expr.requireLiteral(in, term);
-            Rope lang = term.lang();
-            if (lang == null) return EMPTY_STRING;
-            return Term.wrap(new ByteRope().append('"').append(lang).append('"'), null);
+            int endLex = term.endLex();
+            if (endLex > 0 && term.get(endLex+1) == '@') {
+                var nt = RopeFactory.make(2+term.len-(endLex+2))
+                        .add('"').add(term, endLex+2, term.len).add('"').take();
+                return Term.wrap(nt, null);
+            } else {
+                return EMPTY_STRING;
+            }
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -721,19 +734,20 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
         private static final byte[] BN_PREFIX = "_:".getBytes(UTF_8);
         @Override public Term eval(Binding binding) {
-            ByteRope lex = new ByteRope();
-            if (args.length == 0) {
-                lex.append("_:").append(randomUUID().toString().getBytes(UTF_8));
-            } else {
-                Term term = args[0].eval(binding);
-                var tmp = TwoSegmentRope.pooled();
-                term.escapedLexical(tmp);
-                lex.append(tmp);
-                tmp.recycle();
-                if (!lex.has(0, BN_PREFIX))
-                    throw new InvalidExprTypeException(args[0], term, "literal with _:-prefixed lexical form");
+            try (var lex = PooledMutableRope.get()) {
+                if (args.length == 0) {
+                    lex.append("_:").append(randomUUID().toString().getBytes(UTF_8));
+                } else {
+                    Term term = args[0].eval(binding);
+                    try (var tsr = PooledTwoSegmentRope.ofEmpty()) {
+                        term.escapedLexical(tsr);
+                        lex.append(tsr);
+                    }
+                    if (!lex.has(0, BN_PREFIX))
+                        throw new InvalidExprTypeException(args[0], term, "literal with _:-prefixed lexical form");
+                }
+                return Term.valueOf(lex);
             }
-            return splitAndWrap(lex);
         }
 
         @Override
@@ -748,13 +762,16 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
         private final class MakeBNodeEval implements ExprEvaluator {
             private final ExprEvaluator argEval;
-            private final ByteRope tmp = new ByteRope(39).append("_:");
+            private final MutableRope tmp = new MutableRope(64).append("_:");
             private final TwoSegmentRope tsr = new TwoSegmentRope();
-            private final Term result = Term.mutable();
+            private final TermView result = new TermView();
             public MakeBNodeEval(Vars vars) {
                 argEval = args.length == 0 ? null : args[0].evaluator(vars);
             }
-
+            @Override public void close() {
+                argEval.close();
+                tmp.close();
+            }
             @Override public Term evaluate(Batch<?> batch, int row) {
                 tmp.clear().len = 2;
                 if (argEval == null) {
@@ -765,7 +782,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     in.escapedLexical(tsr);
                     tmp.append(tsr);
                 }
-                result.set(EMPTY, tmp.segment, tmp.utf8, tmp.offset, tmp.len, true);
+                result.wrap(EMPTY, tmp.segment, tmp.utf8, tmp.offset, tmp.len, true);
                 return result;
             }
         }
@@ -789,9 +806,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 case IRI -> value;
                 case LIT -> {
                     int endLex = value.endLex();
-                    var tmp = new ByteRope(endLex + 1);
-                    tmp.append('<').append(value.first(), 1, endLex).append('>');
-                    yield new Term(null, tmp, false);
+                    var tmp = RopeFactory.make(endLex + 1)
+                                         .add('<').add(value, 1, endLex).add('>')
+                                         .take();
+                    yield new FinalTerm(null, tmp, false);
                 }
                 default -> throw new InvalidExprTypeException(in, value, "IRI or string literal");
             };
@@ -804,7 +822,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
     class Rand extends Supplier {
         @Override public Term eval(Binding ignored) {
-            return Term.wrap(new ByteRope().append('"').append(Math.random()), DT_DOUBLE);
+            try (var tmp = PooledMutableRope.get()) {
+                return Term.wrap(asFinal(tmp.append('"').append(Math.random())),
+                                 DT_DOUBLE);
+            }
         }
 
         @Override
@@ -813,12 +834,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         private static final class RandEval implements ExprEvaluator {
-            private final ByteRope tmp = new ByteRope(32).append('"');
-            private final Term result = Term.mutable();
+            private final MutableRope tmp = new MutableRope(32).append('"');
+            private final TermView result = new TermView();
+            @Override public void close() {tmp.close();}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 tmp.clear().len = 1;
                 tmp.append(Math.random());
-                result.set(DT_DOUBLE, tmp, true);
+                result.wrap(DT_DOUBLE, tmp, true);
                 return result;
             }
         }
@@ -860,29 +882,31 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Concat extends NAryFunction {
         public Concat(Expr[] args) { super(args); }
         @Override public Term eval(Binding binding) {
-            ByteRope result = new ByteRope().append('"');
-            Term first = null;
-            for (Expr arg : args) {
-                Term term = Expr.requireLiteral(arg, binding);
-                if (first == null)
-                    first = term;
-                TwoSegmentRope tmp = TwoSegmentRope.pooled();
-                term.escapedLexical(tmp);
-                result.append(tmp);
-                tmp.recycle();
-            }
-            if (first == null)
-                return EMPTY_STRING;
-            SegmentRope dt = first.datatypeSuff();
-            if (dt == DT_langString) {
-                result.append('"').append('@').append(requireNonNull(first.lang()));
-                return Term.splitAndWrap(result);
-            }
-            if (dt == null || dt == DT_string) {
-                dt = null;
+            try (var result = PooledMutableRope.get()) {
                 result.append('"');
+                Term first = null;
+                for (Expr arg : args) {
+                    Term term = Expr.requireLiteral(arg, binding);
+                    if (first == null)
+                        first = term;
+                    try (var tmp = PooledTwoSegmentRope.ofEmpty()) {
+                        term.escapedLexical(tmp);
+                        result.append(tmp);
+                    }
+                }
+                if (first == null)
+                    return EMPTY_STRING;
+                SegmentRope dt = first.datatypeSuff();
+                if (dt == DT_langString) {
+                    result.append('"').append('@').append(requireNonNull(first.lang()));
+                    return Term.splitAndWrap(result);
+                }
+                if (dt == null || dt == DT_string) {
+                    dt = null;
+                    result.append('"');
+                }
+                return new FinalTerm(dt, asFinal(result), true);
             }
-            return new Term(dt, result, true);
         }
 
         @Override
@@ -898,16 +922,20 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private final class ConcatEval implements ExprEvaluator {
             private final ExprEvaluator[] evals;
             private final Term[] terms;
-            private final ByteRope tmp = new ByteRope(64-16).append('"');
-            private final Term result = Term.mutable();
+            private final MutableRope tmp = new MutableRope(64);
+            private final TermView result = new TermView();
             public ConcatEval(Vars vars) {
                 terms = new Term[args.length];
                 evals = new ExprEvaluator[args.length];
                 for (int i = 0; i < evals.length; i++)
                     evals[i] = args[i].evaluator(vars);
             }
+            @Override public void close() {
+                for (var e : evals) e.close();
+                tmp.close();
+            }
             @Override public Term evaluate(Batch<?> batch, int row) {
-                tmp.clear().len = 1; // "
+                tmp.clear().append('"');
                 int required = 1/*"*/ + 6/*@en-US*/;
                 for (int i = 0; i < evals.length; i++) {
                     terms[i] = Expr.requireLiteral(args[i], evals[i].evaluate(batch, row));
@@ -924,7 +952,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 SegmentRope dt = terms[0].datatypeSuff();
                 if (dt == DT_langString)
                     tmp.append('@').append(terms[0].lang());
-                result.set(EMPTY, tmp, true);
+                result.wrap(EMPTY, tmp, true);
                 return result;
             }
         }
@@ -935,7 +963,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         @Override public Term eval(Term term) {
             int endLex = term.endLex();
             if (endLex < 0) throw new InvalidExprTypeException(in, term, "literal");
-            return Term.wrap(new ByteRope().append('"').append(endLex-1), DT_integer);
+            return Term.wrap(RopeFactory.make(12).add('"').add(endLex - 1).take(), DT_integer);
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -946,11 +974,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class UCase extends UnaryFunction {
         public UCase(Expr in) { super(in); }
         @Override public Term eval(Term lit) {
-            var tmp = TwoSegmentRope.pooled();
-            Expr.requireLiteral(this, lit).escapedLexical(tmp);
-            Term result = lit.withLexical(new ByteRope(tmp.toString().toUpperCase()));
-            tmp.recycle();
-            return result;
+            try (var tmp = PooledTwoSegmentRope.ofEmpty()) {
+                Expr.requireLiteral(this, lit).escapedLexical(tmp);
+                return lit.withLexical(asFinal(tmp.toString().toUpperCase()));
+            }
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -961,11 +988,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class LCase extends UnaryFunction {
         public LCase(Expr in) { super(in); }
         @Override public Term eval(Term lit) {
-            TwoSegmentRope tmp = TwoSegmentRope.pooled();
-            Expr.requireLiteral(this, lit).escapedLexical(tmp);
-            Term res = lit.withLexical(new ByteRope(tmp.toString().toLowerCase()));
-            tmp.recycle();
-            return res;
+            try (var tmp = PooledTwoSegmentRope.ofEmpty()) {
+                Expr.requireLiteral(this, lit).escapedLexical(tmp);
+                return lit.withLexical(asFinal(tmp.toString().toLowerCase()));
+            }
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -977,10 +1003,20 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         public Encode_for_uri(Expr in) { super(in); }
 
         @Override public Term eval(Term lit) {
-            TwoSegmentRope tmp = TwoSegmentRope.pooled();
-            Expr.requireLiteral(this, lit).escapedLexical(tmp);
-            Rope escaped = UriUtils.escapeQueryParam(tmp);
-            return escaped == tmp ? lit : lit.withLexical(escaped);
+            PooledMutableRope tmpEscaped = null;
+            try (var tmpIn = PooledTwoSegmentRope.ofEmpty()) {
+                Expr.requireLiteral(this, lit).escapedLexical(tmpIn);
+                if (UriUtils.needsEscape(tmpIn)) {
+                    tmpEscaped = PooledMutableRope.get();
+                    UriUtils.escapeQueryParam(tmpEscaped, tmpIn);
+                    return lit.withLexical(tmpEscaped.take());
+                } else {
+                    return lit;
+                }
+            } finally {
+                if (tmpEscaped != null)
+                    tmpEscaped.close();
+            }
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -991,13 +1027,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Contains extends BinaryFunction {
         public Contains(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term l, Term r) {
-            TwoSegmentRope lLex = TwoSegmentRope.pooled(), rLex = TwoSegmentRope.pooled();
-            l.escapedLexical(lLex);
-            r.escapedLexical(rLex);
-            var res = lLex.skipUntil(0, lLex.len(), rLex) < lLex.len() ? TRUE : FALSE;
-            lLex.recycle();
-            rLex.recycle();
-            return res;
+            try (var lLex = PooledTwoSegmentRope.ofEmpty();
+                 var rLex = PooledTwoSegmentRope.ofEmpty()) {
+                l.escapedLexical(lLex);
+                r.escapedLexical(rLex);
+                return lLex.skipUntil(0, lLex.len(), rLex) < lLex.len() ? TRUE : FALSE;
+            }
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new ContainsEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1007,13 +1042,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class ContainsEval extends Eval {
             public ContainsEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> b, int row) {
-                TwoSegmentRope lLex = TwoSegmentRope.pooled(), rLex = TwoSegmentRope.pooled();
-                l.evaluate(b, row).escapedLexical(lLex);
-                r.evaluate(b, row).escapedLexical(rLex);
-                var res = lLex.skipUntil(0, lLex.len(), rLex) < lLex.len() ? TRUE : FALSE;
-                lLex.recycle();
-                rLex.recycle();
-                return res;
+                try (var lLex = PooledTwoSegmentRope.ofEmpty();
+                     var rLex = PooledTwoSegmentRope.ofEmpty()) {
+                    l.evaluate(b, row).escapedLexical(lLex);
+                    r.evaluate(b, row).escapedLexical(rLex);
+                    return lLex.skipUntil(0, lLex.len(), rLex) < lLex.len() ? TRUE : FALSE;
+                }
             }
         }
     }
@@ -1021,13 +1055,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Strstarts extends BinaryFunction {
         public Strstarts(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term l, Term r) {
-            TwoSegmentRope lLex = TwoSegmentRope.pooled(), rLex = TwoSegmentRope.pooled();
-            l.escapedLexical(lLex);
-            r.escapedLexical(rLex);
-            Term res = lLex.has(0, rLex) ? TRUE : FALSE;
-            lLex.recycle();
-            rLex.recycle();
-            return res;
+            try (var lLex = PooledTwoSegmentRope.ofEmpty();
+                 var rLex = PooledTwoSegmentRope.ofEmpty()) {
+                l.escapedLexical(lLex);
+                r.escapedLexical(rLex);
+                return lLex.has(0, rLex) ? TRUE : FALSE;
+            }
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new StrstartsEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1037,13 +1070,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class StrstartsEval extends Eval {
             public StrstartsEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> batch, int row) {
-                TwoSegmentRope lLex = TwoSegmentRope.pooled(), rLex = TwoSegmentRope.pooled();
-                l.evaluate(batch, row).escapedLexical(lLex);
-                r.evaluate(batch, row).escapedLexical(rLex);
-                Term res = lLex.has(0, rLex) ? TRUE : FALSE;
-                lLex.recycle();
-                rLex.recycle();
-                return res;
+                try (var lLex = PooledTwoSegmentRope.ofEmpty();
+                     var rLex = PooledTwoSegmentRope.ofEmpty()) {
+                    l.evaluate(batch, row).escapedLexical(lLex);
+                    r.evaluate(batch, row).escapedLexical(rLex);
+                    return lLex.has(0, rLex) ? TRUE : FALSE;
+                }
             }
         }
     }
@@ -1051,13 +1083,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Strends extends BinaryFunction {
         public Strends(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term l, Term r) {
-            TwoSegmentRope lLex = TwoSegmentRope.pooled(), rLex = TwoSegmentRope.pooled();
-            l.escapedLexical(lLex);
-            r.escapedLexical(rLex);
-            Term res = lLex.has(lLex.len() - rLex.len(), rLex) ? TRUE : FALSE;
-            lLex.recycle();
-            rLex.recycle();
-            return res;
+            try (var lLex = PooledTwoSegmentRope.ofEmpty();
+                 var rLex = PooledTwoSegmentRope.ofEmpty()) {
+                l.escapedLexical(lLex);
+                r.escapedLexical(rLex);
+                return lLex.has(lLex.len() - rLex.len(), rLex) ? TRUE : FALSE;
+            }
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new StrendsEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1067,13 +1098,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class StrendsEval extends Eval {
             public StrendsEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> batch, int row) {
-                TwoSegmentRope lLex = TwoSegmentRope.pooled(), rLex = TwoSegmentRope.pooled();
-                l.evaluate(batch, row).escapedLexical(lLex);
-                r.evaluate(batch, row).escapedLexical(rLex);
-                Term res = lLex.has(lLex.len() - rLex.len(), rLex) ? TRUE : FALSE;
-                lLex.recycle();
-                rLex.recycle();
-                return res;
+                try (var lLex = PooledTwoSegmentRope.ofEmpty();
+                     var rLex = PooledTwoSegmentRope.ofEmpty()) {
+                    l.evaluate(batch, row).escapedLexical(lLex);
+                    r.evaluate(batch, row).escapedLexical(rLex);
+                    return lLex.has(lLex.len() - rLex.len(), rLex) ? TRUE : FALSE;
+                }
             }
         }
     }
@@ -1082,14 +1112,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         public Strbefore(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term l, Term r) {
             Term outerLit = Expr.requireLiteral(this.l, l);
-            TwoSegmentRope outer = TwoSegmentRope.pooled(), inner = TwoSegmentRope.pooled();
-            outerLit.escapedLexical(outer);
-            r.escapedLexical(inner);
-            int i = outer.skipUntil(0, outer.len(), inner);
-            Term res = outerLit.withLexical(outer.sub(0, i));
-            outer.recycle();
-            inner.recycle();
-            return res;
+            try (var outer = PooledTwoSegmentRope.ofEmpty();
+                 var inner = PooledTwoSegmentRope.ofEmpty()) {
+                outerLit.escapedLexical(outer);
+                r.escapedLexical(inner);
+                int i = outer.skipUntil(0, outer.len(), inner);
+                return outerLit.withLexical(outer.sub(0, i));
+            }
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new StrbeforeEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1100,14 +1129,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             public StrbeforeEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term outerLit = Expr.requireLiteral(lExpr, l.evaluate(batch, row));
-                TwoSegmentRope outer = TwoSegmentRope.pooled(), inner = TwoSegmentRope.pooled();
-                outerLit.escapedLexical(outer);
-                r.evaluate(batch, row).escapedLexical(inner);
-                int i = outer.skipUntil(0, outer.len(), inner);
-                Term res = outerLit.withLexical(outer.sub(0, i));
-                outer.recycle();
-                inner.recycle();
-                return res;
+                try (var outer = PooledTwoSegmentRope.ofEmpty();
+                     var inner = PooledTwoSegmentRope.ofEmpty()) {
+                    outerLit.escapedLexical(outer);
+                    r.evaluate(batch, row).escapedLexical(inner);
+                    int i = outer.skipUntil(0, outer.len(), inner);
+                    return outerLit.withLexical(outer.sub(0, i));
+                }
             }
         }
     }
@@ -1116,14 +1144,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         public Strafter(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term l, Term r) {
             Term outerLit = Expr.requireLiteral(this.l, l);
-            TwoSegmentRope outer = TwoSegmentRope.pooled(), inner = TwoSegmentRope.pooled();
-            outerLit.escapedLexical(outer);
-            r.escapedLexical(inner);
-            int i = outer.skipUntil(0, outer.len(), inner);
-            Term res = outerLit.withLexical(outer.sub(i + inner.len(), outer.len()));
-            outer.recycle();
-            inner.recycle();
-            return res;
+            try (var outer = PooledTwoSegmentRope.ofEmpty();
+                 var inner = PooledTwoSegmentRope.ofEmpty()) {
+                outerLit.escapedLexical(outer);
+                r.escapedLexical(inner);
+                int i = outer.skipUntil(0, outer.len(), inner);
+                return outerLit.withLexical(outer.sub(i + inner.len(), outer.len()));
+            }
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new StrafterEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1134,14 +1161,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             public StrafterEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term outerLit = Expr.requireLiteral(lExpr, l.evaluate(batch, row));
-                TwoSegmentRope outer = TwoSegmentRope.pooled(), inner = TwoSegmentRope.pooled();
-                outerLit.escapedLexical(outer);
-                r.evaluate(batch, row).escapedLexical(inner);
-                int i = outer.skipUntil(0, outer.len(), inner);
-                Term res = outerLit.withLexical(outer.sub(i + inner.len(), outer.len()));
-                outer.recycle();
-                inner.recycle();
-                return res;
+                try (var outer = PooledTwoSegmentRope.ofEmpty();
+                     var inner = PooledTwoSegmentRope.ofEmpty()) {
+                    outerLit.escapedLexical(outer);
+                    r.evaluate(batch, row).escapedLexical(inner);
+                    int i = outer.skipUntil(0, outer.len(), inner);
+                    return outerLit.withLexical(outer.sub(i + inner.len(), outer.len()));
+                }
             }
         }
     }
@@ -1152,8 +1178,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     flags == null ? null : flags.eval(binding));
         }
         static Pattern compile(Term regex, @Nullable Term flags) {
-            try {
-                TwoSegmentRope tmp = TwoSegmentRope.pooled();
+            try (var tmp = PooledTwoSegmentRope.ofEmpty()){
                 regex.escapedLexical(tmp);
                 String regexStr = tmp.toString();
                 if (flags != null) {
@@ -1162,7 +1187,6 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     //noinspection StringBufferReplaceableByString
                     regexStr = new StringBuilder().append('(').append('?').append(flagsStr).append(')').append(regexStr).toString();
                 }
-                tmp.recycle();
                 return Pattern.compile(regexStr);
             }  catch (PatternSyntaxException e) {
                 throw new InvalidExprException("Bad REGEX: "+e.getMessage());
@@ -1210,10 +1234,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         @Override public Term eval(Binding binding) {
-            TwoSegmentRope tmp = TwoSegmentRope.pooled();
-            requireLexical(args[0], binding, tmp);
-            String text = tmp.toString();
-            tmp.recycle();
+            String text;
+            try (var tmp = PooledTwoSegmentRope.ofEmpty()) {
+                requireLexical(args[0], binding, tmp);
+                text = tmp.toString();
+            }
             var p = rx != null ? rx : compile(binding, args[1], args.length > 2 ? args[2] : null);
             return p.matcher(text).find() ? TRUE : FALSE;
         }
@@ -1241,6 +1266,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 textEval = args[0].evaluator(vars);
                 patternEval = args[1].evaluator(vars);
                 flagsEval = args.length > 2 ? args[2].evaluator(vars) : null;
+            }
+
+            @Override public void close() {
+                textEval.close();
+                patternEval.close();
             }
 
             private Pattern compile(Batch<?> batch, int row) {
@@ -1271,6 +1301,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 this.branches = branches;
             }
 
+            @Override public void close() {textEval.close();}
+
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term textTerm = textEval.evaluate(batch, row);
                 if (textTerm == null)
@@ -1299,6 +1331,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 this.textEval = args[0].evaluator(vars);
                 this.branches = branches;
             }
+
+            @Override public void close() {textEval.close();}
 
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term textTerm = textEval.evaluate(batch, row);
@@ -1329,13 +1363,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         @Override public Term eval(Binding b) {
             var p = rx != null ? rx : Regex.compile(b, args[1], args.length > 3 ? args[3] : null);
             Term text = Expr.requireLiteral(args[0], b);
-            TwoSegmentRope tmp = TwoSegmentRope.pooled();
-            text.escapedLexical(tmp);
-            String lex = tmp.toString();
-            requireLexical(args[2], b, tmp);
-            String replacement = tmp.toString();
-            tmp.recycle();
-            return text.withLexical(new ByteRope(p.matcher(lex).replaceAll(replacement)));
+            try (var tmp = PooledTwoSegmentRope.ofEmpty()) {
+                text.escapedLexical(tmp);
+                String lex = tmp.toString();
+                requireLexical(args[2], b, tmp);
+                String replacement = tmp.toString();
+                return text.withLexical(asFinal(p.matcher(lex).replaceAll(replacement)));
+            }
         }
 
         @Override
@@ -1355,8 +1389,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             private final ExprEvaluator textEval, patternEval, replEval;
             private final ExprEvaluator flagsEval;
             private final StringBuilder sb = new StringBuilder(48);
-            private final ByteRope tmpRope = new ByteRope(48);
-            private final Term result = Term.mutable();
+            private final MutableRope tmpRope = new MutableRope(48);
+            private final TermView result = new TermView();
 
             public ReplaceEval(Vars vars, Expr text, Expr pattern, Expr replacement,
                                @Nullable Expr flags) {
@@ -1370,6 +1404,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 patternEval = pattern.evaluator(vars);
                 replEval = replacement.evaluator(vars);
                 flagsEval = flags == null ? null : flags.evaluator(vars);
+            }
+
+            @Override public void close() {
+                textEval.close();
+                patternEval.close();
+                replEval.close();
+                tmpRope.close();
             }
 
             private Pattern compile(Batch<?> batch, int row) {
@@ -1403,7 +1444,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 m.appendTail(sb);
 
                 tmpRope.clear().append('"').append(sb).append(textLocal, endLex, textLocal.len);
-                result.set(text.shared(), tmpRope, true);
+                result.wrap(text.shared(), tmpRope, true);
                 return result;
             }
         }
@@ -1419,12 +1460,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         @Override public Term eval(Binding b) {
             Term text = Expr.requireLiteral(args[0], b);
             int start = args[1].eval(b).asInt();
-            TwoSegmentRope lex = TwoSegmentRope.pooled();
-            text.escapedLexical(lex);
-            int end = lex.len();
-            if (args.length > 2)
-                end = start + args[2].eval(b).asInt();
-            return text.withLexical(lex.sub(start, end));
+            try (var lex = PooledTwoSegmentRope.ofEmpty()) {
+                text.escapedLexical(lex);
+                int end = lex.len();
+                if (args.length > 2)
+                    end = start + args[2].eval(b).asInt();
+                return text.withLexical(lex.sub(start, end));
+            }
         }
 
         @Override
@@ -1440,15 +1482,22 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final class SusbtrEval implements ExprEvaluator {
             private final ExprEvaluator inEval, startEval;
             private final @Nullable ExprEvaluator lenEval;
-            private final ByteRope tmp = new ByteRope(48).append('"');
+            private final MutableRope tmp = new MutableRope(48).append('"');
             private final Expr[] args;
-            private final Term result = Term.mutable();
+            private final TermView result = new TermView();
 
             public SusbtrEval(Vars vars, Expr[] args) {
                 this.args      = args;
                 this.inEval    = args[0].evaluator(vars);
                 this.startEval = args[1].evaluator(vars);
                 this.lenEval   = args.length > 2 ? args[2].evaluator(vars) : null;
+            }
+
+            @Override public void close() {
+                tmp      .close();
+                inEval   .close();
+                startEval.close();
+                if (lenEval != null) lenEval.close();
             }
 
             @Override public Term evaluate(Batch<?> batch, int row) {
@@ -1465,7 +1514,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 tmp.clear().len = 1;
                 tmp.append(local, start, end);
                 if (sh.len == 0) tmp.append('"');
-                result.set(sh, tmp, true);
+                result.wrap(sh, tmp, true);
                 return result;
             }
         }
@@ -1473,10 +1522,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
 
     class Uuid extends Supplier {
-        private static final SegmentRope UUID_IRI_PREF = new ByteRope("<urn:uuid:");
+        private static final FinalSegmentRope UUID_IRI_PREF = asFinal("<urn:uuid:");
 
         @Override public Term eval(Binding binding) {
-            return Term.wrap(UUID_IRI_PREF, new ByteRope(36+1).append(randomUUID()).append('>'));
+            var local = RopeFactory.make(36+1).add(randomUUID().toString()).add('>').take();
+            return Term.wrap(UUID_IRI_PREF, local);
         }
 
         @Override
@@ -1485,12 +1535,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         private static final class UuidEval implements ExprEvaluator {
-            private final Term result = Term.mutable();
-            private final ByteRope tmp = new ByteRope(38);
+            private final TermView result = new TermView();
+            private final MutableRope tmp = new MutableRope(38);
+
+            @Override public void close() {tmp.close();}
 
             @Override public Term evaluate(Batch<?> batch, int row) {
                 tmp.clear().append(randomUUID().toString()).append('>');
-                result.set(UUID_IRI_PREF, tmp, false);
+                result.wrap(UUID_IRI_PREF, tmp, false);
                 return result;
             }
         }
@@ -1498,7 +1550,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
 
     class Struuid extends Supplier {
         @Override public Term eval(Binding binding) {
-            return Term.wrap(new ByteRope().append('"').append(randomUUID()).append('"'), null);
+            String uuid = randomUUID().toString();
+            var local = RopeFactory.make(2 + uuid.length()).add('"').add(uuid).add('"').take();
+            return Term.wrap(local, null);
         }
 
         @Override
@@ -1507,13 +1561,15 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         }
 
         private static final class StruuidEval implements ExprEvaluator {
-            private final Term result = Term.mutable();
-            private final ByteRope tmp = new ByteRope(38).append('"');
+            private final TermView result = new TermView();
+            private final MutableRope tmp = new MutableRope(38).append('"');
+
+            @Override public void close() {tmp.close();}
 
             @Override public Term evaluate(Batch<?> batch, int row) {
                 tmp.clear().len = 1;
                 tmp.append(randomUUID().toString()).append('"');
-                result.set(EMPTY, tmp, false);
+                result.wrap(EMPTY, tmp, false);
                 return result;
             }
         }
@@ -1556,6 +1612,10 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 evals = new ExprEvaluator[args.length];
                 for (int i = 0; i < evals.length; i++)
                     evals[i] = args[i].evaluator(vars);
+            }
+
+            @Override public void close() {
+                for (var e : evals) e.close();
             }
 
             @Override public Term evaluate(Batch<?> batch, int row) {
@@ -1606,6 +1666,12 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 onFalse = args[2].evaluator(vars);
             }
 
+            @Override public void close() {
+                cond   .close();
+                onTrue .close();
+                onFalse.close();
+            }
+
             @Override public Term evaluate(Batch<?> batch, int row) {
                 Term cond = this.cond.evaluate(batch, row);
                 return (cond != null && cond.asBool() ? onTrue : onFalse).evaluate(batch, row);
@@ -1616,14 +1682,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Strlang extends BinaryFunction {
         public Strlang(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term l, Term r) {
-            TwoSegmentRope lex = TwoSegmentRope.pooled(), tag = TwoSegmentRope.pooled();
-            l.escapedLexical(lex);
-            r.escapedLexical(tag);
-            var nt = new ByteRope(lex.len+3+tag.len).append('"').append(lex).append('"')
-                                                    .append('@').append(tag);
-            lex.recycle();
-            tag.recycle();
-            return Term.wrap(nt, null);
+            try (var lex = PooledTwoSegmentRope.ofEmpty();
+                 var tag = PooledTwoSegmentRope.ofEmpty()) {
+                l.escapedLexical(lex);
+                r.escapedLexical(tag);
+                var nt = RopeFactory.make(lex.len+3+tag.len)
+                                    .add('"').add(lex).add('"').add('@').add(tag).take();
+                return Term.wrap(nt, null);
+            }
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new StrlangEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1631,16 +1697,18 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             return bl == l && br == r ? this : new Strlang(bl, br);
         }
         private static final class StrlangEval extends Eval {
+            private static final byte[] TAG_SEP = "\"@".getBytes(UTF_8);
+            private final TwoSegmentRope lex = new TwoSegmentRope();
+            private final TwoSegmentRope tag = new TwoSegmentRope();
+            private final MutableRope tmp = new MutableRope(32);
             public StrlangEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
+            @Override public void close() {tmp.close();}
             @Override public Term evaluate(Batch<?> batch, int row) {
-                TwoSegmentRope lex = TwoSegmentRope.pooled(), tag = TwoSegmentRope.pooled();
                 l.evaluate(batch, row).escapedLexical(lex);
                 r.evaluate(batch, row).escapedLexical(tag);
-                var nt = new ByteRope(lex.len+3+tag.len).append('"').append(lex).append('"')
-                        .append('@').append(tag);
-                lex.recycle();
-                tag.recycle();
-                return Term.wrap(nt, null);
+                tmp.clear().ensureFreeCapacity(lex.len+3+tag.len)
+                           .append('"').append(lex).append('"').append(TAG_SEP).append(tag);
+                return Term.wrap(tmp, null);
             }
         }
     }
@@ -1649,19 +1717,22 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         public Strdt(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term string, Term dtTerm) {
             boolean isIRI = dtTerm.type() == Type.IRI;
-            TwoSegmentRope stringLex = TwoSegmentRope.pooled(), dtLex = null;
-            string.escapedLexical(stringLex);
-            if (isIRI) {
-                dtLex = TwoSegmentRope.pooled();
-                dtTerm.escapedLexical(dtLex);
+            PooledTwoSegmentRope dtLex = null;
+            try (var stringLex = PooledTwoSegmentRope.ofEmpty();
+                 var tmp = PooledMutableRope.get()) {
+                string.escapedLexical(stringLex);
+                if (isIRI) {
+                    dtLex = PooledTwoSegmentRope.ofEmpty();
+                    dtTerm.escapedLexical(dtLex);
+                }
+                tmp.append(FinalSegmentRope.DQ).append(stringLex);
+                tmp.append(isIRI ? FinalSegmentRope.DT_MID : FinalSegmentRope.DT_MID_LT);
+                tmp.append(isIRI ? dtTerm : dtLex);
+                tmp.append(isIRI ? EMPTY : FinalSegmentRope.GT);
+                return Term.valueOf(tmp);
+            } finally {
+                if (dtLex != null) dtLex.close();
             }
-            var res = Term.valueOf(of(ByteRope.DQ, stringLex,
-                                isIRI ? ByteRope.DT_MID : ByteRope.DT_MID_LT,
-                                isIRI ? dtTerm : dtLex,
-                                isIRI ? EMPTY : ByteRope.GT));
-            stringLex.recycle();
-            if (dtLex != null) dtLex.recycle();
-            return res;
         }
         @Override public ExprEvaluator evaluator(Vars vars) {return new StrdtEval(vars, l, r);}
         @Override public Expr bound(Binding binding) {
@@ -1669,19 +1740,22 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             return bl == l && br == r ? this : new Strdt(bl, br);
         }
         private static final class StrdtEval extends Eval {
-            private static final TwoSegmentRope stringLex = new TwoSegmentRope();
-            private static final TwoSegmentRope dtLex = new TwoSegmentRope();
+            private final TwoSegmentRope stringLex = new TwoSegmentRope();
+            private final TwoSegmentRope dtLex = new TwoSegmentRope();
+            private final MutableRope tmp = new MutableRope(64);
             public StrdtEval(Vars vars, Expr l, Expr r) {super(vars, l, r);}
+            @Override public void close() {tmp.close();}
             @Override public Term evaluate(Batch<?> batch, int row) {
                 l.evaluate(batch, row).escapedLexical(stringLex);
                 Term dtTerm = r.evaluate(batch, row);
                 boolean isIRI = dtTerm.type() == Type.IRI;
                 if (isIRI)
                     dtTerm.escapedLexical(dtLex);
-                return Term.valueOf(of(ByteRope.DQ, stringLex,
-                        isIRI ? ByteRope.DT_MID : ByteRope.DT_MID_LT,
-                        isIRI ? dtTerm : dtLex,
-                        isIRI ? EMPTY : ByteRope.GT));
+                tmp.append(FinalSegmentRope.DQ).append(stringLex);
+                tmp.append(isIRI ? FinalSegmentRope.DT_MID : FinalSegmentRope.DT_MID_LT);
+                tmp.append(isIRI ? dtTerm : dtLex);
+                tmp.append(isIRI ? EMPTY : FinalSegmentRope.GT);
+                return Term.valueOf(tmp);
             }
         }
     }

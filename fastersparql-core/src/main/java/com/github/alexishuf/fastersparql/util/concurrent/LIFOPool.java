@@ -9,7 +9,7 @@ import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
 
-public final class LIFOPool<T> implements LeakyPool {
+public final class LIFOPool<T> implements LeakyPool, StatsPool, JournalNamed {
     private static final int LOCKED = Integer.MIN_VALUE;
     private static final VarHandle S;
     static {
@@ -24,20 +24,42 @@ public final class LIFOPool<T> implements LeakyPool {
     private final T[] recycled;
     @SuppressWarnings({"unused"}) // lock is accessed through LOCK
     private int plainSize;
+    private final String name;
+    private final int bytesPerObject;
 
-    public LIFOPool(Class<T> cls, int capacity) {
+    public LIFOPool(Class<T> cls, @Nullable String name, int capacity, int bytesPerObject) {
         //noinspection unchecked
-        recycled = (T[]) Array.newInstance(cls, capacity);
+        this.recycled = (T[]) Array.newInstance(cls, capacity);
         this.cls = cls;
+        this.name = name != null ? name
+                  : format("LIFO(%s, %d)@%x",
+                           cls.getSimpleName(), capacity, identityHashCode(this));
+        this.bytesPerObject = bytesPerObject;
+        PoolCleaner.monitor(this);
+        PoolStats.monitor(this);
     }
 
     @SuppressWarnings("unused") public Class<T> itemClass() { return cls; }
+
+    @Override public String journalName()  {return name;}
+    @Override public String name()         {return name;}
+    @Override public int    localObjects() {return 0;}
+    @Override public int    localBytes()   {return 0;}
+    @Override public int    sharedBytes()  {return sharedObjects()*bytesPerObject;}
+
+    @Override public int sharedObjects() {
+        int n;
+        while ((n=(int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
+        S.setRelease(this, n);
+        return n;
+    }
 
     @Override public void cleanLeakyRefs() {
         // clean up in blocks of up to 16 references to avoid high latency on get() and offer()
         int size, i = 0;
         for (boolean hasWork = true; hasWork; ) {
             while ((size=(int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
+            hasWork = false;
             i = Math.max(size, i);
             int end = Math.min(recycled.length, i+16);
             while (i < end && (hasWork=recycled[i] != null))
@@ -62,7 +84,10 @@ public final class LIFOPool<T> implements LeakyPool {
         int size;
         while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
-            if (size == 0) return null;
+            if (size == 0) {
+                PoolEvent.EmptyPool.record(this, 1);
+                return null;
+            }
             return recycled[--size];
         } finally {
             S.setRelease(this, size);
@@ -83,8 +108,10 @@ public final class LIFOPool<T> implements LeakyPool {
         int size;
         while ((size = (int)S.getAndSetAcquire(this, LOCKED)) == LOCKED) Thread.onSpinWait();
         try {
-            if (size == recycled.length)
+            if (size == recycled.length) {
+                PoolEvent.FullPool.record(this, 1);
                 return o;
+            }
 //            new Exception("&o="+System.identityHashCode(o)+", thread="+Thread.currentThread()).printStackTrace(System.out);
 //            for (int i = 0; i < size; i++) {
 //                if (recycled[i] == o)

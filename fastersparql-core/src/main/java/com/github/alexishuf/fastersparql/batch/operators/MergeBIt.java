@@ -12,6 +12,9 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,23 +89,27 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
 
     /* --- --- helper methods --- --- --- */
 
-    protected @Nullable BatchProcessor<B> createProcessor(int sourceIdx) {
-        return batchType.projector(vars, sources.get(sourceIdx).vars());
+    protected @Nullable BatchProcessor<B, ?>
+    createProcessor(int sourceIdx) {
+        var orphan = batchType.projector(vars, sources.get(sourceIdx).vars());
+        return orphan == null ? null : orphan.takeOwnership(this);
     }
 
     private void drainTask(int i) {
         if (MergeBIt.class.desiredAssertionStatus())
             Thread.currentThread().setName(label(StreamNodeDOT.Label.MINIMAL)+'-'+i);
         Throwable cause = null;
-        BatchProcessor<B> processor = null;
-        try (var source = sources.get(i)) {
+        BatchProcessor<B, ?> processor = null;
+        try (var guard = new Guard.ItGuard<>(this, sources.get(i))) {
             processor = createProcessor(i);
-            for (B b = null; notTerminated() && (b = source.nextBatch(b)) != null; ) {
+            while (notTerminated() && guard.advance()) {
                 if (processor != null && notTerminated()) {
-                    b = processor.processInPlace(b);
-                    if (b == null) break; // happens when LIMIT is reached
+                    if (guard.set(processor.processInPlace(guard.poll())) == null)
+                        break; // happens when LIMIT is reached
+                    if (guard.rows() == 0)
+                        continue;
                 }
-                if (b.rows > 0) b = offer(b);
+                offer(guard.poll());
             }
         } catch (BItReadCancelledException ignored) {
             lock(); // required for the load/acquire barrier
@@ -127,19 +134,18 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 }
                 complete(cause);
             }
-            if (processor != null)
-                processor.release();
+            Owned.safeRecycle(processor, this);
         }
     }
 
-    public @Nullable B offer(B b) throws CancelledException, TerminatedException {
+    public void offer(Orphan<B> b) throws CancelledException, TerminatedException {
         boolean locked = lockAndGet();
         try {
             while (offering)
                 canOffer.awaitUninterruptibly();
             offering = true;
             locked = unlockAndGet();
-            return super.offer(b);
+            super.offer(b);
         } finally {
             if (!locked)
                 lock();
@@ -151,10 +157,6 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
             }
             unlock();
         }
-    }
-
-    @Override public void copy(B b) throws TerminatedException, CancelledException {
-        throw new UnsupportedOperationException();
     }
 
     /* --- --- overrides --- --- --- */

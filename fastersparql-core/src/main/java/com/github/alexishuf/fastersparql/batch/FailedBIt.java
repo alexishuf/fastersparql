@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -17,10 +18,10 @@ public class FailedBIt<B extends Batch<B>> extends AbstractBIt<B> {
 
     public FailedBIt(BatchType<B> bt, Throwable error) { this(bt, Vars.EMPTY, error); }
 
-    @Override public B nextBatch(@Nullable B b) {
+    @Override public Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
         lock();
         try {
-            batchType.recycle(b);
+            Orphan.recycle(orphan);
             if (state() == State.ACTIVE)
                 onTermination(error);
             throw error;

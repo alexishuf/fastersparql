@@ -19,6 +19,8 @@ import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,8 +33,9 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
-public final class BItEmitter<B extends Batch<B>> extends Stateful
-        implements Emitter<B>, Runnable {
+public abstract sealed class BItEmitter<B extends Batch<B>>
+        extends Stateful<BItEmitter<B>>
+        implements Emitter<B, BItEmitter<B>>, Runnable {
     private static final Logger log = LoggerFactory.getLogger(BItEmitter.class);
     private static final VarHandle REQ;
     static {
@@ -49,12 +52,22 @@ public final class BItEmitter<B extends Batch<B>> extends Stateful
     @SuppressWarnings("unused") private long plainRequested;
     private final EmitterStats stats = EmitterStats.createIfEnabled();
 
-    public BItEmitter(BIt<B> it) {
+    public static <B extends Batch<B>> Orphan<BItEmitter<B>> create(BIt<B> it) {
+        return new Concrete<>(it);
+    }
+
+    protected BItEmitter(BIt<B> it) {
         super(CREATED, Flags.DEFAULT);
         this.it = it;
         (this.drainer = Thread.ofVirtual().unstarted(this)).start();
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, it.vars());
+    }
+
+    private static final class Concrete<B extends Batch<B>> extends BItEmitter<B>
+            implements Orphan<BItEmitter<B>> {
+        public Concrete(BIt<B> it) {super(it);}
+        @Override public BItEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     @Override protected void doRelease() {
@@ -124,8 +137,6 @@ public final class BItEmitter<B extends Batch<B>> extends Stateful
         }
     }
 
-    @Override public void rebindAcquire() {delayRelease();}
-    @Override public void rebindRelease() {allowRelease();}
     @Override public void rebind(BatchBinding binding) throws RebindException {
         throw new UnsupportedOperationException("Cannot rebind a BIt");
     }
@@ -138,11 +149,10 @@ public final class BItEmitter<B extends Batch<B>> extends Stateful
         SPSCBIt<B> queue = it instanceof SPSCBIt<B> q ? q : null;
         int st = statePlain();
         Throwable error = null;
-        long req = 0;
-        B b = null;
-        try {
+        try (var guard = new Guard.ItGuard<>(this, it)){
             while ((st&(IS_CANCEL_REQ|IS_TERM)) == 0) {
-                if ((req=(long)REQ.getAcquire(this)) <= 0) {
+                long req = (long)REQ.getAcquire(this);
+                if (req <= 0) {
                     LockSupport.park();
                     st = stateAcquire();
                 } else {
@@ -150,7 +160,8 @@ public final class BItEmitter<B extends Batch<B>> extends Stateful
                     if (queue != null)
                         queue.maxReadyItems(iReq);
                     it.maxBatch(iReq);
-                    if ((b=it.nextBatch(b)) == null)
+                    B b = guard.nextBatch();
+                    if (b == null)
                         break;
                     REQ.getAndAddRelease(this, (long)-b.totalRows());
                     try {
@@ -158,10 +169,9 @@ public final class BItEmitter<B extends Batch<B>> extends Stateful
                             ResultJournal.logBatch(this, b);
                         if (EmitterStats.ENABLED && stats != null)
                             stats.onBatchDelivered(b);
-                        b = downstream.onBatch(b);
+                        downstream.onBatch(guard.take());
                     } catch (Throwable t) {
-                        handleEmitError(downstream, this,
-                                        (statePlain()&IS_TERM) != 0, t);
+                        handleEmitError(downstream, this, t, b);
                     }
                 }
             }

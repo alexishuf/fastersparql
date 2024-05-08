@@ -1,39 +1,111 @@
 package com.github.alexishuf.fastersparql.batch.dedup;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.RowBucket;
+import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
+import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
+import java.util.concurrent.locks.ReentrantLock;
 
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.cleanIntsAtLeast;
+import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.recycleIntsAndGetEmpty;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.max;
 
-public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
-    private final RowBucket<B> table;
+public abstract sealed class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B, WeakCrossSourceDedup<B>> {
+    private RowBucket<B, ?> table;
     private int[] hashesAndSources; // [hash for rows[0], sources for [0], hash for [1], ...]
     private byte[] bucketInsertion; // values are 0 <= bucketInsertion[i] < 8
+    private Bytes bucketInsertionHandle;
     private short buckets, bucketWidth;
 
-    public WeakCrossSourceDedup(BatchType<B> batchType, int cols) {
+
+    private static final ReentrantLock POOLS_LOCK = new ReentrantLock();
+    @SuppressWarnings("rawtypes") private static LIFOPool[] POOLS = new LIFOPool[10];
+
+    static {
+        pool(TermBatchType.TERM);
+        pool(CompressedBatchType.COMPRESSED);
+        pool(StoreBatchType.STORE);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <B extends Batch<B>> LIFOPool<RowBucket<B, ?>> pool(BatchType<B> bt) {
+        if (bt.id >= POOLS.length || POOLS[bt.id] == null)
+            makePool(bt);
+        return (LIFOPool<RowBucket<B, ?>>)POOLS[bt.id];
+    }
+
+    private static <B extends Batch<B>> void makePool(BatchType<B> bt) {
+        POOLS_LOCK.lock();
+        try {
+            if (bt.id >= POOLS.length)
+                POOLS = Arrays.copyOf(POOLS, POOLS.length<<1);
+            short rowsCapacity = bt.preferredRowsPerBatch(1);
+            int bytesPerBucket = bt.bucketBytesCost(rowsCapacity, 1);
+            @SuppressWarnings("unchecked") var cls = (Class<RowBucket<B,?>>)(Object)RowBucket.class;
+            int capacity = Alloc.THREADS * 64;
+            LIFOPool<RowBucket<B, ?>> p = new LIFOPool<>(cls,
+                    "WeakCrossSourceDedup<" + bt + ">.POOL",
+                    capacity, bytesPerBucket);
+            POOLS[bt.id] = p;
+            for (int i = 0, n = capacity/2; i < n; i++) {
+                var bucket = bt.createBucket(rowsCapacity, 1).takeOwnership(RECYCLED);
+                if (p.offer(bucket) == null) bucket.setPool(p);
+                else                         bucket.recycle(RECYCLED); // should never happen
+            }
+        } finally {
+            POOLS_LOCK.unlock();
+        }
+    }
+
+    private WeakCrossSourceDedup(BatchType<B> batchType, int cols) {
         super(batchType, cols);
         if (cols < 0)
             throw new IllegalArgumentException();
         int rowsCapacity = max(batchType.preferredRowsPerBatch(cols), 1);
-        this.table = batchType.createBucket(rowsCapacity, cols);
+        LIFOPool<RowBucket<B, ?>> pool = pool(batchType);
+        RowBucket<B, ?> table = pool.get();
+        if (table == null)
+            table = bt.createBucket(rowsCapacity, cols).takeOwnership(this).setPool(pool);
+        else
+            table.transferOwnership(RECYCLED, this).clear(rowsCapacity, cols);
+        this.table = table;
         this.table.maximizeCapacity();
         clear0(table.capacity());
     }
 
+    @Override public @Nullable WeakCrossSourceDedup<B> recycle(Object currentOwner) {
+        internalMarkGarbage(currentOwner);
+        table                 = table.recycle(this);
+        hashesAndSources      = recycleIntsAndGetEmpty(hashesAndSources);
+        bucketInsertionHandle = bucketInsertionHandle.recycleAndGetEmpty(this);
+        bucketInsertion       = bucketInsertionHandle.arr;
+        return null;
+    }
+
+    protected static final class Concrete<B extends Batch<B>>
+            extends WeakCrossSourceDedup<B>
+            implements Orphan<WeakCrossSourceDedup<B>> {
+        public Concrete(BatchType<B> batchType, int cols) {
+            super(batchType, cols);
+        }
+        @Override public WeakCrossSourceDedup<B> takeOwnership(Object o) {return takeOwnership0(o);}
+    }
+
     private void clear0(int rowsCapacity) {
         bucketWidth = (short)(rowsCapacity > 16 ? 4 : 1);
-        buckets = (short)(rowsCapacity/bucketWidth);
+        buckets     = (short)(rowsCapacity/bucketWidth);
         rowsCapacity = buckets*bucketWidth;
-        this.bucketInsertion = ArrayPool.bytesAtLeast(buckets); // each bucket has 8 items
-        this.hashesAndSources = ArrayPool.intsAtLeast(rowsCapacity<<1);
-        Arrays.fill(bucketInsertion, (byte)0);
-        Arrays.fill(hashesAndSources, 0);
+
+        hashesAndSources = cleanIntsAtLeast(rowsCapacity<<1, hashesAndSources);
+        bucketInsertionHandle = Bytes.cleanAtLeast(buckets, bucketInsertionHandle, this);
+        bucketInsertion = bucketInsertionHandle.arr;
     }
 
     @Override public void clear(int cols) {
@@ -44,13 +116,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
         clear0(rowsCapacity);
     }
 
-    @Override public void recycleInternals() {
-        hashesAndSources = ArrayPool.INT.offer(hashesAndSources, hashesAndSources.length);
-        bucketInsertion = ArrayPool.BYTE.offer(bucketInsertion, bucketInsertion.length);
-        table.recycleInternals();
-    }
-
-    @Override public int capacity() { return table.capacity(); }
+    @Override public int capacity() { return table == null ? 0 : table.capacity(); }
 
     @Override public boolean isWeak() { return true; }
 
@@ -73,6 +139,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
      *         than {@code source}
      */
     @Override public boolean isDuplicate(B batch, int row, int source) {
+        requireAlive();
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
         short bucket = (short)((hash&Integer.MAX_VALUE)%buckets), bucketWidth = this.bucketWidth;
@@ -108,6 +175,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public boolean contains(B batch, int row) {
+        requireAlive();
         if (DEBUG) checkBatchType(batch);
         int hash = enhanceHash(batch.hash(row));
         int i = ((hash&Integer.MAX_VALUE)%buckets)*bucketWidth, e = i+bucketWidth;
@@ -117,6 +185,7 @@ public class WeakCrossSourceDedup<B extends Batch<B>> extends Dedup<B> {
     }
 
     @Override public <E extends Throwable> void forEach(ThrowingConsumer<B, E> consumer) throws E {
+        requireAlive();
         for (B b : table)
             if (b != null) consumer.accept(b);
     }

@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
@@ -38,11 +38,11 @@ class ByteBufSinkTest {
         assertEquals(0, bb1.refCnt());
         assertEquals(1, bb2.refCnt());
 
-        s.release();
+        s.close();
         assertEquals(0, bb1.refCnt());
         assertEquals(1, bb2.refCnt());
 
-        s.touch().release();
+        s.touch().close();
         assertEquals(0, bb1.refCnt());
         assertEquals(1, bb2.refCnt());
         assertThrows(IllegalStateException.class, s::take);
@@ -62,8 +62,8 @@ class ByteBufSinkTest {
     }
 
     @Test void testAppendRopes() {
-        List<Rope> ropes = List.of(new ByteRope("0"),
-                new SegmentRope(ByteBuffer.wrap("012".getBytes(UTF_8)).slice(1, 2)),
+        List<Rope> ropes = List.of(FinalSegmentRope.asFinal("0"),
+                new FinalSegmentRope(ByteBuffer.wrap("012".getBytes(UTF_8)).slice(1, 2)),
                 Term.valueOf("\"3\""),
                 Term.valueOf("\"4\"^^<http://www.w3.org/2001/XMLSchema#integer>"),
                 Term.valueOf("<http://www.w3.org/2001/XMLSchema#anyURI>"));
@@ -81,8 +81,8 @@ class ByteBufSinkTest {
     static Stream<Arguments> testAppendSubRope() {
         List<Arguments> list = new ArrayList<>();
         List<Rope> simpleRopes = List.of(
-                new ByteRope("\"1234\""),
-                new SegmentRope(ByteBuffer.wrap("\"1234\"".getBytes(UTF_8))),
+                FinalSegmentRope.asFinal("\"1234\""),
+                new SegmentRopeView().wrap(ByteBuffer.wrap("\"1234\"".getBytes(UTF_8))),
                 Term.valueOf("\"1234\""));
         for (Rope r : simpleRopes) {
             list.add(arguments(r, 0, 6, "\"1234\""));

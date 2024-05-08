@@ -1,23 +1,32 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_1;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.SUFFIX;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
+import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
@@ -28,9 +37,13 @@ public class LocalityCompositeDict extends Dict {
     public  static final long        OFF_MASK    = 0x0000007fffffffffL;
     public  static final int SH_ID_BIT  = numberOfTrailingZeros(SH_ID_MASK);
 
+    private static final AtomicInteger nextThreadLocalBucket = new AtomicInteger();
+
     public static final int SH_ID_SUFF = 0x01000000;
 
+
     private final boolean sharedOverflow, embedSharedId;
+    private final byte tlDictId;
     private final Splitter.Mode splitMode;
     private final LocalityStandaloneDict sharedDict;
     private final long[] litSuffixes;
@@ -62,6 +75,7 @@ public class LocalityCompositeDict extends Dict {
         if (shared.emptyId == NOT_FOUND)
             throw new IllegalArgumentException("Shared dict does not contain the empty string");
         this.sharedDict = shared;
+        this.tlDictId = (byte)nextThreadLocalBucket.getAndIncrement();
         this.sharedOverflow = (flags & (byte)(SHARED_OVF_MASK  >>> FLAGS_BIT)) != 0;
         this.embedSharedId  = (flags & (byte)(OFF_W_MASK       >>> FLAGS_BIT)) != 0;
         boolean prolong     = (flags & (byte)(PROLONG_MASK     >>> FLAGS_BIT)) != 0;
@@ -75,24 +89,35 @@ public class LocalityCompositeDict extends Dict {
     }
 
     private long[] scanLitSuffixes() {
-        long[] litSuffixes = ArrayPool.longsAtLeast(16);
-        int nLangSuffixes = 0;
-        var l = sharedDict.lookup();
-        for (long id = 1; id < sharedDict.nStrings; id++) {
-            SegmentRope r = l.get(id);
-            if (r != null && r.len > 0 && r.get(0) == '"') {
-                if (nLangSuffixes == litSuffixes.length)
-                    litSuffixes = ArrayPool.grow(litSuffixes, nLangSuffixes<<1);
-                litSuffixes[nLangSuffixes++] = id;
+        long[] litSuffixes = ArrayAlloc.longsAtLeast(16);
+        try (var lGuard = new Guard<LocalityStandaloneDict.Lookup>(this)) {
+            var l = lGuard.set(sharedDict.lookup().takeOwnership(this));
+            int nLangSuffixes = 0;
+            for (long id = 1; id < sharedDict.nStrings; id++) {
+                SegmentRope r = l.get(id);
+                if (r != null && r.len > 0 && r.get(0) == '"') {
+                    if (nLangSuffixes == litSuffixes.length)
+                        litSuffixes = ArrayAlloc.grow(litSuffixes, nLangSuffixes<<1);
+                    litSuffixes[nLangSuffixes++] = id;
+                }
             }
+            return Arrays.copyOf(litSuffixes, nLangSuffixes);
+        } finally {
+            ArrayAlloc.LONG.offer(litSuffixes, litSuffixes.length);
         }
-        long[] trimmed = Arrays.copyOf(litSuffixes, nLangSuffixes);
-        ArrayPool.LONG.offer(litSuffixes, litSuffixes.length);
-        return trimmed;
     }
 
     public LocalityCompositeDict(Path file) throws IOException {
         this(file, new LocalityStandaloneDict(file.resolveSibling("shared")));
+    }
+
+    @Override public void close() {
+        super.close();
+        for (int i = tlSlot(0); i < tl.length; i += TL_DICTS_PER_THREAD) {
+            var l = tl[i];
+            if (l != null && l.dict == this && TL.compareAndExchangeAcquire(tl, i, l, null) == l)
+                l.toGeneralPool();
+        }
     }
 
     @Override protected void fillMetadata(MemorySegment seg, Metadata md) {
@@ -104,42 +129,124 @@ public class LocalityCompositeDict extends Dict {
 
     @Override public void validate() throws IOException {
         super.validate();
-        SortedCompositeDict.validateNtStrings(lookup());
+        try (var lG = new Guard<Lookup>(this)) {
+            SortedCompositeDict.validateNtStrings(lG.set(lookup()));
+        }
     }
 
     @SuppressWarnings("unused") public LocalityStandaloneDict shared() { return sharedDict; }
 
-    @Override public AbstractLookup polymorphicLookup() { return lookup(); }
+    @Override public Orphan<Lookup> polymorphicLookup() { return lookup(); }
 
-    public Lookup lookup()                       { return new Lookup(null ); }
-    public Lookup lookup(@Nullable Thread owner) { return new Lookup(owner); }
+    public Orphan<Lookup> lookup() {
+        return lookup((int)Thread.currentThread().threadId());
+    }
 
-    public LocalityLexIt lexIt() { return new LocalityLexIt(new Lookup(null), litSuffixes); }
+    public Orphan<Lookup> lookup(int threadId) {
+        int slot = tlSlot(threadId);
+        var l = tl[slot];
+        if (l == null || l.dict != this || TL.compareAndExchangeAcquire(tl, slot, l, null) != l)
+            l = LOOKUP.create(threadId).thaw(this);
+        return l.releaseOwnership(RECYCLED);
+    }
 
-    public final class Lookup extends AbstractLookup {
-        public final @Nullable Thread owner;
-        private final SegmentRope tmp = new SegmentRope(seg, null, 0, 1);
+    public LocalityLexIt lexIt() { return new LocalityLexIt(lookup(), litSuffixes); }
+
+    private static final int TL_DICTS_PER_THREAD = 64;
+    private static final int TL_DICTS_PER_THREAD_MASK = TL_DICTS_PER_THREAD-1;
+    private static final int TL_DICTS_PER_THREAD_SHIFT = numberOfTrailingZeros(TL_DICTS_PER_THREAD);
+    private static final int TL_THREADS = 2*Alloc.THREADS;
+    private static final int TL_THREADS_MASK = TL_THREADS-1;
+    static { assert Integer.bitCount(TL_DICTS_PER_THREAD)   == 1; }
+    static { assert Integer.bitCount(TL_THREADS) == 1; }
+    private static final Lookup[] tl = new Lookup[TL_THREADS* TL_DICTS_PER_THREAD];
+    private static final VarHandle TL = MethodHandles.arrayElementVarHandle(Lookup[].class);
+
+    private int tlSlot(int threadId) {
+        return ((threadId&TL_THREADS_MASK)<<TL_DICTS_PER_THREAD_SHIFT)
+                + (tlDictId&TL_DICTS_PER_THREAD_MASK);
+    }
+
+    private static final Supplier<Lookup> LOOKUP_FAC = new Supplier<>() {
+        @Override public Lookup get() {return new Lookup.Concrete().takeOwnership(RECYCLED);}
+        @Override public String toString() {return "LocalityCompositeDict.LOOKUP_FAC";}
+    };
+    private static final Alloc<Lookup> LOOKUP = new Alloc<>(Lookup.class,
+            "LocalityCompositeDict.LOOKUP",
+            Math.max(LOOKUP_POOL_CAPACITY-tl.length, Alloc.THREADS*32),
+            LOOKUP_FAC, Lookup.BYTES);
+    static { Primer.INSTANCE.sched(LOOKUP::prime); }
+
+    public static abstract sealed class Lookup extends AbstractLookup<Lookup> {
+        public static final int BYTES = 16 + 8*4 /*fields*/
+                + SegmentRopeView.BYTES /* SegmentRopeView */
+                + 2*TwoSegmentRope.BYTES /* TwoSegmentRope */
+                + LocalityStandaloneDict.Lookup.BYTES
+                + Splitter.BYTES;
+
+        private LocalityCompositeDict dict;
+        private final SegmentRopeView tmp = new SegmentRopeView();
         private final TwoSegmentRope out = new TwoSegmentRope();
         private final TwoSegmentRope termTmp = new TwoSegmentRope();
-        private final LocalityStandaloneDict.Lookup shared = sharedDict.lookup();
-        private final Splitter split = new Splitter(splitMode);
+        private LocalityStandaloneDict.Lookup shared;
+        private final Splitter split = Splitter.create(Splitter.Mode.LAST).takeOwnership(this);
 
-        public Lookup(@Nullable Thread owner) {
-            this.owner = owner;
+        private Lookup() {}
+
+        @Override public @Nullable Lookup recycle(Object currentOwner) {
+            internalMarkRecycled(currentOwner);
+            int threadId = (int)Thread.currentThread().threadId();
+            Lookup evicted = dict.open
+                    ? (Lookup)TL.getAndSetAcquire(tl, dict.tlSlot(threadId), this)
+                    : this;
+            if (evicted != null)
+                evicted.toGeneralPool();
+            return null;
         }
 
-        @Override public LocalityCompositeDict dict() { return LocalityCompositeDict.this; }
+        private void toGeneralPool() {
+            shared = Owned.safeRecycle(shared, this);
+            dict = null;
+            if (LOOKUP.offer(this) != null)
+                internalMarkGarbage(RECYCLED);
+        }
+
+        @Override protected @Nullable Lookup internalMarkGarbage(Object currentOwner) {
+            super.internalMarkGarbage(currentOwner);
+            split.recycle(this);
+            Owned.safeRecycle(shared, this);
+            return null;
+        }
+
+        private @This Lookup thaw(LocalityCompositeDict dict) {
+            if (dict != this.dict) {
+                this.dict = dict;
+                this.tmp.wrap(dict.seg, null, 0, 1);
+                this.split.mode(dict.splitMode);
+                Owned.recycle(this.shared, this);
+                this.shared = dict.sharedDict.lookup().takeOwnership(this);
+            }
+            return this;
+        }
+
+        private static final class Concrete extends Lookup implements Orphan<Lookup> {
+            @Override public Lookup takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        @Override public LocalityCompositeDict dict() { return dict; }
+
 
         @Override public long find(PlainRope string) {
+            var d = this.dict;
             var side = split.split(string);
             int flShId = (side == SUFFIX ? SH_ID_SUFF : 0) | (int)switch (side) {
-                case NONE -> sharedDict.emptyId;
+                case NONE -> d.sharedDict.emptyId;
                 case PREFIX,SUFFIX -> shared.find(split.shared());
             };
-            if (embedSharedId) {
+            if (d.embedSharedId) {
                 long id = find(flShId, split.local());
-                if (sharedOverflow && id == NOT_FOUND)
-                    return find((int) sharedDict.emptyId, string);
+                if (d.sharedOverflow && id == NOT_FOUND)
+                    return find((int)d.sharedDict.emptyId, string);
                 return id;
             } else {
                 return findB64(string, flShId&~SH_ID_SUFF);
@@ -155,18 +262,19 @@ public class LocalityCompositeDict extends Dict {
         private long find(int flShId, PlainRope local) {
             if (U == null)
                 return coldFind(flShId, local);
+            var d = dict;
             long id = 1;
             if (local instanceof SegmentRope s) {
                 byte[] rBase = s.utf8; //(byte[]) s.segment.array().orElse(null);
                 long rAddr = s.segment.address() + s.offset;
-                while (id <= nStrings) {
-                    long off = readOffUnsafe(id - 1);
+                while (id <= d.nStrings) {
+                    long off = d.readOffUnsafe(id - 1);
                     int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
                     int diff = offerFlShId - flShId;
                     if (diff == 0) {
                         off &= OFF_MASK;
-                        diff = (int) ((readOffUnsafe(id) & OFF_MASK) - off);
-                        diff = compare1_1(null, valBase + off, diff, rBase, rAddr, s.len);
+                        diff = (int) ((d.readOffUnsafe(id) & OFF_MASK) - off);
+                        diff = compare1_1(null, d.valBase + off, diff, rBase, rAddr, s.len);
                         if (diff == 0)
                             return id;
                     }
@@ -179,14 +287,14 @@ public class LocalityCompositeDict extends Dict {
                 long rAddr1 = tsr.fst.address() + tsr.fstOff;
                 long rAddr2 = tsr.snd.address() + tsr.sndOff;
                 int rLen1 = tsr.fstLen, rLen2 = tsr.sndLen;
-                while (id <= nStrings) {
-                    long off = readOffUnsafe(id - 1);
+                while (id <= d.nStrings) {
+                    long off = d.readOffUnsafe(id - 1);
                     int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
                     int diff = offerFlShId - flShId;
                     if (diff == 0) {
                         off &= OFF_MASK;
-                        diff = (int) ((readOffUnsafe(id) & OFF_MASK) - off);
-                        diff = compare1_2(null, valBase+off, diff,
+                        diff = (int) ((d.readOffUnsafe(id) & OFF_MASK) - off);
+                        diff = compare1_2(null, d.valBase+off, diff,
                                           rBase1, rAddr1, rLen1, rBase2, rAddr2, rLen2);
                         if (diff == 0)
                             return id;
@@ -198,14 +306,15 @@ public class LocalityCompositeDict extends Dict {
         }
 
         private long coldFind(int flShId, PlainRope local) {
+            var d = this.dict;
             long id = 1;
-            while (id <= nStrings) {
-                long off = readOffUnsafe(id - 1);
+            while (id <= d.nStrings) {
+                long off = d.readOffUnsafe(id - 1);
                 int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
                 int diff = offerFlShId - flShId;
                 if (diff == 0) {
                     off &= OFF_MASK;
-                    tmp.slice(off, (int) ((readOffUnsafe(id) & OFF_MASK) - off));
+                    tmp.slice(off, (int) ((d.readOffUnsafe(id) & OFF_MASK) - off));
                     diff = tmp.compareTo(local);
                     if (diff == 0)
                         return id;
@@ -216,21 +325,23 @@ public class LocalityCompositeDict extends Dict {
         }
 
         private long findB64(PlainRope string, int flShId) {
+            var d = this.dict;
             MemorySegment b64 = split.b64(flShId).segment();
             long id = findB64(b64, split.local());
-            if (sharedOverflow && id == NOT_FOUND) {
-                split.b64(sharedDict.emptyId);
+            if (d.sharedOverflow && id == NOT_FOUND) {
+                split.b64(d.sharedDict.emptyId);
                 id = findB64(b64, string);
             }
             return id;
         }
 
         private long findB64(MemorySegment b64, PlainRope local) {
+            var d = this.dict;
             int id = 1;
-            while (id <= nStrings) {
-                long off = readOff(id - 1);
-                int len = (int)(readOff(id)-off);
-                int diff = compare1_1(b64, 0, 5, seg, off, 5);
+            while (id <= d.nStrings) {
+                long off = d.readOff(id - 1);
+                int len = (int)(d.readOff(id)-off);
+                int diff = compare1_1(b64, 0, 5, d.seg, off, 5);
                 if (diff == 0) {
                     tmp.slice(off, len);
                     diff = local.compareTo(tmp, 5, len);
@@ -242,77 +353,89 @@ public class LocalityCompositeDict extends Dict {
             return NOT_FOUND;
         }
 
-        public SegmentRope getShared(long id) {
-            if (id < MIN_ID || id > nStrings) return null;
-            long off = readOffUnsafe(id-1);
-            return shared.get(embedSharedId ? (off & SH_ID_MASK) >>> SH_ID_BIT
-                                            : Splitter.decode(seg, off));
+        public SegmentRopeView getShared(long id) {
+            var d = this.dict;
+            if (id < MIN_ID || id > d.nStrings) return null;
+            long off = d.readOffUnsafe(id-1);
+            return shared.get(d.embedSharedId ? (off & SH_ID_MASK) >>> SH_ID_BIT
+                                            : Splitter.decode(d.seg, off));
         }
 
-        public SegmentRope getLocal(long id) {
-            if (id < MIN_ID || id > nStrings) return null;
-            long off = readOffUnsafe(id-1);
+        public SegmentRopeView getLocal(long id) {
+            var d = this.dict;
+            if (id < MIN_ID || id > d.nStrings) return null;
+            long off = d.readOffUnsafe(id-1);
             int len;
-            if (embedSharedId) {
+            if (d.embedSharedId) {
                 off &= OFF_MASK;
-                len = (int)((readOff(id)&OFF_MASK) - off);
+                len = (int)((d.readOff(id)&OFF_MASK) - off);
             } else {
-                len = (int)(readOff(id)-off);
+                len = (int)(d.readOff(id)-off);
             }
             tmp.slice(off, len);
             return tmp;
         }
 
         public boolean sharedSuffixed(long id)  {
-            if (id < MIN_ID || id > nStrings) return false;
-            long off = readOffUnsafe(id - 1);
-            return embedSharedId ? (off & SUFFIX_MASK) != 0
-                                 : readValue(off+4) == SharedSide.SUFFIX_CHAR;
+            var d = this.dict;
+            if (id < MIN_ID || id > d.nStrings) return false;
+            long off = d.readOffUnsafe(id - 1);
+            return d.embedSharedId ? (off & SUFFIX_MASK) != 0
+                                 : d.readValue(off+4) == SharedSide.SUFFIX_CHAR;
         }
 
         @Override public TwoSegmentRope get(long id) {
-            if (id < MIN_ID || id > nStrings) return null;
-            long off = readOffUnsafe(id - 1);
+            var d = this.dict;
+            if (id < MIN_ID || id > d.nStrings) return null;
+            long off = d.readOffUnsafe(id - 1);
             int len;
             SegmentRope sharedRope;
             boolean flip;
-            if (embedSharedId) {
+            if (d.embedSharedId) {
                 flip = (off & SUFFIX_MASK) != 0;
                 sharedRope = shared.get((off & SH_ID_MASK) >>> SH_ID_BIT);
                 off &= OFF_MASK;
-                len = (int) ((readOffUnsafe(id) & OFF_MASK) - off);
+                len = (int) ((d.readOffUnsafe(id) & OFF_MASK) - off);
             } else {
-                len = (int)(readOffUnsafe(id) - off);
-                flip = seg.get(JAVA_BYTE, off+4) == SharedSide.SUFFIX_CHAR;
-                sharedRope = shared.get(Splitter.decode(seg, off));
+                len = (int)(d.readOffUnsafe(id) - off);
+                flip = d.seg.get(JAVA_BYTE, off+4) == SharedSide.SUFFIX_CHAR;
+                sharedRope = shared.get(Splitter.decode(d.seg, off));
             }
             if (sharedRope == null)
-                throw new BadSharedId(id, LocalityCompositeDict.this, off, len);
+                throw new BadSharedId(id, d, off, len);
             out.wrapFirst(sharedRope);
-            out.wrapSecond(seg, null, off, len);
+            out.wrapSecond(d.seg, null, off, len);
             if (flip)
                 out.flipSegments();
             return out;
         }
     }
 
-    public static class LocalityLexIt extends LexIt {
+    public static class LocalityLexIt extends LexIt<LocalityLexIt> {
         private static final int BLANK = -3;
         private static final int IRI   = -2;
         private static final int PLAIN = -1;
         private final Lookup lookup;
-        private final ByteRope string;
+        private final MutableRope string;
         private final long[] suffixes;
         private int lexEnd, suffix;
 
-        public LocalityLexIt(Lookup lookup, long[] suffixes) {
-            this.lookup = lookup;
+        public LocalityLexIt(Orphan<Lookup> lookup, long[] suffixes) {
+            this.lookup = lookup.takeOwnership(this);
             this.suffixes = suffixes;
-            this.string = new ByteRope(24);
+            this.string = new MutableRope(24);
             end();
         }
 
+        @Override public @Nullable LocalityLexIt recycle(Object currentOwner) {
+            internalMarkGarbage(this);
+            lookup.recycle(this);
+            string.close();
+            return null;
+        }
+
         @Override public void find(PlainRope nt) {
+            requireAlive();
             boolean bad = nt.len < 2;
             if (!bad) {
                 byte[] u8 = string.clear().ensureFreeCapacity(nt.len+2).u8();
@@ -346,12 +469,12 @@ public class LocalityCompositeDict extends Dict {
 
         @Override public void end() {
             lexEnd = 1;
-            string.clear().append(Term.EMPTY_STRING.local().utf8);
             id = NOT_FOUND;
             suffix = suffixes.length;
         }
 
         @Override public boolean advance() {
+            requireAlive();
             long[] suffixes = this.suffixes;
             byte[] u8 = string.u8();
             int suffix = this.suffix;

@@ -1,9 +1,10 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledTwoSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -35,7 +36,7 @@ class CompositeDictBuilderTest {
     void test(Splitter.Mode mode, boolean optimizeLocality) throws IOException {
         Path temp = Files.createTempDirectory("fastersparql-temp");
         Path dest = Files.createTempDirectory("fastersparql-dest");
-        List<ByteRope> ropes;
+        List<FinalSegmentRope> ropes;
         try (var b = new CompositeDictBuilder(temp, dest, mode, optimizeLocality)) {
             ropes = Stream.of(
                     "\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>",
@@ -47,11 +48,11 @@ class CompositeDictBuilderTest {
                     "<http://example.org/TCGA-36-260x-g156>",
                     "<http://example.org/chebi:ex>",
                     "<http://example.org/places/123/name>"
-            ).map(ByteRope::new).toList();
-            for (ByteRope r : ropes)
+            ).map(FinalSegmentRope::asFinal).toList();
+            for (var r : ropes)
                 b.visit(r);
             var sndPass = b.nextPass();
-            for (ByteRope r : ropes)
+            for (var r : ropes)
                 sndPass.visit(r);
             sndPass.write();
         }
@@ -66,25 +67,27 @@ class CompositeDictBuilderTest {
         assertTrue(Files.isRegularFile(sharedPath));
         assertTrue(Files.isRegularFile(stringsPath));
 
+        var splitters = Arrays.stream(Splitter.Mode.values())
+                              .map(m -> Splitter.create(m).takeOwnership(this)).toList();
         //load dict
+        Dict.AbstractLookup<?> lookup = null;
         try (var shared = Dict.loadStandalone(sharedPath);
-             var dict = Dict.loadComposite(stringsPath, shared)) {
+             var dict = Dict.loadComposite(stringsPath, shared);
+             var tsr = PooledTwoSegmentRope.ofEmpty()) {
             // check if dicts are valid
             shared.validate();
             dict.validate();
 
             // lookup all strings
-            var lookup = dict.polymorphicLookup();
-            var splitters = Arrays.stream(Splitter.Mode.values()).map(Splitter::new).toList();
-            TwoSegmentRope tsr = new TwoSegmentRope();
+            lookup = dict.polymorphicLookup().takeOwnership(this);
             for (PlainRope r : ropes) {
                 long id = lookup.find(r);
                 assertTrue(id >= Dict.MIN_ID, "r="+r);
                 assertEquals(r, lookup.get(id));
                 for (Splitter split : splitters) {
                     split.split(r);
-                    tsr.wrapFirst((SegmentRope) split.shared());
-                    tsr.wrapSecond((SegmentRope) split.local());
+                    tsr.wrapFirst ((SegmentRope)split.shared());
+                    tsr.wrapSecond((SegmentRope)split.local());
                     if (split.sharedSide == Splitter.SharedSide.SUFFIX)
                         tsr.flipSegments();
 
@@ -96,6 +99,11 @@ class CompositeDictBuilderTest {
 
             // no extraneous strings
             assertEquals(ropes.size(), dict.strings());
+        } finally {
+            Owned.safeRecycle(lookup, this);
+            for (var s : splitters) {
+                Owned.safeRecycle(s, this);
+            }
         }
     }
 

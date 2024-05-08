@@ -1,11 +1,14 @@
 package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.SpecialOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 
@@ -20,16 +23,22 @@ import static java.util.Comparator.naturalOrder;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SparqlQueryTest {
-    interface Parser {
-        SparqlQuery parse(String sparql) throws SilentSkip;
-        @Nullable String preprocess(String sparql);
-        boolean isFull();
+    public static abstract class Parser extends AbstractOwned<Parser>
+                                        implements Orphan<Parser> {
+        public Parser() {takeOwnership0(SpecialOwner.CONSTANT);}
+        @Override public Parser takeOwnership(Object o) {return takeOwnership0(o);}
+        public abstract SparqlQuery parse(String sparql) throws SilentSkip;
+        public abstract @Nullable String preprocess(String sparql);
+        public abstract boolean isFull();
     }
 
     public static final class SilentSkip extends Exception {
     }
 
     private static final Parser OPAQUE = new Parser() {
+        @Override public @Nullable Parser recycle(Object currentOwner) {
+            return internalMarkGarbage(currentOwner);
+        }
         @Override public SparqlQuery parse(String sparql) {
             return new OpaqueSparqlQuery(sparql);
         }
@@ -43,7 +52,7 @@ class SparqlQueryTest {
     private static SparqlQuery
     parseFull(SparqlParser parser, String sparql) throws SilentSkip {
         try {
-            return parser.parse(SegmentRope.of(sparql), 0);
+            return parser.parse(FinalSegmentRope.asFinal(sparql), 0);
         } catch (InvalidSparqlException e) {
             if (e.getMessage().startsWith("binding vars to expressions"))
                 throw new SilentSkip();
@@ -56,7 +65,12 @@ class SparqlQueryTest {
     }
 
     private static final Parser FULL = new Parser() {
-        private final SparqlParser parser = new SparqlParser();
+        private final SparqlParser parser = SparqlParser.create().takeOwnership(this);
+        @Override public @Nullable Parser recycle(Object currentOwner) {
+            internalMarkGarbage(currentOwner);
+            parser.recycle(this);
+            return null;
+        }
         @Override public SparqlQuery parse(String sparql) throws SilentSkip {
             return parseFull(parser, sparql);
         }

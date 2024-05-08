@@ -6,6 +6,9 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.IntList;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.opentest4j.AssertionFailedError;
 
@@ -13,13 +16,11 @@ import java.util.Arrays;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
-import static java.util.Arrays.copyOf;
 
 public class IntsBatch {
     public static final Vars X = Vars.of("x");
     private static final Term[] TERM_POOL = new Term[8192];
     private static final int[][] INT_SEQUENCES = new int[8192][];
-    public static final Term INVALID_MARKER = term(666);
 
     static {
         for (int i = 0; i < 128; i++) {
@@ -81,27 +82,19 @@ public class IntsBatch {
         return dest;
     }
 
-    public static TermBatch tightIntsBatch(int... ints) {
-        return fill(new TermBatch(new Term[ints.length], 0, 1, true), ints);
+    private static final StaticMethodOwner INTS_BATCH = new StaticMethodOwner("IntsBatch");
+
+    public static Orphan<TermBatch> intsBatch(int... ints) {
+        return fill(TERM.create(1).takeOwnership(INTS_BATCH), ints).releaseOwnership(INTS_BATCH);
     }
 
-    public static TermBatch intsBatch(int... ints) {
-        return fill(TERM.create(1), ints);
+    public static void offer(CallbackBIt<TermBatch> it, int... ints) {
+        offer(it, intsBatch(ints));
     }
 
-    public static void offerAndInvalidate(CallbackBIt<TermBatch> it, int... ints) {
-        offerAndInvalidate(it, intsBatch(ints));
-    }
-
-    public static void offerAndInvalidate(CallbackBIt<TermBatch> it, TermBatch b) {
+    public static void offer(CallbackBIt<TermBatch> it, Orphan<TermBatch> b) {
         try {
-            var retained = it.offer(b);
-            if (retained != null) {
-                retained = retained.clear(1 + (retained.cols&1));
-                retained.beginPut();
-                for (int c = 0; c < retained.cols; c++) retained.putTerm(c, INVALID_MARKER);
-                retained.commitPut();
-            }
+            it.offer(b);
         } catch (TerminatedException|CancelledException ignored) {}
     }
 
@@ -113,26 +106,39 @@ public class IntsBatch {
         return histogram;
     }
 
-    public static void assertEqualsOrdered(int[] expected, int[] actual, int actualSize) throws AssertionFailedError {
-        if (!Arrays.equals(expected, 0, expected.length, actual, 0, actualSize)) {
-            var ac = Arrays.toString(copyOf(actual, actualSize));
-            throw new AssertionFailedError("Arrays differ", Arrays.toString(expected), ac);
+    public static int[] histogram(IntList ints) {
+        int max = -1;
+        for (var it = ints.iterator(); it.hasNext(); ) max = Math.max(max, it.nextInt());
+        int[] histogram = new int[max + 1];
+        for (var it = ints.iterator(); it.hasNext(); ) histogram[it.nextInt()]++;
+        return histogram;
+    }
+
+    public static void assertEqualsOrdered(int[] expected, IntList actual) throws AssertionFailedError {
+        if (actual.size() != expected.length)
+            throw new AssertionFailedError("Size mismatch", expected.length, actual.size());
+        var it = actual.iterator();
+        for (int i = 0; i < expected.length; i++) {
+            if (!it.hasNext())
+                throw new AssertionFailedError("Premature end of actual at index "+i);
+            int ac = it.nextInt(), ex = expected[i];
+            if (ac != expected[i])
+                throw new AssertionFailedError("values mismatch at index "+i, ex, ac);
         }
     }
-    public static void assertEqualsUnordered(int[] expected, int[] actual, int actualSize,
+    public static void assertEqualsUnordered(int[] expected, IntList actual,
                                              boolean tolerateDuplicates,
                                              boolean tolerateDeduplicated,
                                              boolean tolerateMissing)  {
         int[] exf = histogram(expected, expected.length);
-        int[] acf = histogram(actual, actualSize);
+        int[] acf = histogram(actual);
         for (int i = 0; i < exf.length; i++) {
             int ex = exf[i], ac = i < acf.length ? acf[i] : 0;
             if (ac > ex &&     tolerateDuplicates && ex > 0                     ) continue;
             if (ac < ex && ((tolerateDeduplicated && ac > 0) || tolerateMissing)) continue;
             if (ex != ac) {
                 var msg = "Frequency mismatch for item "+i+": expected "+ex+", got "+ac;
-                throw new AssertionFailedError(msg, Arrays.toString(expected),
-                                               Arrays.toString(copyOf(actual, actualSize)));
+                throw new AssertionFailedError(msg, Arrays.toString(expected), actual);
             }
         }
         if (acf.length > exf.length) {
@@ -141,8 +147,7 @@ public class IntsBatch {
                 sb.append(i).append(", ");
             sb.setLength(sb.length()-2);
             sb.append("]");
-            throw new AssertionFailedError(sb.toString(), Arrays.toString(expected),
-                                           Arrays.toString(copyOf(actual, actualSize)));
+            throw new AssertionFailedError(sb.toString(), Arrays.toString(expected), actual);
         }
     }
 

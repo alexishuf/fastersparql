@@ -1,8 +1,13 @@
 package com.github.alexishuf.fastersparql.model.row.dedup;
 
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -15,6 +20,8 @@ import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.make;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static java.util.List.of;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,20 +34,24 @@ class WeakCrossSourceDedupTest {
         return Stream.of(1, 8, 9, 1024).map(Arguments::arguments);
     }
 
-    private static TermBatch prefixedRow(int n) {
+    private static Orphan<TermBatch> prefixedRow(int n) {
         return TermBatch.of(termList("\"abcdef"+n+"\""));
     }
 
     @ParameterizedTest @ValueSource(ints = {1, 8, 9, 1024})
     void testHashtableSingleThread(int rows) {
-        var table = new WeakCrossSourceDedup<>(TermBatchType.TERM, 1);
-        for (int row = 0; row < rows; row++) {
-            assertFalse(table.isDuplicate(prefixedRow(row), 0, 0));
-            assertFalse(table.isDuplicate(prefixedRow(row), 0, 32)); // share the same bit
-            var batch = prefixedRow(row);
-            for (int source = 1; source < 32; source++)
-                assertTrue(table.isDuplicate(batch, 0, source), "source="+source);
-            assertTrue(table.isDuplicate(prefixedRow(row), 0, 0));
+        try (var tableGuard = new Guard<WeakCrossSourceDedup<TermBatch>>(this);
+             var prefixedRowGuard = new BatchGuard<TermBatch>(this)) {
+            var table = tableGuard.set(Dedup.weakCrossSource(TermBatchType.TERM, 1));
+            for (int row = 0; row < rows; row++) {
+                var batch = prefixedRowGuard.set(prefixedRow(row));
+                assertFalse(table.isDuplicate(batch, 0, 0));
+                assertFalse(table.isDuplicate(batch, 0, 32)); // share the same bit
+                for (int source = 1; source < 32; source++)
+                    assertTrue(table.isDuplicate(batch, 0, source));
+                assertTrue(table.isDuplicate(batch, 0, 0));
+                assertTrue(batch.isOwner(this));
+            }
         }
     }
 
@@ -56,16 +67,29 @@ class WeakCrossSourceDedupTest {
 
     @ParameterizedTest @MethodSource
     void testHashtableConcurrent(int rows, int threads) throws Exception {
-        var table = new WeakCrossSourceDedup<>(TermBatchType.TERM, 2);
         List<Future<?>> tasks = new ArrayList<>();
-        try (var executor = Executors.newFixedThreadPool(threads)) {
+        try (var tableGuard = new Guard<WeakCrossSourceDedup<TermBatch>>(this);
+             var executor = Executors.newFixedThreadPool(threads)) {
+            var table = tableGuard.set(Dedup.weakCrossSource(TermBatchType.TERM, 2));
             IntStream.range(0, threads).forEach(thread -> tasks.add(executor.submit(() -> {
                 for (int row = 0; row < rows; row++) {
+                    var threadNT = make(8+6).add("\"thread").add(thread).add('"').take();
+                    var rowNT = make(5+6).add("\"row").add(thread).add('"').take();
+                    var threadTerm = Term.wrap(threadNT, EMPTY);
+                    var rowTerm = Term.wrap(rowNT, EMPTY);
                     for (int rep = 0; rep < threads; rep++) {
-                        String ctx = "thread="+thread+", row="+row+ ", rep="+rep;
-                        var batch = TermBatch.of(
-                                termList("\"thread"+thread+"\"", "\" row"+row+"\""));
-                        assertFalse(table.isDuplicate(batch, 0, thread), ctx);
+                        var batch = TermBatchType.TERM.create(2).takeOwnership(this);
+                        batch.beginPut();
+                        if (rep == 0) {
+                            batch.putTerm(0, Term.wrap(threadNT, EMPTY));
+                            batch.putTerm(1, Term.wrap(rowNT, EMPTY));
+                        } else {
+                            batch.putTerm(0, threadTerm);
+                            batch.putTerm(1, rowTerm);
+                        }
+                        batch.commitPut();
+                        assertFalse(table.isDuplicate(batch, 0, thread));
+                        batch.recycle(this);
                     }
                 }
             })));
@@ -73,6 +97,4 @@ class WeakCrossSourceDedupTest {
                 task.get();
         }
     }
-
-
 }

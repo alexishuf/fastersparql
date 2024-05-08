@@ -31,7 +31,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
-import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.L_Result;
 
@@ -44,8 +44,8 @@ import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 @Outcome(id = "1", expect = Expect.ACCEPTABLE, desc = "Only allowed outcome.")
 @State
 public class SingleBatchSPSCBItCTest extends BItCTest {
-    public SingleBatchSPSCBItCTest() {
-        super(new SPSCBIt<>(TERM, X, 2), new TermBatch[]{batch(1)});
+    @SuppressWarnings("unchecked") public SingleBatchSPSCBItCTest() {
+        super(new SPSCBIt<>(TERM, X, 2), new Orphan[]{batch(1)});
     }
 
     @Actor   public void producer()           {  produceAndComplete(); }

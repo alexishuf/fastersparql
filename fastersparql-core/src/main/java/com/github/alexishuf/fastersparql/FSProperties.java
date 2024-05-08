@@ -4,8 +4,10 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
@@ -14,6 +16,10 @@ import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.*;
+import com.github.alexishuf.fastersparql.util.owned.OwnershipEvent.RecycledEvent;
+import com.github.alexishuf.fastersparql.util.owned.OwnershipEvent.ReleasedOwnershipEvent;
+import com.github.alexishuf.fastersparql.util.owned.OwnershipEvent.TakenOwnershipEvent;
 import jdk.jfr.Event;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.index.qual.Positive;
@@ -35,9 +41,15 @@ public class FSProperties {
     public static final String CLIENT_CONN_TIMEOUT_MS    = "fastersparql.client.conn.timeout-ms";
     public static final String CLIENT_SO_TIMEOUT_MS      = "fastersparql.client.so.timeout-ms";
     public static final String CLIENT_CONN_RETRY_WAIT_MS = "fastersparql.client.conn.retry.wait-ms";
-    public static final String BATCH_POOLED_MARK         = "fastersparql.batch.pooled.mark";
-    public static final String BATCH_POOLED_TRACE        = "fastersparql.batch.pooled.trace";
-    public static final String BATCH_JFR_ENABLED         = "fastersparql.batch.jfr.enabled";
+    public static final String OWNED_TRACE               = "fastersparql.owned.trace";
+    public static final String OWNED_STACK_TRACE         = "fastersparql.owned.stack-trace";
+    public static final String OWNED_TRACE_MAX           = "fastersparql.owned.trace-max";
+    public static final String OWNED_STACK_TRACE_MAX     = "fastersparql.owned.stack-trace-max";
+    public static final String OWNED_DETECT_LEAKS        = "fastersparql.owned.leaks";
+    public static final String OWNED_PRINT_LEAKS         = "fastersparql.owned.print-leaks";
+    public static final String OWNED_JFR_LEAKS           = "fastersparql.owned.jfr";
+    public static final String POOLS_STATS               = "fastersparql.pools.stats";
+    public static final String BATCH_JFR_ENABLED         = "fastersparql.batch.jfr";
     public static final String BATCH_MIN_SIZE            = "fastersparql.batch.min-size";
     public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
@@ -48,7 +60,6 @@ public class FSProperties {
     public static final String IT_STATS                  = "fastersparql.it.stats";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
-    public static final String OP_REDUCED_BATCHES        = "fastersparql.op.reduced.batches";
     public static final String OP_CROSS_DEDUP            = "fastersparql.op.cross-dedup";
     public static final String OP_OPPORTUNISTIC_DEDUP    = "fastersparql.op.opportunistic-dedup";
     public static final String OP_JOIN_REORDER           = "fastersparql.op.join.reorder";
@@ -70,14 +81,15 @@ public class FSProperties {
     public static final int     DEF_CLIENT_CONN_TIMEOUT_MS    = 0;
     public static final int     DEF_CLIENT_SO_TIMEOUT_MS      = 0;
     public static final int     DEF_CLIENT_CONN_RETRY_WAIT_MS = 1000;
-    public static final int     DEF_BATCH_MIN_SIZE            = BIt.PREFERRED_MIN_BATCH;
+    public static final double  DEF_BATCH_MIN_WEIGHT          = 0.5f;
     public static final int     DEF_BATCH_MIN_WAIT_US         = BIt.QUICK_MIN_WAIT_NS/1_000;
     public static final int     DEF_BATCH_MAX_WAIT_US         = 2*BIt.QUICK_MIN_WAIT_NS/1_000;
-    public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 32;
+    public static final int     DEF_OWNED_STACK_TRACE_MAX     = 3;
+    public static final int     DEF_OWNED_TRACE_MAX           = 16;
+    public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 8;
     public static final int     DEF_WS_IMPLICIT_REQUEST       = DEF_EMIT_REQ_CHUNK_BATCHES/4;
     public static final int     DEF_IT_QUEUE_BATCHES          = 4;
     public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
-    public static final int     DEF_OP_REDUCED_BATCHES        = 256;
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
@@ -87,7 +99,11 @@ public class FSProperties {
     public static final boolean DEF_EMIT_STATS_LOG            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
     public static final boolean DEF_STORE_PREFER_IDS          = true;
-    public static final Boolean DEF_BATCH_POOLED_TRACE        = false;
+    public static final boolean DEF_OWNED_TRACE               = FSProperties.class.desiredAssertionStatus();
+    public static final boolean DEF_OWNED_STACK_TRACE         = false;
+    public static final boolean DEF_OWNED_DETECT_LEAKS        = FSProperties.class.desiredAssertionStatus();
+    public static final boolean DEF_OWNED_PRINT_LEAKS         = FSProperties.class.desiredAssertionStatus();
+    public static final boolean DEF_POOL_STATS                = FSProperties.class.desiredAssertionStatus();
 
     /* --- --- --- cached values --- --- --- */
     private static int CACHE_CLIENT_MAX_QUERY_GET      = -1;
@@ -95,17 +111,18 @@ public class FSProperties {
     private static int CACHE_CLIENT_CONN_TIMEOUT_MS    = -1;
     private static int CACHE_CLIENT_SO_TIMEOUT_MS      = -1;
     private static int CACHE_CLIENT_CONN_RETRY_WAIT_MS = -1;
-    private static int CACHE_BATCH_MIN_SIZE            = -1;
+    private static int CACHE_OWNED_TRACE_MAX           = -1;
+    private static int CACHE_OWNED_STACK_TRACE_MAX     = -1;
     private static int CACHE_BATCH_MIN_WAIT_US         = -1;
     private static int CACHE_BATCH_MAX_WAIT_US         = -1;
     private static int CACHE_IT_QUEUE_BATCHES          = -1;
     private static int CACHE_OP_DISTINCT_CAPACITY      = -1;
-    private static int CACHE_OP_REDUCED_BATCHES        = -1;
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static int CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
     private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
     private static long CACHE_WS_IMPLICIT_REQUEST      = -1;
+    private static double CACHE_BATCH_MIN_SIZE         = -1;
     private static Boolean CACHE_OP_WEAKEN_DISTINCT     = null;
     private static Boolean CACHE_USE_VECTORIZATION      = null;
     private static Boolean CACHE_USE_UNSAFE             = null;
@@ -117,8 +134,12 @@ public class FSProperties {
     private static Boolean CACHE_EMIT_STATS_LOG         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
     private static Boolean CACHE_STORE_PREFER_IDS       = null;
-    private static Boolean CACHE_BATCH_POOLED_MARK      = null;
-    private static Boolean CACHE_BATCH_POOLED_TRACE     = null;
+    private static Boolean CACHE_OWNED_TRACE            = null;
+    private static Boolean CACHE_OWNED_STACK_TRACE      = null;
+    private static Boolean CACHE_OWNED_DETECT_LEAKS     = null;
+    private static Boolean CACHE_OWNED_PRINT_LEAKS      = null;
+    private static Boolean CACHE_OWNED_JFR_LEAKS        = null;
+    private static Boolean CACHE_POOL_STATS             = null;
     private static Boolean CACHE_BATCH_JFR_ENABLED      = null;
     private static Batch.Validation CACHE_BATCH_SELF_VALIDATE   = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
@@ -177,6 +198,17 @@ public class FSProperties {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
+    protected static @Positive double readUnitWeight(String propertyName, double defaultValue) {
+        return readProperty(propertyName, defaultValue, (src, val) -> {
+            double i = -1;
+            try { i = Double.parseDouble(val); } catch (NumberFormatException ignored) {}
+            if (i < 0 || i > 1.0)
+                throw new IllegalArgumentException(src+"="+val+" is not weight in [0, 1.0]");
+            return i;
+        });
+    }
+
     protected static <E extends Enum<E>> E readEnum(String propertyName, E[] values, E defaultValue) {
         return readProperty(propertyName, defaultValue, (src, val) -> {
             val = val.trim();
@@ -200,13 +232,14 @@ public class FSProperties {
         CACHE_CLIENT_CONN_TIMEOUT_MS    = -1;
         CACHE_CLIENT_SO_TIMEOUT_MS      = -1;
         CACHE_CLIENT_CONN_RETRY_WAIT_MS = -1;
+        CACHE_OWNED_TRACE_MAX           = -1;
+        CACHE_OWNED_STACK_TRACE_MAX     = -1;
         CACHE_BATCH_MIN_SIZE            = -1;
         CACHE_BATCH_MIN_WAIT_US         = -1;
         CACHE_BATCH_MAX_WAIT_US         = -1;
         CACHE_WS_IMPLICIT_REQUEST       = -1;
         CACHE_IT_QUEUE_BATCHES          = -1;
         CACHE_OP_DISTINCT_CAPACITY      = -1;
-        CACHE_OP_REDUCED_BATCHES        = -1;
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
         CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
@@ -218,8 +251,11 @@ public class FSProperties {
         CACHE_IT_STATS                  = null;
         CACHE_EMIT_STATS                = null;
         CACHE_EMIT_STATS_LOG            = null;
-        CACHE_BATCH_POOLED_MARK         = null;
-        CACHE_BATCH_POOLED_TRACE        = null;
+        CACHE_OWNED_TRACE               = null;
+        CACHE_OWNED_STACK_TRACE         = null;
+        CACHE_OWNED_DETECT_LEAKS        = null;
+        CACHE_OWNED_PRINT_LEAKS         = null;
+        CACHE_POOL_STATS                = null;
         CACHE_BATCH_SELF_VALIDATE       = null;
         CACHE_OP_JOIN_REORDER           = null;
         CACHE_OP_JOIN_REORDER_BIND      = null;
@@ -296,7 +332,7 @@ public class FSProperties {
 
     /**
      * If {@code true}, {@link BIt} instances will track the number of batches and the
-     * accumulated number of rows returned byu {@link BIt#nextBatch(Batch)}. The main use
+     * accumulated number of rows returned byu {@link BIt#nextBatch(Orphan)}. The main use
      * case for this tracking is reporting the values at
      * {@link StreamNode#label(StreamNodeDOT.Label)}.
      *
@@ -314,9 +350,13 @@ public class FSProperties {
     }
 
     /**
-     * If {@code true} {@link Emitter}s will log statistics when terminated if there is no
-     * {@link Emitter#rebindAcquire()} in effect. This is disabled by default and should only be
+     * If {@code true} {@link Emitter}s will log statistics when they are effectively
+     * {@link Owned#recycle(Object)}'d This is disabled by default and should only be
      * enabled for debugging.
+     *
+     * <p>Note: Some {@link Emitter} implementations will not be <i>effectively recycled</i>
+     * from within  {@link Owned#recycle(Object)} and will rather delay termination until after
+     * the termination event has been delivered to its downstream {@link Receiver}(s).</p>
      *
      * <p>Setting this to {@code true} will implicitly make {@link #emitStats()} {@code true}</p>
      *
@@ -434,10 +474,10 @@ public class FSProperties {
      *
      * @return a size {@code >= 1}.
      */
-    public static @Positive int batchMinSize() {
-        int i = CACHE_BATCH_MIN_SIZE;
+    public static @Positive double batchMinWeight() {
+        double i = CACHE_BATCH_MIN_SIZE;
         if (i <= 0)
-            CACHE_BATCH_MIN_SIZE = i = readPositiveInt(BATCH_MIN_SIZE, DEF_BATCH_MIN_SIZE);
+            CACHE_BATCH_MIN_SIZE = i = readUnitWeight(BATCH_MIN_SIZE, DEF_BATCH_MIN_WEIGHT);
         return i;
     }
 
@@ -473,9 +513,8 @@ public class FSProperties {
     /**
      * Whether stack traces should be collected every time a {@link Batch} enter or leaves a pool.
      *
-     * <p>The default is false, since the overhead generated by their collection makes tests
-     * too slow. This should be enabled only once a pooling issue has been found via
-     * {@link #batchPooledMark()}.</p>
+     * <p>The default is false, since the overhead generated by their collection makes even
+     * unit tests unbearably slow. Enable only to debug a {@link OwnershipException}.</p>
      *
      * <p>For performance reasons (i.e., enabling dead-code elimination), this property is read
      * into a {@code static final} field when relevant classes are loaded. Thus changing the
@@ -483,32 +522,138 @@ public class FSProperties {
      *
      * @return whether stack traces should be collected when a batch enters or leaves a pool.
      */
-    public static boolean batchPooledTrace() {
-        Boolean v = CACHE_BATCH_POOLED_TRACE;
-        if (v == null)
-            CACHE_BATCH_POOLED_TRACE = v = readBoolean(BATCH_POOLED_TRACE, DEF_BATCH_POOLED_TRACE);
+    public static boolean ownedTrace() {
+        Boolean v = CACHE_OWNED_TRACE;
+        if (v == null) {
+            boolean trace      = readBoolean(OWNED_TRACE,       DEF_OWNED_TRACE);
+            boolean stackTrace = readBoolean(OWNED_STACK_TRACE, false);
+            CACHE_OWNED_TRACE = v = trace || stackTrace;
+        }
         return v;
     }
 
     /**
-     * Whether batches should be mark as pooled or not. Marking an already pooled batch
-     * as pooled or an already unpooled batch as unpooled will raise a {@link RuntimeException}.
+     * If {@link #ownedTrace()}{@code == true}, also capture the stack traces at
+     * each ownership event. The default is to capture stack traces if {@link #ownedTrace()} is on.
+     * Even if the corresponding property is set to true, this will return false if
+     * {@link #ownedTrace()} {@code == false}.
      *
-     * <p>By default, this is enabled if assertions are enabled ({@code -ea}) JVM flag.</p>
+     * <p>For performance reasons, the result of this method may be loaded into a
+     * {@code static final}, causing later changes to the java property to have no effect.</p>
      *
-     * <p>For performance reasons (i.e., enabling dead-code elimination), this property is read
-     * into a {@code static final} field when relevant classes are loaded. Thus changing the
-     * property and calling {@link #refresh()} might have no effect on the actual behavior.</p>
-     *
-     * @return whether batches should be marked as pooled or unpooled and doubly pooling/unpooling
-     *         should raise an exception.
+     * @return whether stack traces should be captured when ownership events are traces.
      */
-    public static boolean batchPooledMark() {
-        Boolean v = CACHE_BATCH_POOLED_MARK;
+    public static boolean ownedStackTrace() {
+        Boolean v = CACHE_OWNED_STACK_TRACE;
+        if (v == null)
+            CACHE_OWNED_STACK_TRACE = v = readBoolean(OWNED_STACK_TRACE, DEF_OWNED_STACK_TRACE);
+        return v;
+    }
+
+    /**
+     * Whether leaks should be detected for {@link Owned} implementations.
+     *
+     * <p>A {@link Owned} is considered leaked once all three conditions are satisfied: </p>
+     *
+     * <ul>
+     *     <li>The object current owner does not implement {@link LeakyOwner}</li>
+     *     <li>{@link Owned#recycle(Object)} has not been called since the object was
+     *         instantiated or the last {@link Orphan#takeOwnership(Object)} call</li>
+     *     <li>The garbage collector has deemed the object unreachable</li>
+     * </ul>
+     *
+     * <p>Some {@link Owned} implementations may not implement leak detection and thus
+     * ignore this setting. However, implementations that perform leak detection must honor
+     * this setting. Implementations are allowed to load this property into a {@code static final}
+     * field and thus ignore subsequent changes to this property</p>
+     *
+     * @return whether leaks of Owned objects should be detected.
+     */
+    public static boolean ownedDetectLeaks() {
+        Boolean v = CACHE_OWNED_DETECT_LEAKS;
+        if (v == null)
+            CACHE_OWNED_DETECT_LEAKS = v = readBoolean(OWNED_DETECT_LEAKS, DEF_OWNED_DETECT_LEAKS);
+        return v;
+    }
+
+    /**
+     * If {@link #ownedDetectLeaks()} {@code == true}, print ownership history and stack
+     * traces of last ownership events for the leaked object.
+     *
+     * <p>This value may be loaded into a {@code static final} field. Therefore, late changes to
+     * the java property may not be reflected in actual behavior changes.</p>
+     *
+     * @return a boolean indicating whether a report should be printed for each detected leak.
+     */
+    public static boolean ownedPrintLeaks() {
+        Boolean v = CACHE_OWNED_PRINT_LEAKS;
+        if (v == null)
+            CACHE_OWNED_PRINT_LEAKS = v = readBoolean(OWNED_PRINT_LEAKS, DEF_OWNED_PRINT_LEAKS);
+        return v;
+    }
+
+    /**
+     * Generate a JFR event for each detected leak of a {@link Owned} object.
+     *
+     * <p>This value may be loaded into a {@code static final} final. Therefore changes at runtime
+     * may not cause a behavior change.</p>
+     *
+     * @return a boolean indicating whether a JFR event must be commited for every leak.
+     */
+    public static boolean ownedJFRLeaks() {
+        Boolean v = CACHE_OWNED_JFR_LEAKS;
         if (v == null) {
             boolean def = FSProperties.class.desiredAssertionStatus();
-            CACHE_BATCH_POOLED_MARK = v = readBoolean(BATCH_POOLED_MARK, def);
+            CACHE_OWNED_JFR_LEAKS = v = readBoolean(OWNED_JFR_LEAKS, def);
         }
+        return v;
+    }
+
+    /**
+     * Whether to periodically record pool usage stats as an JFR event.
+     *
+     * <p>This value may be loaded into a {@code static final} final. Therefore changes at runtime
+     * may not cause a behavior change.</p>
+     */
+    public static boolean poolStats() {
+        Boolean v = CACHE_POOL_STATS;
+        if (v == null)
+            CACHE_POOL_STATS = v = readBoolean(POOLS_STATS, DEF_POOL_STATS);
+        return v;
+    }
+
+    /**
+     * Maximum number of trace events stack traces to keep per {@link Owned} instance.
+     *
+     * <p>Stack traces are memory-hungry, thus increasing this value can cause
+     * {@link OutOfMemoryError}s. The default value (2) covers storage of one
+     * {@link TakenOwnershipEvent} and one {@link ReleasedOwnershipEvent}/{@link RecycledEvent}.</p>
+     *
+     * @return a positive ({@code > 0}) integer? the maximum number of {@link OwnershipEvent}
+     *         stack traces to keep per {@link Owned} instance
+     */
+    public static @Positive int ownedStackTraceMax() {
+        int v = CACHE_OWNED_STACK_TRACE_MAX;
+        if (v < 0) {
+            CACHE_OWNED_STACK_TRACE_MAX = v = readPositiveInt(OWNED_STACK_TRACE_MAX,
+                                                              DEF_OWNED_STACK_TRACE_MAX);
+        }
+        return v;
+    }
+
+    /**
+     * Maximum number of owners to track per {@link OwnershipHistory} of each {@link Owned} object.
+     *
+     * <p>This value may be loaded into a {@code static final} field, thus changes at runtime
+     * MAY not have an effect after such fields have been initialized.</p>
+     *
+     * @return a positive ({@code > 0}) integer? the maximum number of {@link OwnershipEvent}
+     *         stack traces to keep per {@link Owned} instance
+     */
+    public static @Positive int ownedTraceMax() {
+        int v = CACHE_OWNED_TRACE_MAX;
+        if (v < 0)
+            CACHE_OWNED_TRACE_MAX = v = readPositiveInt(OWNED_TRACE_MAX, DEF_OWNED_TRACE_MAX);
         return v;
     }
 
@@ -581,7 +726,7 @@ public class FSProperties {
      * The default maximum number of batches queue-backed {@link BIt} may hold by default.
      *
      * @return a positive number of rows. {@link Integer#MAX_VALUE} represents no upper bound,
-     *         but values as small as 512 can cause innaceptable over production leading to
+     *         but values as small as 512 can cause unacceptable over production leading to
      *         batch pool exhaustion, GC pauses, virtual thread contention, and general
      *         malaise.
      */
@@ -664,29 +809,6 @@ public class FSProperties {
         if (v == null)
             CACHE_OP_WEAKEN_DISTINCT = v = readBoolean(OP_WEAKEN_DISTINCT, DEF_OP_WEAKEN_DISTINCT);
         return Boolean.TRUE.equals(v);
-    }
-
-    /**
-     * fixed capacity of rows used to implement {@code REDUCED}.
-     *
-     * <p>Since {@code REDUCED} allow for both duplicate removal as well as non-removal, a
-     * de-duplication is implemented in constant-time (even under heavy hash collision)
-     * using a storage equivalent of this many <strong>batches</strong>. Note that unlike
-     * {@link #distinctCapacity()}, this is expressed in abtches since de-duplication cost
-     * is more important than de-duplication correctness.</p>
-     *
-     * <p>The default is {@link #DEF_OP_REDUCED_BATCHES} batches and can be configured via the
-     * {@link #OP_REDUCED_BATCHES} java property. Due to pooling, the old capacity may still
-     * be occasionally used if the property is changed at runtime after some queries using
-     * {@code REDUCED} have already been processed.</p>
-     *
-     * @return a positive ({@code n > 0}) integer
-     */
-    public static @NonNegative int reducedBatches() {
-        int i = CACHE_OP_REDUCED_BATCHES;
-        if (i < 0)
-            CACHE_OP_REDUCED_BATCHES = i =  readPositiveInt(OP_REDUCED_BATCHES, DEF_OP_REDUCED_BATCHES);
-        return i;
     }
 
     /**

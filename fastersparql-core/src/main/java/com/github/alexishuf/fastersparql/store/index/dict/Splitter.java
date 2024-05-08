@@ -1,36 +1,61 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import com.github.alexishuf.fastersparql.store.index.RopeHandlePool;
+import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.foreign.MemorySegment;
+import java.util.function.Supplier;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
 import static com.github.alexishuf.fastersparql.util.CSUtils.BASE64_2_BITS;
 import static com.github.alexishuf.fastersparql.util.CSUtils.BITS_2_BASE64;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
-public class Splitter {
+public class Splitter extends AbstractOwned<Splitter> {
     public static final int MAX_SHARED_ID = 0x00ffffff;
+    public static final int BYTES = 16 /* header */ + 8*4 /* fields */
+            + 2*SegmentRopeView.BYTES + 2*TwoSegmentRope.BYTES + MutableRope.BYTES;
+
+    private static final Supplier<Splitter> FAC = new Supplier<>() {
+        @Override public Splitter get() {return new Splitter.Concrete().takeOwnership(RECYCLED);}
+        @Override public String toString() {return "Splitter.FAC";}
+    };
+    private static final Alloc<Splitter> ALLOC = new Alloc<>(Splitter.class,
+            "Splitter.ALLOC", Alloc.THREADS*32, FAC, BYTES);
+    static { Primer.INSTANCE.sched(ALLOC::prime); }
 
     public SharedSide sharedSide = SharedSide.NONE;
-    private PlainRope str = EMPTY;
+    private PlainRope str = FinalSegmentRope.EMPTY;
     private int suffixBegin = 0;
-    private final Mode mode;
-    private final SegmentRope sharedView = RopeHandlePool.segmentRope();
-    private final SegmentRope localView  = RopeHandlePool.segmentRope();
+    private Mode mode = Mode.LAST;
+    private final SegmentRopeView sharedView = new SegmentRopeView();
+    private final SegmentRopeView localView  = new SegmentRopeView();
     private TwoSegmentRope tsSharedView, tsLocalView;
-    private final ByteRope b64 = new ByteRope(5);
+    private final byte[] b64Bytes = new byte[5];
+    private final SegmentRopeView b64 = new SegmentRopeView().wrap(b64Bytes);
 
-    public Splitter() { this(Mode.LAST); }
-    public Splitter(Mode mode) {
-        if (mode == null)
-            throw new IllegalArgumentException("mode cannot be null");
-        this.mode = mode;
+    private Splitter() {}
+
+    public static Orphan<Splitter> create(Mode mode) {
+        Splitter s = ALLOC.create();
+        s.mode = mode;
+        return s.releaseOwnership(RECYCLED);
+    }
+
+    @Override public @Nullable Splitter recycle(Object currentOwner) {
+        internalMarkRecycled(currentOwner);
+        if (ALLOC.offer(this) != null)
+            internalMarkGarbage(RECYCLED);
+        return null;
+    }
+
+    private static final class Concrete extends Splitter implements Orphan<Splitter> {
+        @Override public Splitter takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     public enum Mode {
@@ -75,13 +100,12 @@ public class Splitter {
         if (id > MAX_SHARED_ID || id < 0)
             throw new IllegalArgumentException("id too big");
         int iId = (int)id;
-        byte[] u8 = b64.u8();
-        b64.len = 5;
-        u8[4] = sharedSide.concatChar();
-        u8[0] = BITS_2_BASE64[(iId>>18)&0x3f];
-        u8[1] = BITS_2_BASE64[(iId>>12)&0x3f];
-        u8[2] = BITS_2_BASE64[(iId>> 6)&0x3f];
-        u8[3] = BITS_2_BASE64[ iId     &0x3f];
+        b64Bytes[4] = sharedSide.concatChar();
+        b64Bytes[0] = BITS_2_BASE64[(iId>>18)&0x3f];
+        b64Bytes[1] = BITS_2_BASE64[(iId>>12)&0x3f];
+        b64Bytes[2] = BITS_2_BASE64[(iId>> 6)&0x3f];
+        b64Bytes[3] = BITS_2_BASE64[ iId     &0x3f];
+        b64.len     = 5;
         return b64;
     }
 
@@ -108,23 +132,24 @@ public class Splitter {
     }
 
     public Mode mode() { return mode; }
+    public void mode(Mode mode) { this.mode = mode; }
 
     @Override public String toString() {
         return "{side="+sharedSide+", shared="+shared()+", local="+ local()+"}";
     }
 
-    private PlainRope wrap(SegmentRope wrapper, PlainRope str, int begin, int len) {
+    private PlainRope wrap(SegmentRopeView wrapper, PlainRope str, int begin, int len) {
         if (str instanceof SegmentRope s) {
-            wrapper.wrapSegment(s.segment, s.utf8, s.offset()+begin, len);
+            wrapper.wrap(s.segment, s.utf8, s.offset()+begin, len);
             return wrapper;
         } else {
             TwoSegmentRope t = (TwoSegmentRope) str;
             int fstLen = t.fstLen;
             if (begin + len <= fstLen) {
-                wrapper.wrapSegment(t.fst, t.fstU8, t.fstOff + begin, len);
+                wrapper.wrap(t.fst, t.fstU8, t.fstOff + begin, len);
                 return wrapper;
             } else if (begin >= fstLen) {
-                wrapper.wrapSegment(t.snd, t.sndU8, t.sndOff + begin - fstLen, len);
+                wrapper.wrap(t.snd, t.sndU8, t.sndOff + begin - fstLen, len);
                 return wrapper;
             } else {
                 TwoSegmentRope tsw = wrapper == localView ? tsLocalView : tsSharedView;

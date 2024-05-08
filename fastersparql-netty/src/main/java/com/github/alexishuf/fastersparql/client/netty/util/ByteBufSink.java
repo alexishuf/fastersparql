@@ -69,7 +69,7 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
         return this;
     }
 
-    @Override public void release() {
+    @Override public void close() {
         ByteBuf bb = this.bb;
         this.bb = null;
         if (bb != null)
@@ -99,6 +99,11 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
     }
 
     @Override public @This ByteBufSink append(Rope rope) {
+        NettyRopeUtils.write(bb, rope);
+        return this;
+    }
+
+    @Override public @This ByteBufSink append(SegmentRope rope) {
         NettyRopeUtils.write(bb, rope);
         return this;
     }
@@ -133,6 +138,13 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
         return this;
     }
 
+    @Override public @This ByteBufSink append(SegmentRope rope, int begin, int end) {
+        int len = end - begin;
+        if (rope != null && len > 0)
+            append(rope.segment, rope.utf8, rope.offset+begin, len);
+        return this;
+    }
+
     @Override public @This ByteBufSink append(MemorySegment segment, byte @Nullable [] array,
                                               long offset, int len) {
         NettyRopeUtils.write(bb, segment, array, offset, len);
@@ -142,12 +154,6 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
     @Override public @This ByteBufSink append(CharSequence cs) {
         if (cs instanceof Rope r) return append(r);
         bb.writeCharSequence(cs, UTF_8);
-        return this;
-    }
-
-    @Override public @This ByteBufSink append(CharSequence cs, int begin, int end) {
-        if (cs instanceof Rope r) return append(r);
-        bb.writeCharSequence(cs.subSequence(begin, end), UTF_8);
         return this;
     }
 

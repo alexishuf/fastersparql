@@ -1,13 +1,12 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
-
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
 
 public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
     private static final Logger log = LoggerFactory.getLogger(CompositeDictBuilder.class);
@@ -16,22 +15,23 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
     private final DictSorter sharedSorter;
     private SecondPass secondPass;
     private final boolean optimizeLocality;
-    private final Splitter split;
+    private Splitter split;
 
     public CompositeDictBuilder(Path tempDir, Path destDir, Splitter.Mode splitMode,
                                 boolean optimizeLocality) {
         this.tempDir = tempDir;
         this.destDir = destDir;
-        this.split = new Splitter(splitMode);
+        this.split = Splitter.create(splitMode).takeOwnership(this);
         this.optimizeLocality = optimizeLocality;
         this.sharedSorter = new DictSorter(tempDir, false, optimizeLocality);
-        this.sharedSorter.copy(EMPTY);
+        this.sharedSorter.copy(FinalSegmentRope.EMPTY);
     }
 
     @Override public void close() {
         if (secondPass != null)
             secondPass.close();
         sharedSorter.close();
+        split = split.recycle(this);
     }
 
     @Override public String toString() {
@@ -53,23 +53,19 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
     public class SecondPass implements AutoCloseable, NTVisitor {
         private final DictSorter sorter;
         private final Dict sharedDict;
-        private final Dict.AbstractLookup shared;
+        private final Dict.AbstractLookup<?> shared;
         private boolean sharedOverflow;
 
         public SecondPass(Dict shared) {
             this.sorter = new DictSorter(tempDir, true, optimizeLocality);
             this.sharedDict = shared;
-            if (shared instanceof LocalityStandaloneDict d)
-                this.shared = d.lookup();
-            else if (shared instanceof SortedStandaloneDict d)
-                this.shared = d.lookup();
-            else
-                throw new IllegalArgumentException("Unexpected dict type");
+            this.shared = shared.polymorphicLookup().takeOwnership(this);
         }
 
         @Override public void close() {
             sharedDict.close();
             sorter.close();
+            shared.recycle(this);
             secondPass = null;
         }
 

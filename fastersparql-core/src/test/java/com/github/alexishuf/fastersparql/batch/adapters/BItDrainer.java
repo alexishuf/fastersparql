@@ -7,13 +7,15 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.IntList;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 import java.util.*;
 import java.util.function.Consumer;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsOrdered;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsUnordered;
-import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -41,7 +43,9 @@ public sealed abstract class BItDrainer {
     public void drainUnordered(BIt<TermBatch> it, int[] expected, Throwable expectedError) {
         drain(it, expected, expectedError, false);
     }
-    public <B extends Batch<B>> void drainOrdered(Emitter<B> em, Collection<List<Term>> expected, Throwable expectedError) {
+    public <B extends Batch<B>> void drainOrdered(Orphan<? extends Emitter<B, ?>> em,
+                                                  Collection<List<Term>> expected,
+                                                  Throwable expectedError) {
         drain(new EmitterBIt<>(em), expected, expectedError, true);
     }
 
@@ -87,22 +91,16 @@ public sealed abstract class BItDrainer {
     }
 
     private static final class IntsParsingConsumer implements Consumer<TermBatch> {
-        int[] ints;
-        int size;
+        IntList ints;
 
         public IntsParsingConsumer(int sizeHint) {
-            this.ints = new int[sizeHint];
+            this.ints = new IntList(Math.min(sizeHint, 1024));
         }
-
-        public int[] cropped() { return size == ints.length ? ints : copyOf(ints, size); }
 
         @Override public void accept(TermBatch batch) {
             for (var node = batch; node != null; node = node.next) {
-                for (int r = 0; r < node.rows; r++) {
-                    if (size == ints.length)
-                        ints = copyOf(ints, ints.length + Math.max(1, ints.length >> 1));
-                    ints[size++] = IntsBatch.parse(node.get(r, 0));
-                }
+                for (int r = 0; r < node.rows; r++)
+                    ints.add(IntsBatch.parse(node.get(r, 0)));
             }
         }
     }
@@ -128,39 +126,48 @@ public sealed abstract class BItDrainer {
             fail("Expected "+expectedError.getClass().getSimpleName()+" to be thrown");
         }
         if (ordered)
-            assertEqualsOrdered(expected, c.ints, c.size);
+            assertEqualsOrdered(expected, c.ints);
         else
-            assertEqualsUnordered(expected, c.ints, c.size, false, expectsError,  expectsError);
+            assertEqualsUnordered(expected, c.ints,  false, expectsError,  expectsError);
+        c.ints.clear();
     }
 
 
     public abstract <B extends Batch<B>> void drain(BIt<B> it, Consumer<B> consumer);
 
-    public int[] drainToInts(BIt<TermBatch> it, int sizeHint) {
+    public IntList drainToInts(BIt<TermBatch> it, int sizeHint) {
         IntsParsingConsumer c = new IntsParsingConsumer(sizeHint);
         drain(it, c);
-        return c.cropped();
+        return c.ints;
     }
 
     private static final class NotRecycling extends BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
-            for (B b; (b = it.nextBatch(null)) != null;) consumer.accept(b);
+            try (var g = new Guard.BatchGuard<B>(this)) {
+                for (B b; (b = g.set(it.nextBatch(null))) != null;)
+                    consumer.accept(b);
+            }
         }
     }
 
     private static final class Recycling extends BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
-            for (B b = null; (b = it.nextBatch(b)) != null;) consumer.accept(b);
+            try (var g = new Guard.ItGuard<>(this, it)) {
+                for (B b; (b = g.nextBatch()) != null;)
+                    consumer.accept(b);
+            }
         }
     }
 
     private static final class RecyclingFirstEager extends BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
-            it.tempEager();
-            for (B b = null; (b = it.nextBatch(b)) != null;) consumer.accept(b);
+            try (var g = new Guard.ItGuard<>(this, it.tempEager())) {
+                while (g.advance())
+                    consumer.accept(g.get());
+            }
         }
     }
 }

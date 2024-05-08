@@ -1,18 +1,23 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
+import org.jctools.queues.MessagePassingQueue.Consumer;
+import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.Thread.MIN_PRIORITY;
 import static java.lang.Thread.onSpinWait;
 
-public class PoolCleaner {
+public class PoolCleaner implements BackgroundTask {
     private static final VarHandle LOCK;
     static {
         try {
@@ -27,46 +32,37 @@ public class PoolCleaner {
     public static final PoolCleaner INSTANCE = new PoolCleaner();
 
     private final Map<LeakyPool, Boolean> pools = new WeakHashMap<>();
-    private final ArrayDeque<Thread> scanWaiters = new ArrayDeque<>();
     @SuppressWarnings("unused") private int plainLock;
+    private final MpscUnboundedAtomicArrayQueue<Object> sync
+            = new MpscUnboundedAtomicArrayQueue<>(32);
     private final Thread thread;
 
     private PoolCleaner() {
         thread = new Thread(this::run, "PoolCleaner");
         thread.setPriority(MIN_PRIORITY);
         thread.setDaemon(true);
+        BackgroundTasks.register(this);
         thread.start();
     }
 
-    public void monitor(LeakyPool pool) {
+    public static void monitor(LeakyPool pool) {
+        INSTANCE.monitor0(pool);
+    }
+
+    public void monitor0(LeakyPool pool) {
         while((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
         try {
             pools.put(pool, Boolean.TRUE);
         } finally { LOCK.setRelease(this, 0); }
     }
 
-    /**
-     * Starts a scan/purge of stale (leaky) references in all registered pools ASAP and
-     * waits until such scan/purge completes.
-     */
-    public void sync() {
-        Thread me = Thread.currentThread();
-        while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
-        try {
-            scanWaiters.add(me);
-        } finally { LOCK.setRelease(this, 0); }
+    @Override public void sync(CountDownLatch latch) {
+        while (!sync.offer(latch))
+            Thread.yield();
         Unparker.unpark(thread);
-        while (true) {
-            LockSupport.park(this);
-            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
-            try {
-                if (!scanWaiters.contains(me)) break;
-            } finally { LOCK.setRelease(this, 0); }
-        }
     }
 
     protected void run() {
-        ArrayDeque<Thread> unparkQueue = new ArrayDeque<>();
         List<LeakyPool> pools = new ArrayList<>();
         //noinspection InfiniteLoopStatement
         while (true) {
@@ -85,12 +81,7 @@ public class PoolCleaner {
                 }
 
                 // awake threads in sync()
-                while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
-                try {
-                    for (Thread t; (t = scanWaiters.poll()) != null; ) unparkQueue.add(t);
-                } finally { LOCK.setRelease(this, 0); }
-                for (Thread t; (t = unparkQueue.poll()) != null; )
-                    Unparker.unpark(t);
+                sync.drain(SYNC_HANDLER);
 
                 waitCleanIntervalOrSyncRequests();
             } catch (Exception e) {
@@ -99,14 +90,20 @@ public class PoolCleaner {
         }
     }
 
+    private static final class SyncHandler implements Consumer<Object> {
+        @Override public void accept(Object o) {
+            if      (o instanceof Thread         t) LockSupport.unpark(t);
+            else if (o instanceof CountDownLatch l) l.countDown();
+            else                                    log.error("Unexpected sync object: {}", o);
+        }
+        @Override public String toString() {return "PoolCleaner.SyncHandler";}
+    }
+    private static final SyncHandler SYNC_HANDLER = new SyncHandler();
+
+
     private void waitCleanIntervalOrSyncRequests() {
         long waitNs = CLEAN_INTERVAL_NS, waitStart = Timestamp.nanoTime();
-        while (waitNs > 0) {
-            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
-            try {
-                if (!scanWaiters.isEmpty())
-                    break;
-            } finally { LOCK.setRelease(this, 0); }
+        while (waitNs > 0 && sync.peek() == null) {
             LockSupport.parkNanos(this, waitNs);
             waitNs = CLEAN_INTERVAL_NS - (Timestamp.nanoTime()-waitStart);
         }

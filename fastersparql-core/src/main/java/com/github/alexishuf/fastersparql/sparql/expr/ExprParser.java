@@ -1,25 +1,42 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
-import java.util.List;
 
 import static com.github.alexishuf.fastersparql.model.rope.Rope.ALPHANUMERIC;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public final class ExprParser {
+public abstract sealed class ExprParser extends AbstractOwned<ExprParser> {
+    public static final int BYTES = 16 + 8*4 + TermParser.BYTES;
     private SegmentRope in;
     private int consumedPos, pos, len;
-    public final TermParser termParser = new TermParser().eager();
+    public final TermParser termParser;
     private @Nullable Symbol symbol;
     private @Nullable Expr term;
     private @Nullable SparqlParser spParser;
+
+    public static Orphan<ExprParser> create() { return new Concrete(); }
+
+    private ExprParser() { termParser = TermParser.create().takeOwnership(this).eager(); }
+
+    public static final class Concrete extends ExprParser implements Orphan<ExprParser> {
+        @Override public ExprParser takeOwnership(Object o) {return takeOwnership0(o);}
+    }
+
+    @Override public @Nullable ExprParser recycle(Object currentOwner) {
+        internalMarkGarbage(currentOwner);
+        termParser.recycle(this);
+        spParser = Owned.recycle(spParser, this);
+        return null;
+    }
 
     /**
      * Parse a {@link Term} starting at index 0 of {@code in}.
@@ -31,6 +48,7 @@ public final class ExprParser {
      * @return A non-null {@link Term} parsed from the SPARQL string
      */
     public Expr parse(SegmentRope in) {
+        requireAlive();
         if (in == null || in.len() == 0)
             throw new InvalidExprException("null and \"\" are not valid expressions");
         this.len = (this.in = in).len();
@@ -46,12 +64,14 @@ public final class ExprParser {
 
     /** Sets input String to be used in subsequent {@link ExprParser#parse(int)} calls. */
     public void input(SegmentRope in) {
+        requireAlive();
         this.len = (this.in = in).len();
     }
 
     /** Parse an expression that starts at char {@code pos} of the previously set
      *  {@link ExprParser#input(SegmentRope)}. */
     public Expr parse(int pos) {
+        requireAlive();
         assert in != null;
         this.consumedPos = this.pos = pos;
         this.symbol = null;
@@ -179,8 +199,8 @@ public final class ExprParser {
             return o < 64 && (BINARY0 & (1L << o)) != 0;
         }
 
-        public byte[] input() {
-            return (switch (this) {
+        public FinalSegmentRope makeInput() {
+            return FinalSegmentRope.asFinal(switch (this) {
                 case NEG   -> "!";
                 case NEQ   -> "!=";
                 case AND   -> "&&";
@@ -199,13 +219,13 @@ public final class ExprParser {
                 case OR    -> "||";
                 case EOF    -> "~EOF";
                 default -> name().replace('_', ' ').toUpperCase();
-            }).getBytes(UTF_8);
+            });
         }
     }
 
     /** The Symbol corresponding to {@code SYMBOL_INPUTS[i]} */
     private static final Symbol[] SYMBOL_INPUTS_VALUES;
-    /** Sorted list of all {@link Symbol#input()} values */
+    /** Sorted list of all {@link Symbol#makeInput()} values */
     private static final byte[][] SYMBOL_INPUTS;
     /** Given the first uppercase char {@code f} of a function name such name (in uppercase)
      *  should be between {@code FUNCTION_INPUTS_RANGE[2*(f-'A')+0]} and
@@ -234,11 +254,11 @@ public final class ExprParser {
         Symbol[] symbols = Symbol.values();
         SYMBOL_INPUTS_VALUES = new Symbol[symbols.length];
 
-        List<ByteRope> inputs = Arrays.stream(symbols).map(s -> new ByteRope(s.input())).toList();
-        SYMBOL_INPUTS = inputs.stream().map(Rope::toString).sorted()
-                              .map(s -> s.getBytes(UTF_8)).toArray(byte[][]::new);
+        var inputs = Arrays.stream(symbols).map(Symbol::makeInput).toList();
+        var sortedInputs = inputs.stream().sorted().toList();
+        SYMBOL_INPUTS = sortedInputs.stream().map(s -> s.toArray(0, s.len)).toArray(byte[][]::new);
         for (int i = 0; i < SYMBOL_INPUTS.length; i++)
-            SYMBOL_INPUTS_VALUES[i] = symbols[inputs.indexOf(new ByteRope(SYMBOL_INPUTS[i]))];
+            SYMBOL_INPUTS_VALUES[i] = symbols[inputs.indexOf(sortedInputs.get(i))];
 
         for (char c = 'A'; c <= 'Z'; ++c) {
             int rangeIdx = 2*(c-'A');
@@ -525,8 +545,10 @@ public final class ExprParser {
 
     private Expr.Exists pExists() {
         boolean negate = symbol == Symbol.NOT_EXISTS;
-        spParser = spParser == null ? new SparqlParser() : spParser;
-        Plan filter = spParser.parseGroup(in, pos, termParser.prefixMap);
+        SparqlParser spParser = this.spParser;
+        if (spParser == null)
+            this.spParser = spParser = SparqlParser.create().takeOwnership(this);
+        Plan filter = spParser.parseGroup(in, pos, termParser.prefixMap());
         pos = spParser.pos();
         symbol = null;
         read();

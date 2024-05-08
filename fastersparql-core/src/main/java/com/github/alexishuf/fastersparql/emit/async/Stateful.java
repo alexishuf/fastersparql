@@ -1,8 +1,12 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.emit.Rebindable;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindReleasedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindStateException;
+import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,7 +21,7 @@ import static java.lang.Integer.*;
 import static java.util.Arrays.copyOf;
 
 @SuppressWarnings("PointlessBitwiseExpression")
-public abstract class Stateful {
+public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     private static final Logger log = LoggerFactory.getLogger(Stateful.class);
     protected static final boolean IS_DEBUG = Stateful.class.desiredAssertionStatus();
     private static final VarHandle S;
@@ -56,17 +60,12 @@ public abstract class Stateful {
     private   static final int UNLOCKED_MASK       = ~LOCKED_MASK;
     private   static final int UNLOCKED_FLAGS_MASK = FLAGS_MASK&UNLOCKED_MASK;
     /** Marks that {@link #doRelease()} has already been called for this instance. */
-    protected static final int RELEASED_MASK       = 0x00000200;
+    protected static final int RELEASED_MASK        = 0x00000200;
+    protected static final int PENDING_RELEASE_MASK = 0x00000400;
 
-    /** Bits used to track the number of active {@link #delayRelease()} calls. */
-    protected static final int DELAY_RELEASE_MASK = 0x0000fc00;
-    private static final int DELAY_RELEASE_BIT  = numberOfTrailingZeros(DELAY_RELEASE_MASK);
-    private static final int DELAY_RELEASE_ONE = 1 << DELAY_RELEASE_BIT;
-    private static final int CAN_RELEASE_MASK  = DELAY_RELEASE_MASK | RELEASED_MASK | GRP_MASK;
-    private static final int CAN_RELEASE_VALUE = IS_TERM | IS_TERM_DELIVERED;
     static {
-        int flags = LOCKED_MASK | RELEASED_MASK | DELAY_RELEASE_MASK;
-        assert bitCount(flags) == bitCount(DELAY_RELEASE_MASK)+2 : "overlapping bits";
+        int flags = LOCKED_MASK | RELEASED_MASK;
+        assert bitCount(flags) == 2 : "overlapping bits";
         assert bitCount(flags & STATE_MASK) == 0 : "state and flags overlap";
     }
 
@@ -150,83 +149,64 @@ public abstract class Stateful {
 
     /* --- --- --- release management --- --- --- */
 
+    @Override public @Nullable S recycle(Object currentOwner) {
+        internalMarkGarbage(currentOwner);
+        for (int i = 0; i < 2; ++i) {
+            int st = stateAcquire();
+            if ((st&CAN_RELEASE_MASK) == CAN_RELEASE_VALUE) {
+                if (compareAndSetFlagRelease(RELEASED_MASK)) {
+                    clearFlagsAcquire(PENDING_RELEASE_MASK);
+                    doRelease();
+                }
+                break;
+            } else if ((st&FORBID_PENDING_RELEASE_MASK) == 0
+                    && compareAndSetFlagRelease(PENDING_RELEASE_MASK)) {
+                onPendingRelease();
+            } else {
+                break;
+            }
+        }
+        return null;
+    }
+    private static final int CAN_RELEASE_MASK = IS_TERM_DELIVERED|RELEASED_MASK;
+    private static final int CAN_RELEASE_VALUE = IS_TERM_DELIVERED;
+    private static final int FORBID_PENDING_RELEASE_MASK = RELEASED_MASK|PENDING_RELEASE_MASK|IS_TERM_DELIVERED;
+
+    /* --- --- --- release management --- --- --- */
+
     /**
-     * This method will be called <strong>once</strong> per instance when one of the following
-     * conditions is satisfied:
+     * This method will be called <strong>once</strong> per instance when both conditions
+     * are satisfied:
      *
-     * <ul>
-     *     <li>this has not yet been called and {@link #moveStateRelease(int, int)} moved to a
-     *         {@link #IS_TERM_DELIVERED} state and there are no active {@link #delayRelease()}
-     *         calls</li>
-     *     <li>this has not yet been called and the current state is a {@link #IS_TERM_DELIVERED}
-     *         and an {@link #allowRelease()} call has just undone the last active
-     *         {@link #delayRelease()}</li>
-     * </ul>
+     * <ol>
+     *     <li>{@link #recycle(Object)} has been called with the correct owner</li>
+     *     <li>The current {@link #state()} has the {@link #IS_TERM_DELIVERED} bit</li>
+     * </ol>
+     *
+     * <p>Given the above conditions, this method will be invoked from within a
+     * {@link #recycle(Object)} or {@link #markDelivered(int)} call. Therefore implementations
+     * should tolerate being called from any thread. However, given the terminal nature of
+     * this method, no state-changing method calls should be happening concurrently once the
+     * above conditions are met. Note that {@link Rebindable#rebind(BatchBinding)} will fail on
+     * a {@code _DELIVERED} state.</p>
      */
     protected void doRelease() { /* pass */ }
 
     /**
-     * If {@link #doRelease()} has notr yet been called, do not allow it to be called until
-     * this call is undone by a {@link #allowRelease()} call.
+     * This method will be called at most one time, when {@link #recycle(Object)} is invoked
+     * with the correct owner but the current {@link #state()} is not a {@code _DELIVERED} state
+     * ({@link #IS_TERM_DELIVERED}).
      *
-     * <p>This method is not idempotent: {@code n} calls will require {@code n}
-     * {@link #allowRelease()} calls before {@link #doRelease()} can be called</p>
+     * <p>This will be directly invoked from within {@link #recycle(Object)}. Implementations
+     * should be prepared for this to be invoked from any thread, even if there will ever be
+     * one (and thus non-concurrent) invocation.</p>
      */
-    protected final void delayRelease() {
-        int curr = plainState, ex;
-        do {
-            if ((curr&DELAY_RELEASE_MASK) == DELAY_RELEASE_MASK || (curr&RELEASED_MASK) != 0) {
-                badDelayRelease(curr);
-                return;
-            }
-            ex = curr;
-        } while ((curr=(int)S.compareAndExchangeRelease(this, ex, ex+DELAY_RELEASE_ONE)) != ex);
-    }
-
-    private void badDelayRelease(int curr) {
-        if ((curr&DELAY_RELEASE_MASK) == DELAY_RELEASE_MASK) {
-            log.warn("delayRelease() counter overflow for {}", this,
-                     new Exception("delayRelease() counter overflow"));
-        } else if ((curr&RELEASED_MASK) != 0) {
-            log.warn("delayRelease() on released {}", this);
-        }
-    }
-
-    /**
-     * Undoes one previous {@link #delayRelease()} invocation.
-     *
-     * <p>If the conditions for invoking {@link #doRelease()} are reached by this call, it will
-     * call {@link #doRelease()}.</p>
-     *
-     * @return updated {@link #state()}.
-     */
-    protected final int allowRelease() {
-        int curr = plainState, ex, next;
-        do {
-            int masked = curr & DELAY_RELEASE_MASK;
-            if (masked == 0) {
-                badAllowRelease();
-                return curr;
-            }
-            next = curr-DELAY_RELEASE_ONE;
-        } while ((curr=(int)S.compareAndExchangeRelease(this, ex=curr, next)) != ex);
-        if ((next &CAN_RELEASE_MASK) == CAN_RELEASE_VALUE) {
-            tryRelease(next);
-            return plainState;
-        }
-        return next;
-    }
-
-    private void badAllowRelease() {
-        log.warn("allowRelease() without active delayRelease() on {}", this,
-                 new Exception("unmatched allowRelease()"));
-        assert false : "unmatched allowRelease()";
-    }
+    protected void onPendingRelease() { /* pass */ }
 
     private void tryRelease(int current) {
-        if ((current&IS_TERM_DELIVERED) == 0)
-            return;
-        int ex = current&~(DELAY_RELEASE_MASK|RELEASED_MASK);
+        if ((current&CAN_TRY_RELEASE) != CAN_TRY_RELEASE)
+            return; // not _DELIVERED or no previous recycle()
+        int ex = current&~RELEASED_MASK;
         if ((int)S.compareAndExchangeRelease(this, ex, ex|RELEASED_MASK) == ex) {
             if (ENABLED)
                 journal("doRelease", this);
@@ -237,6 +217,7 @@ public abstract class Stateful {
             }
         }
     }
+    private static final int CAN_TRY_RELEASE = IS_TERM_DELIVERED|PENDING_RELEASE_MASK;
 
     /* --- --- --- counters --- --- --- --- */
 
@@ -370,32 +351,36 @@ public abstract class Stateful {
     /**
      * Atomically sets the 1-bits of {@code flag} in the current state.
      *
-     * @param current the likely current value fo {@link #state()}
      * @param flags An {@code int} to be {@code |}-ed with the {@link #state()}
      * @return the new value for {@link #state()}
      */
-    public int setFlagsRelease(int current, int flags) {
-        int ex = current;
-        while ((current = (int)S.compareAndExchangeRelease(this, ex, ex|flags)) != ex)
-            ex = current;
+    public int setFlagsRelease(int flags) {
+        int witness = (int)S.getAndBitwiseOrRelease(this, flags);
         if (ENABLED) journal("set", flags, this.flags, this);
-        return ex|flags;
+        return witness|flags;
     }
 
     /**
      * Atomically clears the 1-bits of {@code flags} in {@link #state()}.
      *
-     * @param current the likely current value fo {@link #state()}
      * @param flags the bits to be cleared, i.e., {@link #state()}{@code &= ~flags}
      * @return the new value for {@link #state()}
      */
     @SuppressWarnings("UnusedReturnValue")
-    public int clearFlagsRelease(int current, int flags) {
-        int ex = current;
-        while ((current = (int)S.compareAndExchangeRelease(this, ex, ex&~flags)) != ex)
-            ex = current;
-        if (ENABLED) journal("clear", flags, this.flags, this);
-        return ex&~flags;
+    public int clearFlagsRelease(int flags) {
+        int witness = (int)S.getAndBitwiseAndRelease(this, ~flags);
+        if (ENABLED) journal("clr", flags, this.flags, this);
+        return witness&~flags;
+    }
+
+    /**
+     * Equivalent to {@link #clearFlagsRelease(int)}, but with acquire semantics on the read
+     * of the current value and without release semantic on the write operation.
+     */
+    @SuppressWarnings("UnusedReturnValue") public int clearFlagsAcquire(int flags) {
+        int witness = (int)S.getAndBitwiseAndAcquire(this, ~flags);
+        if (ENABLED) journal("clr", flags, this.flags, this);
+        return witness&~flags;
     }
 
     /**
@@ -407,6 +392,24 @@ public abstract class Stateful {
     public boolean compareAndSetFlagRelease(int flag) {
         int a = plainState, e;
         while ((a=(int)S.compareAndExchangeRelease(this, e=a&~flag, a|flag)) != e) {
+            if ((a&flag) == flag) return false; // already set
+        }
+        if (ENABLED)
+            journal("CAS", flag, flags, "on", a, flags, "on", this);
+        return true;
+    }
+
+    /**
+     * Equivalent to {@link #compareAndSetFlagRelease(int)}, but instead with acquire memory
+     * ordering on the read of the current state.
+     *
+     * @param flag the bit mask to be set in {@link #state()}
+     * @return {@code true} iff all bits in {@code flag} were witnessed as unset and this
+     *         call did set them in {@link #state()}
+     */
+    public boolean compareAndSetFlagAcquire(int flag) {
+        int a = plainState, e;
+        while ((a=(int)S.compareAndExchangeAcquire(this, e=a&~flag, a|flag)) != e) {
             if ((a&flag) == flag) return false; // already set
         }
         if (ENABLED)
@@ -487,7 +490,7 @@ public abstract class Stateful {
         if (IS_DEBUG && (state()&LOCKED_MASK) == 0)
             throw new IllegalStateException("not locked");
         if (ENABLED && (clear|set) != 0)
-            journal("unlck, cl=", clear, flags, "set=", set, flags, "on", this);
+            journal("unlck cl=", clear, flags, "set=", set, flags, "on", this);
         int e = current|LOCKED_MASK;
         int mask = ~(clear|LOCKED_MASK), next;
         while ((current=(int)S.compareAndExchangeRelease(this, e, next=(e&mask)|set)) != e)
@@ -502,7 +505,7 @@ public abstract class Stateful {
         public static final Flags DEFAULT = new Builder()
                 .flag(LOCKED_MASK, "LOCKED")
                 .flag(RELEASED_MASK, "RELEASED")
-                .counter(DELAY_RELEASE_MASK, "delayRelease")
+                .flag(PENDING_RELEASE_MASK, "PENDING_RELEASED")
                 .build();
         private final String[] flagNames;
         private final String[] counterNames;

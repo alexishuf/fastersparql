@@ -12,6 +12,8 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
  * triggered its {@link #evaluate(Batch, int)} call. Implementations do not check for concurrency
  * or reentrancy, thus their presence might lead to unpredictable outcomes. </p>
  */
-public interface ExprEvaluator {
+public interface ExprEvaluator extends AutoCloseable {
     Term evaluate(Batch<?> batch, int row);
+
+    @Override void close();
 }

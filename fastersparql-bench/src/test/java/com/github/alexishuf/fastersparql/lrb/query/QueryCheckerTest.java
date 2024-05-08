@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -71,7 +72,7 @@ class QueryCheckerTest {
                             for (int c = 0; c < unexpected.cols; c++)
                                 assertNull(unexpected.get(0, c));
                             boolean[] had = {false};
-                            forEachMissing((b, r) -> {
+                            forEachMissing((_, _) -> {
                                 had[0] = true;
                                 return false;
                             });
@@ -89,24 +90,22 @@ class QueryCheckerTest {
         };
         var it = new SPSCBIt<>(bt, qry.parsed().publicVars());
         Thread.startVirtualThread(() -> {
-            try {
+            try (var tmpG = new BatchGuard<B>(this)) {
                 assertNotNull(ex);
-                B tmp = bt.create(ex.cols);
                 int absRow = 0;
                 for (var node = ex; node != null; node = node.next) {
                     int start = node.rows-1;
                     if (variant == Variant.SKIP_LAST && absRow+node.rows == exRows)
                         --start;
                     for (int r = start; r >= 0; r--) {
-                        tmp = bt.empty(tmp, node.cols);
-                        tmp.putRow(node, r);
-                        tmp = it.offer(tmp);
+                        tmpG.set(bt.create(node.cols)).putRow(node, r);
+                        it.offer(tmpG.take());
                     }
                     if (variant == Variant.EMIT_NULL && absRow+node.rows == exRows) {
-                        tmp = bt.empty(tmp, node.cols);
+                        B tmp = tmpG.set(bt.create(node.cols));
                         tmp.beginPut();
                         tmp.commitPut();
-                        bt.recycle(tmp = it.offer(tmp));
+                        it.offer(tmpG.take());
                     }
                     absRow += node.rows;
                 }

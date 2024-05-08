@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.exceptions.BadSerializationException;
 import com.github.alexishuf.fastersparql.fed.Selector;
@@ -12,9 +10,13 @@ import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.DictSorter;
+import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityStandaloneDict;
 import com.github.alexishuf.fastersparql.util.IOUtils;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +30,8 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+
 
 public class DictionarySelector extends Selector {
     private static final Logger log = LoggerFactory.getLogger(DictionarySelector.class);
@@ -38,16 +42,37 @@ public class DictionarySelector extends Selector {
     public static final List<String> STATE_DIR_P = List.of(STATE, STATE_DIR);
 
     private @Nullable LocalityStandaloneDict predicates, classes;
-    private final AffinityShallowPool<Lookup> lookupsPool = new AffinityShallowPool<>(Lookup.class);
+    private final Alloc<Lookup> lookupAlloc = new Alloc<>(Lookup.class,
+            this+".lookupAlloc", Alloc.THREADS*8, Lookup::new, Lookup.BYTES);
 
-    private class Lookup {
-        final LocalityStandaloneDict.Lookup predicates, classes;
+    private Lookup lookup() {
+        Lookup l = lookupAlloc.create();
+        l.live = true;
+        return l;
+    }
 
-        public Lookup() {
+    private class Lookup implements AutoCloseable {
+        private static final int BYTES = 16 + 4*4 + 2* LocalityCompositeDict.Lookup.BYTES;
+        LocalityStandaloneDict.Lookup predicates, classes;
+        private boolean live = false;
+
+        private Lookup() {
             var p = DictionarySelector.this.predicates;
             var c = DictionarySelector.this.classes;
-            predicates = p == null ? null : p.lookup();
-            classes    = c == null ? null : c.lookup();
+            predicates = p == null ? null : p.lookup().takeOwnership(this);
+            classes    = c == null ? null : c.lookup().takeOwnership(this);
+        }
+
+        @Override public void close() {
+            if (live) {
+                live = false;
+                if (lookupAlloc.offer(this) != null) {
+                    predicates = Owned.safeRecycle(predicates, this);
+                    classes = Owned.safeRecycle(classes, this);
+                }
+            } else {
+                throw new IllegalStateException("duplicate/concurrent close()");
+            }
         }
     }
 
@@ -144,8 +169,8 @@ public class DictionarySelector extends Selector {
             } catch (InterruptedException ignored) { }
         });
         try (DictSorter sorter = new DictSorter(tempDir, false, true);
-             var it = client.query(TermBatchType.TERM, query)) {
-            for (TermBatch root = null; (root = it.nextBatch(root)) != null; ) {
+             var guard = new ItGuard<>(this, client.query(TERM, query))) {
+            for (TermBatch root; (root = guard.nextBatch()) != null; ) {
                 for (var b = root; b != null; b = b.next) {
                     for (int r = 0, rows = b.rows; r < rows; r++) {
                         Term term = b.get(r, 0);
@@ -171,14 +196,10 @@ public class DictionarySelector extends Selector {
     }
 
     @Override public boolean has(TriplePattern tp) {
-        int thread = (int) Thread.currentThread().threadId();
-        Lookup l = lookupsPool.get(thread);
-        if (l == null) l = new Lookup();
-
-        if (l.classes != null && tp.p == Term.RDF_TYPE && tp.o.isIri())
-            return l.classes.find(tp.o) != Dict.NOT_FOUND;
-        boolean has = l.predicates == null || l.predicates.find(tp.p) != Dict.NOT_FOUND;
-        lookupsPool.offer(l, thread);
-        return has;
+        try (var l = lookup()) {
+            if (l.classes != null && tp.p == Term.RDF_TYPE && tp.o.isIri())
+                return l.classes.find(tp.o) != Dict.NOT_FOUND;
+            return l.predicates == null || l.predicates.find(tp.p) != Dict.NOT_FOUND;
+        }
     }
 }

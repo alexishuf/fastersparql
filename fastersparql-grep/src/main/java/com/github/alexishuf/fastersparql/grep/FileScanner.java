@@ -58,7 +58,8 @@ public class FileScanner implements AutoCloseable {
             throw new IllegalArgumentException("chunkBytes <= 0");
         this.scannerName = getClass().getSimpleName()+"-"+nextScannerId.getAndIncrement();
         this.maxLiveChunks = threads*maxChunksPerThread;
-        this.chunks      = new LIFOPool<>(FileChunkTask.class, maxLiveChunks);
+        this.chunks      = new LIFOPool<>(FileChunkTask.class, "FileChunkTasks",
+                                          maxLiveChunks, chunkBytes);
         this.chunkBytes  = chunkBytes;
         var grp          = new ThreadGroup(currentThread().getThreadGroup(), scannerName);
         this.threadPool  = Executors.newFixedThreadPool(threads, new ThreadFactory() {

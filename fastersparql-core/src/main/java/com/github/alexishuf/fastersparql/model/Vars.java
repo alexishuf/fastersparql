@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.model;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -29,6 +29,7 @@ import static java.lang.System.arraycopy;
  *
  * */
 public sealed class Vars extends AbstractList<SegmentRope> implements RandomAccess, Set<SegmentRope> {
+    public static final int BYTES = 16 + 2*4 + 8;
     public static final Vars EMPTY = new Vars(new SegmentRope[0], 0L, 0);
 
     protected SegmentRope[] array;
@@ -54,7 +55,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
         if (strings == null || strings.length == 0) return EMPTY;
         Mutable set = new Mutable(strings.length);
         for (var s : strings)
-            set.add(new ByteRope(s));
+            set.add(FinalSegmentRope.asFinal(s));
         return set;
     }
 
@@ -93,7 +94,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
         SegmentRope[] array = new SegmentRope[Math.max(size, capacity)];
         int i = 0;
         for (Object o : set)
-            array[i++] = o instanceof SegmentRope r ? r : new ByteRope(o.toString());
+            array[i++] = FinalSegmentRope.asFinal(o);
         return new Mutable(array, hashAll(array, size), size);
     }
 
@@ -154,7 +155,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
 
 
     /** Get the subset of items in {@code this} that are also present in {@code other} */
-    public final Vars intersection(Collection<SegmentRope> other) {
+    public final Vars intersection(Collection<? extends SegmentRope> other) {
         SegmentRope[] array = new SegmentRope[Math.min(size, other.size())];
         long has = 0;
         int size = 0;
@@ -164,7 +165,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
                 for (int i = 0; i < this.size; i++) {
                     if (s.equals(this.array[i])) {
                         has |= mask;
-                        array[size++] = SegmentRope.of(s);
+                        array[size++] = FinalSegmentRope.asFinal(s);
                         break;
                     }
                 }
@@ -220,7 +221,7 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
     @Override public final int indexOf(Object obj) {
         if (obj == null)           return -1;
         if (obj instanceof Term t) return indexOf(t);
-        var name = SegmentRope.of(obj);
+        var name = FinalSegmentRope.asFinal(obj);
         if ((has & (1L << name.hashCode())) == 0) return -1;
         for (int i = 0; i < size; i++) {
             if (name.equals(array[i])) return i;
@@ -336,13 +337,23 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
          * @return {@code true} iff the var was not already present.
          */
         @Override public boolean add(SegmentRope name) {
-            if (name == null) throw new NullPointerException();
-            if (indexOf(name) >= 0) return false;
+            if (name == null)
+                throw new NullPointerException();
+            return indexOf(name) < 0 && add0(name);
+        }
+
+        private boolean add0(SegmentRope name) {
             if (size >= array.length) //must grow array
                 array = grownFor(Collections.emptyList(), 0);
             array[size++] = name;
             has |= 1L << name.hashCode();
             return true;
+        }
+
+        @Override public boolean add(Term var) {
+            if (!var.isVar())
+                throw new IllegalArgumentException("Non-var Term instance");
+            return indexOf(var) < 0 && add0(FinalSegmentRope.asFinal(var, 1, var.len));
         }
 
         @Override public SegmentRope set(int index, SegmentRope name) {
@@ -359,16 +370,11 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
             return old;
         }
 
-        @Override public boolean add(Term var) {
-            if (!var.isVar())
-                throw new IllegalArgumentException("Non-var Term instance");
-            return add(new ByteRope(var.toArray(1, var.len)));
-        }
 
         @Override public @Nullable SegmentRope set(int i, Term var) {
             if (!var.isVar())
                 throw new IllegalArgumentException("Non-var Term instance");
-            return set(i, new ByteRope(var.toArray(1, var.len)));
+            return set(i, FinalSegmentRope.asFinal(var, 1, var.len));
         }
 
         @Override public boolean addAll(@NonNull Collection<? extends SegmentRope > c) {
@@ -402,10 +408,8 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
                 if (object instanceof Term t) {
                     s = t.name();
                     if (s == null) throw new IllegalArgumentException("Non-var Term");
-                } else if (object instanceof SegmentRope r) {
-                    s = r;
                 } else {
-                    s = new ByteRope(object.toString());
+                    s = FinalSegmentRope.asFinal(object);
                 }
                 long mask = 1L << s.hashCode();
                 if ((has & mask) != 0) { // s may be present

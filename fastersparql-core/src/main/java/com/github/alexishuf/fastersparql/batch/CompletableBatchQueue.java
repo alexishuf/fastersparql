@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public interface CompletableBatchQueue<B extends Batch<B>> extends BatchQueue<B> {
@@ -61,7 +62,7 @@ public interface CompletableBatchQueue<B extends Batch<B>> extends BatchQueue<B>
 
     /**
      * Causes the queue to <strong>eventually</strong> terminate (reporting {@link #isCancelled()}
-     * if no errors occur meanwhile). Once the termination is effected, {@link #offer(Batch)}
+     * if no errors occur meanwhile). Once the termination is effected, {@link #offer(Orphan)}
      * calls will fail with {@link CancelledException} (or with {@link TerminatedException} if
      * another error occurs before the cancellation becomes effective).
      *

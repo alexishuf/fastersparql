@@ -1,14 +1,15 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -238,33 +239,41 @@ public class ExprParserTest {
 
     @ParameterizedTest @MethodSource
     void test(TestData data) {
-        ExprParser parser = new ExprParser();
-        ByteRope rope = new ByteRope(data.expr);
-        var subRope = SegmentRope.of("!", rope, ">").sub(1, 1 + rope.len);
-        SegmentRope bufferRope = new SegmentRope(ByteBuffer.wrap(rope.toArray(0, rope.len)));
+        try (var parserGuard = new Guard<ExprParser>(this);
+             var rope = PooledMutableRope.get()) {
+            ExprParser parser = parserGuard.set(ExprParser.create());
+            rope.append(data.expr);
+            var paddedRope = RopeFactory.make(2+rope.len).add('!').add(rope).add('>').take();
+            var subRope = paddedRope.sub(1, paddedRope.len-1);
+            var bufferRope = new FinalSegmentRope(ByteBuffer.wrap(rope.toArray(0, rope.len)));
 
-        var e1 = parser.parse(rope);
-        var e2 = parser.parse(subRope);
-        var e3 = parser.parse(bufferRope);
-        assertEquals(e1, e2);
-        assertEquals(e1, e3);
-        assertEquals(e2, e3);
+            var e1 = parser.parse(rope);
+            var e2 = parser.parse(subRope);
+            var e3 = parser.parse(bufferRope);
+            assertEquals(e1, e2);
+            assertEquals(e1, e3);
+            assertEquals(e2, e3);
 
-        for (Expr e : List.of(e1, e2, e3)) {
-            for (int i = 0, size = data.rows.size(); i < size; ++i) {
-                Binding binding = data.binding(i);
-                assertEquals(data.expected(i), e.eval(binding), "at row " + i);
-                var evaluator = e.evaluator(binding.vars());
-                for (BatchType<?> bt : BATCH_TYPES) {
-                    Batch<?> b = bt.create(binding.vars().size());
-                    b.beginPut();
-                    b.commitPut();
-                    b.beginPut();
-                    for (int col = 0; col < binding.vars().size(); col++)
-                        b.putTerm(col, binding.get(col));
-                    b.commitPut();
-                    assertEquals(data.expected(i), evaluator.evaluate(b, 1),
-                                 "at row " + i+", bt="+bt);
+            for (Expr e : List.of(e1, e2, e3)) {
+                for (int i = 0, size = data.rows.size(); i < size; ++i) {
+                    Binding binding = data.binding(i);
+                    assertEquals(data.expected(i), e.eval(binding), "at row " + i);
+                    var evaluator = e.evaluator(binding.vars());
+                    for (BatchType<?> bt : BATCH_TYPES) {
+                        var b = bt.create(binding.vars().size()).takeOwnership(this);
+                        try {
+                            b.beginPut();
+                            b.commitPut();
+                            b.beginPut();
+                            for (int col = 0; col < binding.vars().size(); col++)
+                                b.putTerm(col, binding.get(col));
+                            b.commitPut();
+                            assertEquals(data.expected(i), evaluator.evaluate(b, 1),
+                                    "at row " + i + ", bt=" + bt);
+                        } finally {
+                            b.recycle(this);
+                        }
+                    }
                 }
             }
         }

@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 
-public abstract class LexIt {
+public abstract class LexIt<I extends LexIt<I>> extends AbstractOwned<I> {
     public long id;
 
     /**

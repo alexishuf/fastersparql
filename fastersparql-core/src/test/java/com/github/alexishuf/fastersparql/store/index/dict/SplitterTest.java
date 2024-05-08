@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -11,7 +12,10 @@ import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.Mode.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.*;
+import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.create;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.CONSTANT;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -32,11 +36,13 @@ class SplitterTest {
 
     @ParameterizedTest @MethodSource
     public void testBase64(Splitter.SharedSide side, String base64, int id) {
-        var split = new Splitter();
-        split.sharedSide = side;
-        assertEquals(base64, split.b64(id).toString());
-        var seg = MemorySegment.ofArray(("!." + base64).getBytes(UTF_8));
-        assertEquals(id, Splitter.decode(seg, 2));
+        try (var splitG = new Guard<Splitter>(this)) {
+            var split = splitG.set(Splitter.create(LAST).takeOwnership(this));
+            split.sharedSide = side;
+            assertEquals(base64, split.b64(id).toString());
+            var seg = MemorySegment.ofArray(("!." + base64).getBytes(UTF_8));
+            assertEquals(id, Splitter.decode(seg, 2));
+        }
     }
 
     static Stream<Arguments> testSplit() {
@@ -79,14 +85,15 @@ class SplitterTest {
         );
     }
 
-    private static final Splitter defSplit = new Splitter();
-    private static final Splitter prolongedSplit = new Splitter(Splitter.Mode.PROLONG);
-    private static final Splitter penultimateSplit = new Splitter(Splitter.Mode.PENULTIMATE);
+    private static final Splitter defSplit         = create(LAST).takeOwnership(CONSTANT);
+    private static final Splitter prolongedSplit   = create(PROLONG).takeOwnership(CONSTANT);
+    private static final Splitter penultimateSplit = create(PENULTIMATE).takeOwnership(CONSTANT);
 
     @ParameterizedTest @MethodSource
     public void testSplit(Splitter split, String nt, String shared, String local, Splitter.SharedSide side) {
-        ByteRope ntRope = new ByteRope(nt);
-        ByteRope localRope = new ByteRope(local), sharedRope = new ByteRope(shared);
+        var ntRope     = FinalSegmentRope.asFinal(nt);
+        var localRope  = FinalSegmentRope.asFinal(local);
+        var sharedRope = FinalSegmentRope.asFinal(shared);
         TwoSegmentRope ts0 = new TwoSegmentRope(), ts1 = new TwoSegmentRope();
         TwoSegmentRope ts2 = new TwoSegmentRope();
         ts0.wrapFirst(side == SUFFIX ? localRope : sharedRope);

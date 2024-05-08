@@ -12,18 +12,25 @@ import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.ReceiverErrorFuture;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
+import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.SpecialOwner;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +42,7 @@ import java.io.Writer;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.sparql.parser.SparqlParser.parse;
 import static java.lang.Math.max;
 import static java.lang.String.format;
@@ -46,15 +54,16 @@ import static java.util.stream.IntStream.range;
 @SuppressWarnings("unused")
 public final class Results {
     private static final Logger log = LoggerFactory.getLogger(Results.class);
+    private static boolean primed = false;
     public static final PrefixMap PREFIX_MAP;
     static {
-        PrefixMap pm = new PrefixMap().resetToBuiltin();
-        pm.add(SegmentRope.of(""), Term.valueOf("<http://example.org/>"));
-        pm.add(SegmentRope.of("ex"), Term.valueOf("<http://example.org/>"));
-        pm.add(SegmentRope.of("exns"), Term.valueOf("<http://www.example.org/ns#>"));
-        pm.add(SegmentRope.of("rdfs"), Term.valueOf("<http://www.w3.org/2000/01/rdf-schema#>"));
-        pm.add(SegmentRope.of("owl"), Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
-        pm.add(SegmentRope.of("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
+        PrefixMap pm = PrefixMap.create().takeOwnership(SpecialOwner.CONSTANT).resetToBuiltin();
+        pm.add(FinalSegmentRope.asFinal(""),     Term.valueOf("<http://example.org/>"));
+        pm.add(FinalSegmentRope.asFinal("ex"),   Term.valueOf("<http://example.org/>"));
+        pm.add(FinalSegmentRope.asFinal("exns"), Term.valueOf("<http://www.example.org/ns#>"));
+        pm.add(FinalSegmentRope.asFinal("rdfs"), Term.valueOf("<http://www.w3.org/2000/01/rdf-schema#>"));
+        pm.add(FinalSegmentRope.asFinal("owl"),  Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
+        pm.add(FinalSegmentRope.asFinal("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
         PREFIX_MAP = pm;
     }
 
@@ -91,16 +100,20 @@ public final class Results {
                     @Nullable List<List<Term>> bindingsList,
                     @Nullable BindType bindType,
                     @Nullable String context) {
+        if (!primed) {
+            primed = true;
+            Primer.INSTANCE.sync();
+        }
         if (expected.stream().anyMatch(Objects::isNull))
             throw new IllegalArgumentException("null rows in expected");
         this.expected = expected.stream().map(Results::normalizeRow).toList();
         List<Integer> widths = this.expected.stream().map(Collection::size).distinct().toList();
         if (widths.size() > 1)
             throw new IllegalArgumentException("Non-uniform width of rows in expected");
-        if (vars != null && !widths.isEmpty() && vars.size() != widths.get(0))
-            throw new IllegalArgumentException("Expecting "+vars.size()+" vars, but rows have "+widths.get(0)+" columns");
+        if (vars != null && !widths.isEmpty() && vars.size() != widths.getFirst())
+            throw new IllegalArgumentException("Expecting "+vars.size()+" vars, but rows have "+widths.getFirst()+" columns");
         this.vars = vars;
-        this.columns = vars != null ? vars.size() : (widths.isEmpty() ? -1 : widths.get(0));
+        this.columns = vars != null ? vars.size() : (widths.isEmpty() ? -1 : widths.getFirst());
         this.ordered = ordered;
         this.duplicatesPolicy = duplicatesPolicy;
         this.expectedError = expectedError;
@@ -113,7 +126,7 @@ public final class Results {
             List<Integer> bWidths = bindingsList.stream().map(List::size).distinct().toList();
             if (bWidths.size() > 1)
                 throw new IllegalArgumentException("Non-uniform width for bindings");
-            if (!bWidths.isEmpty() && (bindingsVars.size() != bWidths.get(0)))
+            if (!bWidths.isEmpty() && (bindingsVars.size() != bWidths.getFirst()))
                 throw new IllegalArgumentException("bindingsVars do not match bindingsList width");
         }
         this.bindingsVars = bindingsVars;
@@ -200,21 +213,23 @@ public final class Results {
 
     private static List<List<Term>> groupRows(int columns, Object[] terms) {
         List<List<Term>> rows = new ArrayList<>();
-        TermParser termParser = new TermParser().eager();
-        termParser.prefixMap = PREFIX_MAP;
-        List<Term> row = new ArrayList<>();
-        for (Object term : terms) {
-            row.add(term == null ? null : termParser.parseTerm(SegmentRope.of(term)));
-            if (row.size() == columns) {
-                rows.add(row);
-                row = new ArrayList<>();
+        try (var termParserGuard = new Guard<TermParser>(GROUP_ROWS)) {
+            var termParser = termParserGuard.set(TermParser.create()).eager();
+            termParser.prefixMap().resetToCopy(PREFIX_MAP);
+            List<Term> row = new ArrayList<>();
+            for (Object term : terms) {
+                row.add(term == null ? null : termParser.parseTerm(FinalSegmentRope.asFinal(term)));
+                if (row.size() == columns) {
+                    rows.add(row);
+                    row = new ArrayList<>();
+                }
             }
+            if (!row.isEmpty())
+                throw new IllegalArgumentException("Expected "+columns+" columns, but last row has only "+row.size()+" terms");
         }
-        termParser.close();
-        if (!row.isEmpty())
-            throw new IllegalArgumentException("Expected "+columns+" columns, but last row has only "+row.size()+" terms");
         return rows;
     }
+    private static final StaticMethodOwner GROUP_ROWS = new StaticMethodOwner("Results.groupRows");
 
     /** Create an {@link Results} for a {@code false} ASK query result */
     public static Results negativeResult() { return results(List.of()); }
@@ -223,9 +238,10 @@ public final class Results {
     public static Results positiveResult() { return results(List.of(List.of())); }
 
     public static TriplePattern parseTP(CharSequence cs) {
-        try (TermParser parser = new TermParser().eager()) {
-            parser.prefixMap = Results.PREFIX_MAP;
-            SegmentRope r = SegmentRope.of(cs);
+        try (var parserGuard = new Guard<TermParser>(PARSE_TP)) {
+            TermParser parser = parserGuard.set(TermParser.create()).eager();
+            parser.prefixMap().resetToCopy(PREFIX_MAP);
+            var r = FinalSegmentRope.asFinal(cs);
             int len = r.len();
             return new TriplePattern(parser.parseTerm(r, 0, len),
                     parser.parseTerm(r, r.skipWS(parser.termEnd(), len), len),
@@ -233,6 +249,7 @@ public final class Results {
             );
         }
     }
+    private static final StaticMethodOwner PARSE_TP = new StaticMethodOwner("Results.parseTP");
 
     /* --- --- --- variant constructors --- --- --- */
 
@@ -283,17 +300,18 @@ public final class Results {
         if (sparql instanceof SparqlQuery q) {
             query = q;
         } else {
-            ByteRope sparqlRope = new ByteRope().append("""
+            String prologue = """
                     PREFIX     : <http://example.org/>
                     PREFIX exns: <http://www.example.org/ns#>
-                    PREFIX  xsd: <http://www.w3.org/2001/XMLSchema##>
+                    PREFIX  xsd: <http://www.w3.org/2001/XMLSchema#>
                     PREFIX  rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
                     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                     PREFIX  owl: <http://www.w3.org/2002/07/owl#>
                     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
-                    """
-            ).append(sparql);
-            query = parse(sparqlRope);
+                    """;
+            var cs = sparql instanceof CharSequence s ? s : sparql.toString();
+            query = parse(RopeFactory.make(prologue.length() + RopeFactory.requiredBytes(cs))
+                                     .add(prologue).add(cs).take());
         }
         return new Results(vars, expected, ordered, duplicatesPolicy, expectedError, query, bindingsVars, bindingsList, bindType, context);
     }
@@ -367,10 +385,13 @@ public final class Results {
     public List<List<Term>>   expected()     { return expected; }
 
     public BIt<TermBatch>     asBIt()        { return asPlan().execute(TERM); }
-    public Emitter<TermBatch> asEmitter()    { return asPlan().emit(TERM, Vars.EMPTY); }
     public BindType           bindType()     { return bindType; }
     public boolean            hasBindings()  { return bindingsList != null; }
     public Vars               bindingsVars() { return bindingsVars; }
+
+    public Orphan<? extends Emitter<TermBatch, ?>> asEmitter() {
+        return asPlan().emit(TERM, Vars.EMPTY);
+    }
 
     public Plan asPlan() {
         if (expectedError != null)
@@ -392,13 +413,13 @@ public final class Results {
             return new EmptyBIt<>(TERM, bindingsVars);
         return new IteratorBIt<>(bindingsList, TERM, bindingsVars);
     }
-    public Emitter<TermBatch> bindingsEmitter() {
+    public Orphan<? extends Emitter<TermBatch, ?>> bindingsEmitter() {
         if (bindingsList == null)
             return Emitters.empty(TERM, bindingsVars);
-        var b = TERM.create(bindingsVars.size());
+        var b = TERM.create(bindingsVars.size()).takeOwnership(this);
         for (List<Term> row : bindingsList)
             b.putRow(row);
-        return Emitters.ofBatch(bindingsVars, b);
+        return Emitters.ofBatch(bindingsVars, b.releaseOwnership(this));
     }
     public ItBindQuery<TermBatch> asBindQuery() {
         if (bindingsList == null)
@@ -452,7 +473,8 @@ public final class Results {
                     || !oldParsed.equals(parse(query))) {
                 throw new AssertionError("Query changed by "+client);
             }
-            check(client.emit(batchType, query, Vars.EMPTY));
+            var emitter = client.emit(batchType, query, Vars.EMPTY);
+            check(emitter);
             if (!oldString.equals(query.toString()) || oldHash != query.hashCode()
                     || !oldParsed.equals(parse(query))) {
                 throw new AssertionError("Query changed by "+client);
@@ -493,19 +515,26 @@ public final class Results {
 
         observedSeq.clear();
         errors.setLength(0);
-        Emitter<B> bindingsEmitter = bindingsConverter.convert(bindingsEmitter());
-        check(client.emit(new EmitBindQuery<B>(query, bindingsEmitter, bindType) {
+        var bindingsEmitter = bindingsConverter.convert(bindingsEmitter());
+        var emitter = client.emit(new EmitBindQuery<B>(query, bindingsEmitter, bindType) {
             public void binding(long seq) {
                 if (seq >= bindingsList.size() || seq < 0)
                     errors.append("Invalid seq number: ").append(seq).append('\n');
-                else if (observedSeq.get((int)seq))
+                else if (observedSeq.get((int) seq))
                     errors.append("Duplicate seq: ").append(seq).append('\n');
                 else
                     observedSeq.set((int) seq);
             }
-            @Override public void    emptyBinding(long sequence) {binding(sequence);}
-            @Override public void nonEmptyBinding(long sequence) {binding(sequence);}
-        }, Vars.EMPTY));
+
+            @Override public void emptyBinding(long sequence) {
+                binding(sequence);
+            }
+
+            @Override public void nonEmptyBinding(long sequence) {
+                binding(sequence);
+            }
+        }, Vars.EMPTY);
+        check(emitter);
         check(query, observedSeq, errors, oldHash, oldString, oldParsed);
 
         if (client instanceof ResultsSparqlClient rsc)
@@ -551,7 +580,8 @@ public final class Results {
             bindAndCheck(client, bindingsConverter);
         } else {
             check(client.query(batchType, query));
-            check(client. emit(batchType, query, Vars.EMPTY));
+            var emitter = client.emit(batchType, query, Vars.EMPTY);
+            check(emitter);
         }
     }
 
@@ -566,7 +596,8 @@ public final class Results {
     /** Equivalent to {@link Results#check(BIt)} on {@code client.query(q)} */
     public void check(SparqlClient client, SparqlQuery q) throws AssertionError {
         check(client.query(TERM, q));
-        check(client. emit(TERM, q, Vars.EMPTY));
+        var emitter = client.emit(TERM, q, Vars.EMPTY);
+        check(emitter);
     }
 
 
@@ -591,8 +622,8 @@ public final class Results {
         List<List<Term>> acList = new ArrayList<>();
         Throwable thrown = null;
         try (var w = Watchdog.spec("check.10s").threadStdErr(100).streamNode(it).startSecs(10)) {
-            try {
-                for (B b = null; (b = it.nextBatch(b)) != null; ) {
+            try (BatchGuard<B> guard = new BatchGuard<>(this)) {
+                for (B b; (b = guard.nextBatch(it)) != null; ) {
                     for (var n = b; n != null; n = n.next) {
                         for (int i = 0; i < n.rows; i++)
                             acList.add(normalizeRow(n, i));
@@ -606,8 +637,14 @@ public final class Results {
         check(acList, thrown, it.vars());
     }
 
-    public final class ResultsChecker<B extends Batch<B>> extends ReceiverErrorFuture<B> {
+    public final class ResultsChecker<B extends Batch<B>>
+            extends ReceiverErrorFuture<B, ResultsChecker<B>>
+            implements Orphan<ResultsChecker<B>> {
         private final List<List<Term>> acList = new ArrayList<>();
+
+        @Override public ResultsChecker<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        public Emitter<B, ?> upstream() { return upstream; }
 
         public void assertNoError() {
             try (var w = Watchdog.spec("check.10s").threadStdOut(100).streamNode(this).startSecs(10)) {
@@ -619,17 +656,22 @@ public final class Results {
             }
         }
 
-        @Override public B onBatch(B b) {
+        @Override public void onBatch(Orphan<B> orphan) {
+            var b = orphan.takeOwnership(this);
+            onBatchByCopy(b);
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B b) {
             for (var n = b; n != null; n = n.next) {
                 for (int r = 0; r < n.rows; r++)
                     acList.add(normalizeRow(n, r));
             }
-            return b;
         }
 
         @Override public boolean complete(Throwable error) {
             try {
-                Results.this.check(acList, error, upstream.vars());
+                Results.this.check(acList, error, requireNonNull(upstream).vars());
                 return super.complete(null);
             } catch (Throwable t) {
                 return super.complete(t);
@@ -637,14 +679,20 @@ public final class Results {
         }
     }
 
-    public <B extends Batch<B>> ResultsChecker<B> checker(Emitter<B> emitter) {
+    public <B extends Batch<B>> Orphan<ResultsChecker<B>>
+    checker(Orphan<? extends Emitter<B, ?>> emitter) {
         ResultsChecker<B> checker = new ResultsChecker<>();
         checker.subscribeTo(emitter);
         return checker;
     }
 
-    public <B extends Batch<B>> void check(Emitter<B> emitter) {
-        checker(emitter).assertNoError();
+    public <B extends Batch<B>> void check(Orphan<? extends Emitter<B, ?>> emitter) {
+        ResultsChecker<B> c;
+        try  (var g = new Guard<ResultsChecker<B>>(this)){
+            c = g.set(checker(emitter));
+            c.assertNoError();
+        }
+        assert !c.isAlive();
     }
 
     private <B extends Batch<B>> void check(List<List<Term>> acList,
@@ -653,13 +701,13 @@ public final class Results {
         count(ex, expected);
         count(ac, acList);
 
-        var sb = new StringBuilder();
-        if (!context.isEmpty())
-            sb.append("Context: ").append(context).append(context.length() > 40 ? "\n" : ". ");
-        sb.append(format("Expected %d rows (%d unique) got %d rows (%d unique)\n",
-                expected.size(), ex.keySet().size(),
-                acList.size(), ac.keySet().size()));
+        var sb = new StringBuilder(0);
         boolean ok = checkMissing(ac, ex, sb) & checkUnexpected(ac, ex, sb);
+        if (!ok) {
+            sb.append(format("Expected %d rows (%d unique) got %d rows (%d unique)\n",
+                    expected.size(), ex.keySet().size(),
+                    acList.size(), ac.keySet().size()));
+        }
         if (ordered && ok && !new ArrayList<>(ac.keySet()).equals(new ArrayList<>(ex.keySet()))) {
             ok = false;
             sb.append("Mismatched order (ignoring duplicates)\n  Expected:\n");
@@ -672,8 +720,11 @@ public final class Results {
         ok = ok & checkDuplicates(ac, ex, sb);
         ok = ok & checkException(thrown, sb);
         ok = ok & checkVars(vars, sb);
-        if (!ok)
+        if (!ok) {
+            if (!context.isEmpty())
+                sb.append("Context: ").append(context).append(context.length() > 40 ? "\n" : ". ");
             throw new AssertionError(sb.toString());
+        }
     }
 
     @Override public String toString() {
@@ -701,15 +752,17 @@ public final class Results {
     }
 
     public static List<Term> normalizeRow(Object row) {
-        try (TermParser p = new TermParser().eager()) {
-            p.prefixMap = PREFIX_MAP;
+        try (var pGuard = new Guard<TermParser>(NORMALIZE_ROW)) {
+            var p = pGuard.set(TermParser.create()).eager();
+            p.prefixMap().resetToCopy(PREFIX_MAP);
             return switch (row) {
                 case Collection<?> l -> {
                     if (l instanceof List<?> && l.stream().allMatch(o -> o == null || o instanceof Term)) //noinspection unchecked
                         yield (List<Term>) l;
                     var terms = new ArrayList<Term>();
-                    for (Object o : l)
-                        terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
+                    for (Object o : l) {
+                        terms.add(o == null || o instanceof Term t ? (Term) o : p.parseTerm(FinalSegmentRope.asFinal(o)));
+                    }
                     yield terms;
                 }
                 case Term[] a -> asList(a);
@@ -723,14 +776,23 @@ public final class Results {
                 }
                 case int[] a -> {
                     var terms = new ArrayList<Term>();
-                    for (int i : a)
-                        terms.add(Term.valueOf(Rope.of("\"", i, SharedRopes.DT_integer)));
+                    try (PooledMutableRope tmp = PooledMutableRope.get()) {
+                        for (int i : a) {
+                            tmp.clear().append('"').append(i).append(DT_integer);
+                            terms.add(Term.valueOf(tmp));
+                        }
+                    }
                     yield terms;
                 }
                 case Object[] a -> {
                     var terms = new ArrayList<Term>();
-                    for (Object o : a)
-                        terms.add(o == null || o instanceof Term ? (Term) o : p.parseTerm(SegmentRope.of(o)));
+                    for (Object o : a) {
+                        terms.add(switch (o) {
+                            case null   -> null;
+                            case Term t -> t;
+                            default     -> p.parseTerm(FinalSegmentRope.asFinal(o));
+                        });
+                    }
                     yield terms;
                 }
                 case null -> throw new AssertionError("null is not a valid row object");
@@ -738,14 +800,22 @@ public final class Results {
             };
         }
     }
+    private static final StaticMethodOwner NORMALIZE_ROW = new StaticMethodOwner("Results.normalizeRow");
 
     private static String toString(List<Term> row) {
-        var sb = new ByteRope().append('[');
-        for (Term t : row)
-            sb.append(t == null ? "null" : t.toSparql()).append(", ");
-        if (!row.isEmpty())
-            sb.unAppend(2);
-        return sb.append(']').toString();
+        try (var sb = PooledMutableRope.get()) {
+            sb.append('[');
+            for (Term t : row) {
+                if (t == null)
+                    sb.append("null");
+                else
+                    t.toSparql(sb, PrefixAssigner.CANON);
+                sb.append(", ");
+            }
+            if (!row.isEmpty())
+                sb.unAppend(2);
+            return sb.append(']').toString();
+        }
 
     }
 

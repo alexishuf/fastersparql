@@ -1,8 +1,9 @@
 package com.github.alexishuf.fastersparql.fed;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 
 import java.util.Objects;
 
@@ -66,12 +67,13 @@ public final class FedMetrics {
 
     @Override
     public String toString() {
+        SegmentRope sparql = input.sparql();
+        String sparqlString = sparql.toString().replace("\n", "\\n").replace("\r", "\\r");
         return format("FedMetrics{dispatchMs=%.3f, selectionAndAgglutinationMs=%.3f, " +
                       "optimizationMs=%.3f, input=%s, federation=%s, plan=%s}",
                       dispatchNs/1_000_000.0,
                       selectionAndAgglutinationNs /1_000_000.0, optimizationNs/1_000_000.0,
-                      input.sparql().toString().replace("\n", "\\n").replace("\r", "\\r"),
-                      federation, plan);
+                      sparqlString, federation, plan);
     }
 
 }

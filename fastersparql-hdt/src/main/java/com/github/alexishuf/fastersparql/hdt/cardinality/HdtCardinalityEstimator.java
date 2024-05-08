@@ -15,10 +15,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletableFuture;
 
-import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.estimatorMaxPredicates;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.plain;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static java.lang.Math.min;
 import static org.rdfhdt.hdt.enums.ResultEstimationType.EXACT;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;

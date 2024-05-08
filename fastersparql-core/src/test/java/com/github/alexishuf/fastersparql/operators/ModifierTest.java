@@ -4,13 +4,14 @@ import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Modifier;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.util.Results;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
@@ -37,13 +38,14 @@ public class ModifierTest {
                                      DistinctType distinct, long offset, long limit,
                                      CharSequence... filters) {
         assertNotEquals(0, limit, "nonsense");
-        ExprParser p = new ExprParser();
-
-        List<Expr> expressions = new ArrayList<>(filters.length);
-        for (var string : filters)
-            expressions.add(p.parse(SegmentRope.of(string)));
-        return new Modifier(in.asPlan(), projection, distinct,
-                              offset, limit, expressions);
+        try (var pGuard = new Guard<ExprParser>(ModifierTest.class)) {
+            ExprParser p = pGuard.set(ExprParser.create());
+            List<Expr> expressions = new ArrayList<>(filters.length);
+            for (var string : filters)
+                expressions.add(p.parse(FinalSegmentRope.asFinal(string)));
+            return new Modifier(in.asPlan(), projection, distinct,
+                    offset, limit, expressions);
+        }
     }
     private static Modifier filter(Results in, String... filters) {
         return modifier(in, null, null, 0, MAX_VALUE, filters);
@@ -68,11 +70,16 @@ public class ModifierTest {
             expected.check(plan.execute(TermBatchType.TERM));
             expected.check(plan.execute(TermBatchType.TERM));
             expected.check(plan.execute(CompressedBatchType.COMPRESSED));
-            expected.check(plan.emit(TermBatchType.TERM, Vars.EMPTY));
-            expected.check(plan.emit(TermBatchType.TERM, Vars.EMPTY));
-            expected.check(plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY));
-            expected.check(plan.emit(TermBatchType.TERM, Vars.EMPTY));
-            expected.check(plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY));
+            var em0 = plan.emit(TermBatchType.TERM, Vars.EMPTY);
+            expected.check(em0);
+            var em1 = plan.emit(TermBatchType.TERM, Vars.EMPTY);
+            expected.check(em1);
+            var em2 = plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY);
+            expected.check(em2);
+            var em3 = plan.emit(TermBatchType.TERM, Vars.EMPTY);
+            expected.check(em3);
+            var em4 = plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY);
+            expected.check(em4);
         }
     }
 
@@ -214,7 +221,7 @@ public class ModifierTest {
         }
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] ignoredArgs) throws Exception {
         ModifierTest test = new ModifierTest();
         D first = (D) test().findFirst().orElseThrow().get()[0];
         first.run();

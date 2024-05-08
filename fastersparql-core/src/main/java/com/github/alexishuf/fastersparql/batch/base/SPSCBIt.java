@@ -3,22 +3,23 @@ package com.github.alexishuf.fastersparql.batch.base;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.CallbackBIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.batch.Timestamp.ORIGIN;
-import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.ORIGIN;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static java.lang.Thread.currentThread;
 import static java.util.concurrent.locks.LockSupport.*;
 
@@ -77,17 +78,17 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     /* --- --- --- helper methods --- --- --- */
 
     /***
-     * Whether {@link #offer(Batch)} or {@link #copy(Batch)} should {@link LockSupport#park()}
+     * Whether {@link #offer(Orphan)} or {@link #copy(Batch)} should {@link LockSupport#park()}
      * when adding {@code offerRows} rows if this queue already has {@code queuedRows} rows queued.
      *
      * <p>The default implementation enforces the {@link CallbackBIt#maxReadyItems(int)}
      * contract. Subclasses may override to implement alternative backpressure modes if blocking
      * is not allowed in their thread (e.g. netty).</p>
      *
-     * @param offerRows rows that are being offered via {@link #offer(Batch)} or {@link #copy(Batch)}
-     * @param queuedRows number of rows already queued, waiting for a {@link #nextBatch(Batch)} call
-     * @return {@code true} iff the {@link #offer(Batch)}/{@link #copy(Batch)} thread should
-     *         park until {@link #nextBatch(Batch)} takes some rows.
+     * @param offerRows rows that are being offered via {@link #offer(Orphan)} or {@link #copy(Batch)}
+     * @param queuedRows number of rows already queued, waiting for a {@link #nextBatch(Orphan)} call
+     * @return {@code true} iff the {@link #offer(Orphan)}/{@link #copy(Batch)} thread should
+     *         park until {@link #nextBatch(Orphan)} takes some rows.
      */
     protected boolean mustPark(int offerRows, long queuedRows) {
         return queuedRows > 0 && offerRows+queuedRows > maxItems && notTerminated();
@@ -113,22 +114,18 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     protected void dropAllQueued() {
         lock();
-        try {
-            ready   = batchType.recycle(ready);
-            filling = batchType.recycle(filling);
-        } finally { unlock(); }
+        ready   = Batch.safeRecycle(ready,   this);
+        filling = Batch.safeRecycle(filling, this);
+        unlock();
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         try {
             if (cause instanceof BItCancelledException) { // drop all queued
-                ready = batchType.recycle(ready);
-                filling = batchType.recycle(filling);
+                ready   = Batch.safeRecycle(ready,   this);
+                filling = Batch.safeRecycle(filling, this);
             } else if (filling != null) {
-                if (filling.rows == 0)  // offer from nextBatch, recycle
-                    batchType.recycle(filling);
-                else // promote to ready
-                    ready   = Batch.quickAppend(ready, filling);
+                ready = Batch.quickAppend(ready, this, filling.releaseOwnership(this));
                 filling = null;
             }
             super.cleanup(cause);
@@ -140,20 +137,30 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
 
     /* --- --- --- producer methods --- --- --- */
 
-    private B fillingTail() {
-        B f = filling, tail = null;
+    @Override public @Nullable Orphan<B> pollFillingBatch() {
+        lock();
+        try {
+            return pollFillingBatch0();
+        } finally { unlock(); }
+    }
+
+    private @Nullable Orphan<B> pollFillingBatch0() {
+        B f = filling;
+        Orphan<B> tail = null;
         if (f != null) {
-            if ((tail = f.detachTail()) == f)
+            if ((tail = f.detachTail(this)) == f)
                 this.filling = null;
-            queuedRows -= tail.rows;
+            int tailRows = Batch.peekRows(tail);
+            queuedRows -= tailRows;
+            journal("pollFillingBatch, rows=", tailRows, "on", this);
         }
         return tail;
     }
 
-    @Override public B fillingBatch() {
+    @Override public Orphan<B> fillingBatch() {
         lock();
         try {
-            B tail = fillingTail();
+            Orphan<B> tail = pollFillingBatch();
             return tail == null ? batchType.create(nColumns) : tail;
         } finally { unlock(); }
     }
@@ -161,14 +168,13 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     protected final boolean   lockAndGet() {   lock(); return  true; }
     protected final boolean unlockAndGet() { unlock(); return false; }
 
-    @Override public @Nullable B offer(B b) throws TerminatedException, CancelledException {
+    @Override public void offer(Orphan<B> b) throws TerminatedException, CancelledException {
         Thread delayedWake = null;
-        int bRows = b.totalRows();
+        int bRows = Batch.peekTotalRows(b);
         boolean locked = lockAndGet();
         try {
-            while (b != null) {
+            while (true) {
                 if (plainState.isTerminated()) {
-                    batchType.recycle(b);
                     if (plainState == State.CANCELLED) throw CancelledException.INSTANCE;
                     else                               throw TerminatedException.INSTANCE;
                 } else if (queuedRows > 0 && mustPark(bRows, queuedRows)) {
@@ -181,41 +187,39 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                     if (needsStartTime && fillingStart == ORIGIN)
                         fillingStart = nanoTime();
                     if (ready == null && readyInNanos(bRows, fillingStart) == 0) {
-                        ready = b;
+                        ready = b.takeOwnership(this);
                         fillingStart = ORIGIN;
                     } else {
-                        filling = Batch.quickAppend(filling, b);
+                        filling = b.takeOwnership(this);
                     }
+                    b = null;
                     queuedRows += bRows;
                     delayedWake = consumer;
-                    b = null;
+                    break;
                 } else  { // append b to filling while unlocked
-                    B f = fillingTail();
+                    Orphan<B> fillingOrphan = pollFillingBatch0();
                     locked = unlockAndGet();
+                    if (fillingOrphan == null)
+                        fillingOrphan = batchType.create(nColumns);
+                    var f = fillingOrphan.takeOwnership(this);
                     f.append(b);
-                    bRows  = (b=f).totalRows();
+                    bRows = f.totalRows();
+                    b     = f.releaseOwnership(this);
                     locked = lockAndGet();
                 }
             }
         } finally {
             if (locked) unlock();
             if (eager) eager = false;
+            if (b != null) Orphan.recycle(b);
             unpark(delayedWake);
         }
-        return b; // b is always null, by design
     }
 
-    @Override public void copy(B b) throws TerminatedException, CancelledException {
-        B filling = fillingBatch();
-        filling.copy(b);
-        filling = offer(filling);
-        if (filling != null)
-            batchType.recycle(filling);
-    }
 
     /* --- --- --- consumer methods --- --- --- */
 
-    @Override public @Nullable B nextBatch(@Nullable B offer) {
+    @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
         // always check READY before trying to acquire LOCK, since writers may hold it for > 1us
         @Nullable Thread me = null;
         B b = null, f;
@@ -239,8 +243,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 } else {   // start a filling batch using offer
                     parkNs = Long.MAX_VALUE;
                     if (offer != null) {
-                        offer.requireUnpooled();
-                        filling = offer.clear(nColumns);
+                        filling = offer.takeOwnership(this).clear(nColumns);
                         offer = null;
                     }
                     if (needsStartTime) fillingStart = nanoTime();
@@ -263,22 +266,23 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 unlock();
             }
             // recycle offer if we did not already
-            batchType.recycle(offer);
+            Orphan.recycle(offer);
             unpark(producer);
         }
 
         if (b == null) // terminal batch
             return onTerminal(); // throw if failed
-        onNextBatch(b); // guides getBatch() allocations
-        return b;
+        offer = b.releaseOwnership(this);
+        onNextBatch(offer); // guides getBatch() allocations
+        return offer;
     }
 
-    @SuppressWarnings("SameReturnValue") private @Nullable B onTerminal() {
+    @SuppressWarnings("SameReturnValue") private @Nullable Orphan<B> onTerminal() {
         lock();
         B f = filling;
         filling = null;
         unlock();
-        Batch.recycle(f);
+        Batch.safeRecycle(f, this);
         checkError();
         return null;
     }

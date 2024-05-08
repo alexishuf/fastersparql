@@ -27,6 +27,9 @@ import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.util.Results;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -132,8 +135,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 rows = List.of(List.of());
             if (rows.size() != 1)
                 throw new IllegalArgumentException("Expected 1 binding, got "+rows.size());
-            var bound = unboundQuery.bound(new ArrayBinding(bindingsVars, rows.get(0)));
-            return new BoundAnswersStage2(this, bound, rows.get(0));
+            var bound = unboundQuery.bound(new ArrayBinding(bindingsVars, rows.getFirst()));
+            return new BoundAnswersStage2(this, bound, rows.getFirst());
         }
 
         public ResultsSparqlClient end() {
@@ -225,12 +228,13 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
-                                                     Vars rebindHint) {
+    protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         return bt.convert(new ResultsEmitter(SparqlParser.parse(sparql)));
     }
 
-    private class ResultsEmitter extends TaskEmitter<TermBatch> {
+    private class ResultsEmitter extends TaskEmitter<TermBatch, ResultsEmitter>
+                                 implements Orphan<ResultsEmitter> {
         private final Plan parsedQuery;
         private final Results expected;
         private @Nullable TermBatch batch;
@@ -248,7 +252,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         @Override protected void doRelease() {
             super.doRelease();
-            batch = TERM.recycle(batch);
+            Batch.safeRecycle(batch, this);
             if (expected != null && expected.hasBindings()) {
                 List<List<Term>> exBindingRows = expected.bindingsList();
                 if (exBindingRows == null)
@@ -267,6 +271,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             }
         }
 
+        @Override public ResultsEmitter takeOwnership(Object o) {return takeOwnership0(o);}
+
         private void setup(BatchBinding binding) {
             resetForRebind(0, 0);
             if (expected == null) {
@@ -274,7 +280,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 return;
             }
             Vars allVars = expected.vars();
-            var batch = this.batch = TERM.empty(this.batch, allVars.size());
+            var batch = this.batch = TERM.empty(this.batch, this, allVars.size());
             List<List<Term>> rows = expected.expected();
             outer:
             for (var row : rows) {
@@ -313,7 +319,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         @Override protected int produceAndDeliver(int state) {
             if (batch != null)
-                TERM.recycle(deliver(batch.dup()));
+                deliver(batch.dup());
             return error == UNSET_ERROR ? COMPLETED : FAILED;
         }
     }
@@ -335,16 +341,16 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             throw new NullPointerException("bindings != null but type == null");
         }
         if (usesBindingAwareProtocol()) {
-            var batchType = bq.bindings.batchType();
-            var cb = new SPSCBIt<>(batchType, expected.vars());
+            var bt = bq.bindings.batchType();
+            var cb = new SPSCBIt<>(bt, expected.vars());
             Thread.startVirtualThread(() -> {
                 Thread.currentThread().setName("feeder-"+endpoint+"-"+cb);
                 try {
                     exBindings.check(bq.bindings);
-                    try (BIt<B> it = batchType.convert(expected.asBIt())) {
-                        for (B b = null; (b = it.nextBatch(b)) != null; ) {
+                    try (var guard = new ItGuard<>(this, bt.convert(expected.asBIt()))) {
+                        while (guard.advance()) {
                             try {
-                                b = cb.offer(b);
+                                cb.offer(guard.take());
                             } catch (CancelledException|TerminatedException e) {
                                 break;
                             }
@@ -373,19 +379,27 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    private static final class BarrierEmitter<B extends Batch<B>> extends AbstractStage<B, B> {
-        private boolean open;
+    private static abstract sealed class BarrierEmitter<B extends Batch<B>>
+            extends AbstractStage<B, B, BarrierEmitter<B>> {
+        private static final StaticMethodOwner CONSTRUCTOR = new StaticMethodOwner("BarrierEmitter.init");
+        private boolean open, bindingsStarted;
         private final ReentrantLock lock = new ReentrantLock();
         private @MonotonicNonNull Throwable injectError;
-        private @Nullable Emitter<?> unstartedBindings;
+        private final Results.ResultsChecker<B> checker;
         private long suppressedRequest;
 
-        public BarrierEmitter(Emitter<B> upstream, @NonNull Emitter<?> bindings,
+        protected BarrierEmitter(Orphan<? extends Emitter<B, ?>> upstream,
+                              @NonNull Orphan<? extends Emitter<B, ?>> orphanBindings,
+                              Results expectedBindings) {
+            this(upstream.takeOwnership(CONSTRUCTOR), orphanBindings, expectedBindings);
+        }
+        private BarrierEmitter(Emitter<B, ?> upstream,
+                              @NonNull Orphan<? extends Emitter<B, ?>> orphanBindings,
                               Results expectedBindings) {
             super(upstream.batchType(), upstream.vars());
-            this.unstartedBindings = bindings;
-            subscribeTo(upstream);
-            expectedBindings.checker(bindings).whenComplete((t0, t1) -> {
+            subscribeTo(upstream.releaseOwnership(CONSTRUCTOR));
+            checker = expectedBindings.checker(orphanBindings).takeOwnership(this);
+            checker.whenComplete((t0, t1) -> {
                 lock.lock();
                 try {
                     this.open = true;
@@ -397,25 +411,50 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             });
         }
 
+        @Override protected void doRelease() {
+            checker.recycle(this);
+            super.doRelease();
+        }
+
+        private static final class Concrete<B extends Batch<B>> extends BarrierEmitter<B>
+                implements Orphan<BarrierEmitter<B>> {
+            public Concrete(Orphan<? extends Emitter<B, ?>> upstream,
+                            @NonNull Orphan<? extends Emitter<B, ?>> orphanBindings,
+                            Results expectedBindings) {
+                super(upstream, orphanBindings, expectedBindings);
+            }
+            @Override public BarrierEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        @Override public boolean cancel() {
+            checker.upstream().cancel();
+            return super.cancel();
+        }
+
         @Override public void request(long rows) {
             lock.lock();
             try {
                 if (open) {
                     super.request(rows);
                 } else {
-                    if (unstartedBindings != null) {
-                        unstartedBindings.request(Long.MAX_VALUE);
-                        unstartedBindings = null;
+                    if (!bindingsStarted) {
+                        bindingsStarted = true;
+                        checker.upstream().request(Long.MAX_VALUE);
                     }
                     suppressedRequest = Math.max(suppressedRequest, rows);
                 }
             } finally { lock.unlock(); }
         }
 
-        @Override public @Nullable B onBatch(B batch) {
+        @Override public void onBatch(Orphan<B> batch) {
             if (EmitterStats.ENABLED && stats != null)
                 stats.onBatchPassThrough(batch);
-            return downstream.onBatch(batch);
+            downstream.onBatch(batch);
+        }
+        @Override public void onBatchByCopy(B batch) {
+            if (EmitterStats.ENABLED && stats != null)
+                stats.onBatchPassThrough(batch);
+            downstream.onBatchByCopy(batch);
         }
         @Override public void onComplete() {
             if (injectError == null) super.onComplete();
@@ -427,8 +466,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         }
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> bq,
-                                                               Vars rebindHint) {
+    @Override protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(EmitBindQuery<B> bq, Vars rebindHint) {
         var sparql = bq.parsedQuery();
         Results expected = emulateWs ? qry2WsResults.get(sparql) : qry2results.get(sparql);
         if (expected == null) {
@@ -445,10 +484,10 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
             throw new NullPointerException("bindings != null but type == null");
         }
         if (usesBindingAwareProtocol()) {
-            var barrier = new BarrierEmitter<>(expected.asEmitter(), bq.bindings, exBindings);
-            return bq.bindings.batchType().convert(barrier);
+            var ex = bq.batchType().convert(expected.asEmitter());
+            return new BarrierEmitter.Concrete<>(ex, bq.bindings, exBindings);
         } else {
-            Vars unboundVars = expected.vars().minus(bq.bindings.vars());
+            Vars unboundVars = expected.vars().minus(bq.bindingsVars());
             for (List<Term> bindingRow : exBindings.expected()) {
                 var bound = sparql.bound(new ArrayBinding(exBindings.vars(), bindingRow));
                 Results boundExpected = qry2results.get(bound);
@@ -459,7 +498,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
                 if (!boundExpected.vars().equals(unboundVars))
                     throw error("Bound query results vars do not match ");
             }
-            return new BindingStage<>(bq, Vars.EMPTY, this);
+            return BindingStage.create(bq, Vars.EMPTY, this);
         }
     }
 

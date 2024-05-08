@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.parser;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.requiredBytes;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SparqlParserTest {
@@ -177,7 +178,9 @@ class SparqlParserTest {
             for (String prefix : List.of("", "#ASK {?x $p \"?s\"}\n#\t\n#\n \t")) {
                 for (String suffix : List.of("", "\r\n", "#LIMIT 23", "#OFFSET 5\n")) {
                     var ctx = baseCtx + ", prefix=\"" + prefix + "\", suffix=\"" + suffix+'"';
-                    var in = Rope.of(prefix, d.in, suffix);
+                    var in = RopeFactory.make(
+                            requiredBytes(prefix) + requiredBytes(d.in) + requiredBytes(suffix)
+                    ).add(prefix).add(d.in).add(suffix).take();
                     if (d.expected == null) {
                         assertThrows(InvalidSparqlException.class, () -> SparqlParser.parse(in));
                     } else {

@@ -31,11 +31,11 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FlowModel.EMIT;
 import static com.github.alexishuf.fastersparql.FlowModel.ITERATE;
-import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
 import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.JSON;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.util.Results.results;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static java.util.stream.Collectors.toCollection;
 import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.assertEquals;

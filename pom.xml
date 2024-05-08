@@ -79,12 +79,12 @@
       <dependency> <!-- Logging -->
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
-        <version>1.7.32</version>
+        <version>1.7.36</version>
       </dependency>
       <dependency> <!-- SLF4J implementation, not included on public lib jars -->
         <groupId>ch.qos.logback</groupId>
         <artifactId>logback-classic</artifactId>
-        <version>1.2.9</version>
+        <version>1.2.13</version>
       </dependency>
       <dependency> <!-- Annotations from checkerframework.org -->
         <groupId>org.checkerframework</groupId>
@@ -107,6 +107,16 @@
         <version>24.0.1</version>
         <scope>provided</scope>
       </dependency>
+      <dependency> <!-- thread pinning -->
+        <groupId>net.openhft</groupId>
+        <artifactId>affinity</artifactId>
+        <version>3.23.3</version>
+      </dependency>
+      <dependency> <!-- queues -->
+        <groupId>org.jctools</groupId>
+        <artifactId>jctools-core</artifactId>
+        <version>4.0.3</version>
+      </dependency>
 
 
       <!-- Pull BOMs for libraries -->
@@ -114,14 +124,14 @@
       <dependency> <!-- Used from fastersparql-core -->
         <groupId>io.netty</groupId>
         <artifactId>netty-bom</artifactId>
-        <version>4.1.70.Final</version>
+        <version>4.1.109.Final</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
       <dependency> <!-- Used everywhere for tests -->
         <groupId>org.junit</groupId>
         <artifactId>junit-bom</artifactId>
-        <version>5.8.2</version>
+        <version>5.10.2</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>

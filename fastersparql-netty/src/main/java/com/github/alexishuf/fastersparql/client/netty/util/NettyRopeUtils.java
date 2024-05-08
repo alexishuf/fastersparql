@@ -1,10 +1,9 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import sun.misc.Unsafe;
@@ -12,7 +11,6 @@ import sun.misc.Unsafe;
 import java.lang.foreign.MemorySegment;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.nio.charset.Charset;
 
 import static java.lang.foreign.MemorySegment.ofBuffer;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -37,18 +35,31 @@ public class NettyRopeUtils {
     }
 
 
-    /** {@code Unpooled.copiedBuffer(cs, charset)}, but faster */
-    public static ByteBuf wrap(CharSequence cs, @Nullable Charset charset) {
-        if (charset != null && !charset.equals(UTF_8))
-            return Unpooled.copiedBuffer(cs, charset);
-        if (cs instanceof Rope r) {
-            byte[] u8 = r.backingArray();
-            if (u8 != null)
-                return Unpooled.wrappedBuffer(u8, r.backingArrayOffset(), r.len);
-            return Unpooled.wrappedBuffer(r.toArray(0, r.len));
-        }
-        return Unpooled.copiedBuffer(cs, UTF_8);
+    /** Get a {@link ByteBuf} with the contents of {@code cs} */
+    public static ByteBuf asByteBuf(FinalSegmentRope r) {return asByteBuf0(r);}
+
+    /** Get a {@link ByteBuf} with the contents of {@code cs} */
+    public static ByteBuf asByteBuf(SegmentRopeView r) {return asByteBuf0(r);}
+
+    private static ByteBuf asByteBuf0(SegmentRope r) {
+        byte[] utf8 = r.utf8;
+        if (utf8 != null)
+            return Unpooled.wrappedBuffer(utf8, (int)r.offset, r.len);
+        return Unpooled.wrappedBuffer(r.segment.address()+r.offset, r.len, false);
     }
+
+    /** Get a {@link ByteBuf} with the contents of {@code cs} */
+    public static ByteBuf asByteBuf(MutableRope r) {
+        return write(ByteBufAllocator.DEFAULT.buffer(r.len), r);
+    }
+
+    /** Get a {@link ByteBuf} with the contents of {@code cs} */
+    public static ByteBuf asByteBuf(SegmentRope r) {
+        if (r instanceof MutableRope m)
+            return asByteBuf(m);
+        return asByteBuf0(r);
+    }
+
     /** {@code bb.writeBytes(source.copy())}, but faster */
     public static ByteBuf write(ByteBuf bb, MemorySegment segment, byte @Nullable[] array,
                                 long off, int len) {
@@ -88,6 +99,11 @@ public class NettyRopeUtils {
             bb.writeBytes(array, (int)(segment.address()+off), len);
         }
         return bb;
+    }
+
+    /** {@code bb.writeBytes(source.copy())}, but faster */
+    @SuppressWarnings("UnusedReturnValue") public static ByteBuf write(ByteBuf bb, SegmentRope rope) {
+        return write(bb, rope.segment, rope.utf8, rope.offset, rope.len);
     }
 
     /** {@code bb.writeBytes(source.copy())}, but faster */

@@ -6,9 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -29,27 +27,34 @@ class ResultsParserTest {
 
     private static class ByteRopeFac implements RopeFac {
         @Override public SegmentRope create(Rope src, int begin, int end) {
-            return new ByteRope(end-begin).append(src, begin, end);
+            return new MutableRope(end-begin).append(src, begin, end);
         }
-        @Override public void invalidate(Rope r) { ((ByteRope)r).fill('\n'); }
+        @Override public void invalidate(Rope r) {
+            if (r instanceof MutableRope m) {
+                m.fill('\n');
+                m.close();
+            }
+        }
     }
 
     private static class OffsetByteRopeFac implements RopeFac {
         @Override public SegmentRope create(Rope src, int begin, int end) {
             byte[] u8 = new byte[end - begin + 2];
             src.copy(begin, end, u8, 2);
-            return new ByteRope(u8, 2, end-begin);
+            return new SegmentRopeView().wrap(u8, 2, end-begin);
         }
 
         @Override public void invalidate(Rope r) {
-            byte[] u8 = ((ByteRope) r).u8();
-            for (int i = 0; i < u8.length; i++) {
-                u8[i] = switch (i&3) {
-                    case 0  -> '\t';
-                    case 1  -> ',';
-                    case 2  -> '\r';
-                    default -> '\n';
-                };
+            if (r instanceof MutableRope mr)  {
+                byte[] u8 = mr.u8();
+                for (int i = 0; i < u8.length; i++) {
+                    u8[i] = switch (i&3) {
+                        case 0  -> '\t';
+                        case 1  -> ',';
+                        case 2  -> '\r';
+                        default -> '\n';
+                    };
+                }
             }
         }
     }
@@ -64,7 +69,7 @@ class ResultsParserTest {
             u8[u8.length-1] = '\n';
             u8[u8.length-2] = '\r';
             u8[u8.length-3] = ',';
-            return new SegmentRope(ByteBuffer.wrap(u8).position(3).limit(3+end-begin));
+            return new FinalSegmentRope(ByteBuffer.wrap(u8).position(3).limit(3+end-begin));
         }
 
         @Override public void invalidate(Rope r) {

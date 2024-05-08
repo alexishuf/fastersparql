@@ -13,12 +13,15 @@ public class StreamNodeDOT {
     }
 
     public static StringBuilder minimalLabel(StringBuilder sb, StreamNode n) {
-        String cls = n.getClass().getSimpleName();
+        Class<? extends StreamNode> cls = n.getClass();
+        String name = cls.getSimpleName();
+        if (name.equals("Concrete"))
+            name = cls.getSuperclass().getSimpleName();
         int trim;
-        if      (cls.endsWith("Emitter")) trim = 7;
-        else if (cls.endsWith("Stage"  )) trim = 5;
-        else                              trim = 0;
-        return sb.append(cls, 0, cls.length()-trim)
+        if      (name.endsWith("Emitter")) trim = 7;
+        else if (name.endsWith("Stage"  )) trim = 5;
+        else                               trim = 0;
+        return sb.append(name, 0, name.length()-trim)
                 .append('@').append(Integer.toHexString(System.identityHashCode(n)));
     }
 
@@ -47,7 +50,7 @@ public class StreamNodeDOT {
         var sb = new StringBuilder();
         IdentityHashMap<StreamNode, Boolean> visited = new IdentityHashMap<>();
         IdentityHashMap<StreamNode, String> node2id = new IdentityHashMap<>();
-        Function<StreamNode, String> node2idMapper = key -> "ref" + node2id.size() + 1;
+        Function<StreamNode, String> node2idMapper = ignored -> "ref" + node2id.size() + 1;
         ArrayDeque<NodeRef> stack = new ArrayDeque<>();
         ArrayList<StreamNode> upstreamList = new ArrayList<>();
         stack.add(new NodeRef(root, -1));

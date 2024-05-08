@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.store;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
@@ -12,6 +12,8 @@ import com.github.alexishuf.fastersparql.store.index.dict.*;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import com.github.alexishuf.fastersparql.store.index.triples.TriplesSorter;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,7 @@ import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platform
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformTaskSet;
 import static com.github.alexishuf.fastersparql.store.batch.StoreBatchType.STORE;
 import static com.github.alexishuf.fastersparql.util.Results.results;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -85,9 +88,10 @@ class StoreSparqlClientTest {
         }
 
         try (var strings = (LocalityCompositeDict) Dict.load(tmp.resolve("strings"));
-             var sorter = new TriplesSorter(tmp)) {
+             var sorter = new TriplesSorter(tmp);
+             var lookupG = new Guard<LocalityCompositeDict.Lookup>(MAKE_STORE)) {
             strings.validate();
-            var l = strings.lookup();
+            var l = lookupG.set(strings.lookup());
             for (TriplePattern t : TRIPLES) {
                 long s = l.find(t.s), p = l.find(t.p), o = l.find(t.o);
                 assertTrue(s >= Dict.MIN_ID);
@@ -106,12 +110,14 @@ class StoreSparqlClientTest {
         }
         return new SparqlEndpoint("file://"+tmp.toAbsolutePath().toString().replace(" ", "%20"));
     }
+    private static final StaticMethodOwner MAKE_STORE = new StaticMethodOwner("StoreSparqlClientTest.makeStore");
+
 
     private static void visitStrings(NTVisitor b) {
         for (TriplePattern tp : TRIPLES) {
-            b.visit(SegmentRope.of(tp.s));
-            b.visit(SegmentRope.of(tp.p));
-            b.visit(SegmentRope.of(tp.o));
+            b.visit(FinalSegmentRope.asFinal(tp.s));
+            b.visit(FinalSegmentRope.asFinal(tp.p));
+            b.visit(FinalSegmentRope.asFinal(tp.o));
         }
     }
 
@@ -249,7 +255,9 @@ class StoreSparqlClientTest {
 
 
     @ParameterizedTest @MethodSource void test(D d) {
+        StoreSparqlClient clientRef;
         try (var client = d.createClient()) {
+            clientRef = client;
             d.results.check(client);
             d.results.check(client); // test client works more than once
             d.results.check(client, STORE);
@@ -260,6 +268,9 @@ class StoreSparqlClientTest {
                 } catch (Throwable t) {fail(t);}
             }
         }
+        for (long until = nanoTime()+1_000_000_000; !clientRef.isClosed() && nanoTime() < until; )
+            Thread.yield();
+        assertTrue(clientRef.isClosed());
     }
 
     @ParameterizedTest @MethodSource("test")

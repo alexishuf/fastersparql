@@ -9,8 +9,11 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.Iterator;
@@ -19,10 +22,11 @@ import java.util.stream.Stream;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
+    private static final Logger log = LoggerFactory.getLogger(ConcatBIt.class);
     private final Collection<? extends BIt<B>> sources;
     private final Iterator<? extends BIt<B>> sourcesIt;
     protected int sourceIdx = -1;
-    protected @Nullable BatchProcessor<B> processor;
+    protected @Nullable BatchProcessor<B, ?> processor;
 
     public ConcatBIt(Collection<? extends BIt<B>> sources, BatchType<B> batchType, Vars vars) {
         super(vars, EmptyBIt.of(batchType));
@@ -31,21 +35,35 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
 
     /* --- --- --- helper --- --- --- */
 
-    @EnsuresNonNullIf(expression = "this.inner", result = true)
     protected boolean nextSource() {
+        try {
+            inner.close();
+        } catch (Throwable t) {
+            log.error("inner.close() failed on nextSource() this={}, inner={}", this, inner, t);
+        }
+        if (processor != null) {
+            try {
+                processor = processor.recycle(this);
+            } catch (Throwable t) {
+                log.error("recycle() failed for processor={}, this={}", processor, this, t);
+            }
+        }
         if (sourcesIt.hasNext()) {
             var source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
                                          .minWait(minWait(NANOSECONDS), NANOSECONDS);
-            if (eager) source.tempEager();
+            if (eager)
+                source.tempEager();
             inner = source;
             ++sourceIdx;
-            processor = createProcessor(source, sourceIdx);
+            var orphan = createProcessor(source, sourceIdx);
+            processor = orphan == null ? null : orphan.takeOwnership(this);
             return true;
         }
         return false;
     }
 
-    protected @Nullable BatchProcessor<B> createProcessor(BIt<B> source, int sourceIdx) {
+    protected @Nullable Orphan<? extends BatchProcessor<B, ?>>
+    createProcessor(BIt<B> source, int sourceIdx) {
         return batchType.projector(vars, source.vars());
     }
 
@@ -53,7 +71,7 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         super.cleanup(cause);
         if (processor != null) {
             try {
-                processor.release();
+                processor.recycle(this);
             } catch (Throwable t) { reportCleanupError(t); }
             processor = null;
         }
@@ -66,15 +84,19 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         return sources.stream();
     }
 
-    @Override public @Nullable B nextBatch(@Nullable B b) {
+    @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
         lock();
-        try {
+        try (var g = new Guard.BatchGuard<B>(this)) {
+            g.set(offer);
             do {
-                BatchProcessor<B> p = processor;
-                while ((b = inner.nextBatch(b)) != null) {
-                    if (p != null && ((b = p.processInPlace(b)) == null || b.rows == 0)) continue;
-                    onNextBatch(b);
-                    return b;
+                BatchProcessor<B, ?> p = processor;
+                while (g.nextBatch(inner) != null) {
+                    if (p != null) {
+                        B b = g.set(p.processInPlace(g.poll()));
+                        if (b == null || b.rows == 0)
+                            continue;
+                    }
+                    return onNextBatch(g.take());
                 }
             } while (nextSource());
             onTermination(null);

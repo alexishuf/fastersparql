@@ -1,19 +1,17 @@
 package com.github.alexishuf.fastersparql.sparql;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-
-import static java.nio.charset.StandardCharsets.UTF_8;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 
 public enum DistinctType {
     WEAK,
     REDUCED,
     STRONG;
 
-    private static final ByteRope DISTINCT_ROPE = new ByteRope("DISTINCT".getBytes(UTF_8));
-    private static final ByteRope REDUCED_ROPE = new ByteRope("REDUCED".getBytes(UTF_8));
-    private static final ByteRope WEAK_ROPE = new ByteRope("PRUNED".getBytes(UTF_8));
+    private static final FinalSegmentRope DISTINCT_ROPE = FinalSegmentRope.asFinal("DISTINCT");
+    private static final FinalSegmentRope REDUCED_ROPE = FinalSegmentRope.asFinal("REDUCED");
+    private static final FinalSegmentRope WEAK_ROPE = FinalSegmentRope.asFinal("PRUNED");
 
-    public ByteRope sparql() {
+    public FinalSegmentRope sparql() {
         return switch (this) {
             case STRONG  -> DISTINCT_ROPE;
             case REDUCED -> REDUCED_ROPE;

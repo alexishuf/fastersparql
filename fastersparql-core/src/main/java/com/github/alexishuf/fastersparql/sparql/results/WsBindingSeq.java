@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
@@ -12,7 +12,7 @@ import static com.github.alexishuf.fastersparql.util.CSUtils.BASE64_2_BITS;
 import static com.github.alexishuf.fastersparql.util.CSUtils.BITS_2_BASE64;
 
 public final class WsBindingSeq {
-    public static final ByteRope VAR = new ByteRope("fastersparqlBindingSeq");
+    public static final FinalSegmentRope VAR = FinalSegmentRope.asFinal("fastersparqlBindingSeq");
     private static final int LIT_LEN_SHORT = 1  /*"*/
                                            + 2  /* 12 bits unsigned big endian in base64 */
                                            + 1; /*"*/
@@ -49,16 +49,16 @@ public final class WsBindingSeq {
             tmp[8] = BITS_2_BASE64[(int) ( seq        & 0x3f)];
             len = 10;
         }
-        batch.putTerm(col, ByteRope.EMPTY, tmp, 0, len, true);
+        batch.putTerm(col, FinalSegmentRope.EMPTY, tmp, 0, len, true);
     }
 
     public Term toTerm(long seq) {
-        var batch = CompressedBatchType.COMPRESSED.create(1);
+        var batch = CompressedBatchType.COMPRESSED.create(1).takeOwnership(this);
         batch.beginPut();
         write(seq, batch, 0);
         batch.commitPut();
         Term term = Objects.requireNonNull(batch.get(0, 0));
-        CompressedBatchType.COMPRESSED.recycle(batch);
+        batch.recycle(this);
         return term;
     }
 

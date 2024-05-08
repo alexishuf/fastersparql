@@ -6,9 +6,7 @@ import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -17,17 +15,18 @@ import java.util.ArrayDeque;
 
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.lang.String.join;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
-    private @Nullable ByteRope partial = null, allocPartial = null;
+    private @Nullable MutableRope partial = null, allocPartial = null;
     private final ArrayDeque<JsonState> jsonStack = new ArrayDeque<>();
     private final ArrayDeque<SparqlState> sparqlStack = new ArrayDeque<>();
     private boolean hadSparqlProperties = false;
     private int column;
     private Vars vars;
-    private final ByteRope value = new ByteRope(), lang = new ByteRope();
-    private final ByteRope dtSuffix = new ByteRope();
-    private final SegmentRope varName = new SegmentRope();
+    private final MutableRope value = new MutableRope(32), lang = new MutableRope(16);
+    private final MutableRope dtSuffix = new MutableRope(64);
+    private final SegmentRopeView varName = new SegmentRopeView();
     private Term. @Nullable Type type;
 
     public static final class JsonFactory implements Factory {
@@ -50,18 +49,27 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
 
     @Override public void reset(CompletableBatchQueue<B> downstream) {
         super.reset(downstream);
-        if (partial      != null)      partial.clear();
-        if (allocPartial != null) allocPartial.clear();
+        if (partial      != null)      partial.close();
+        if (allocPartial != null) allocPartial.close();
         jsonStack  .clear();
         sparqlStack.clear();
-        value      .clear();
-        lang       .clear();
-        dtSuffix   .clear();
+        value      .close();
+        lang       .close();
+        dtSuffix   .close();
         hadSparqlProperties = false;
         column              = 0;
         type                = null;
         vars                = downstream.vars();
         push(SparqlState.ROOT);
+    }
+
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        if (partial      != null) partial.close();
+        if (allocPartial != null) allocPartial.close();
+        value   .close();
+        lang    .close();
+        dtSuffix.close();
     }
 
     @Override protected void doFeedShared(SegmentRope rope) throws CancelledException, TerminatedException {
@@ -84,26 +92,57 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
 
     /* --- --- --- constants --- --- --- */
 
-    private static final ByteRope L_BRACKET = new ByteRope("[");
-    private static final ByteRope L_BRACE = new ByteRope("{");
-    private static final ByteRope NULL = new ByteRope("NULL");
-    private static final ByteRope TRUE = new ByteRope("TRUE");
-    private static final ByteRope FALSE = new ByteRope("FALSE");
-    private static final ByteRope IRI = new ByteRope("IRI");
-    private static final ByteRope URI = new ByteRope("URI");
-    private static final ByteRope LITERAL = new ByteRope("LITERAL");
-    private static final ByteRope LIT = new ByteRope("LIT");
-    private static final ByteRope BNODE = new ByteRope("BNODE");
-    private static final ByteRope BLANK = new ByteRope("BLANK");
-    private static final ByteRope P_HEAD = new ByteRope("HEAD");
-    private static final ByteRope P_RESULTS = new ByteRope("RESULTS");
-    private static final ByteRope P_BOOLEAN = new ByteRope("BOOLEAN");
-    private static final ByteRope P_VARS = new ByteRope("VARS");
-    private static final ByteRope P_BINDINGS = new ByteRope("BINDINGS");
-    private static final ByteRope VALUE = new ByteRope("VALUE");
-    private static final ByteRope TYPE = new ByteRope("TYPE");
-    private static final ByteRope DATATYPE = new ByteRope("DATATYPE");
-    private static final ByteRope XMLLANG = new ByteRope("XML:LANG");
+    private static final byte[] CONSTS;
+    private static final int L_BRACKET_O, L_BRACKET_LEN;
+    private static final int L_BRACE_O, L_BRACE_LEN;
+    private static final int NULL_O, NULL_LEN;
+    private static final int TRUE_O, TRUE_LEN;
+    private static final int FALSE_O, FALSE_LEN;
+    private static final int IRI_O, IRI_LEN;
+    private static final int URI_O, URI_LEN;
+    private static final int LITERAL_O, LITERAL_LEN;
+    private static final int LIT_O, LIT_LEN;
+    private static final int BNODE_O, BNODE_LEN;
+    private static final int BLANK_O, BLANK_LEN;
+    private static final int P_HEAD_O, P_HEAD_LEN;
+    private static final int P_RESULTS_O, P_RESULTS_LEN;
+    private static final int P_BOOLEAN_O, P_BOOLEAN_LEN;
+    private static final int P_VARS_O, P_VARS_LEN;
+    private static final int P_BINDINGS_O, P_BINDINGS_LEN;
+    private static final int VALUE_O, VALUE_LEN;
+    private static final int TYPE_O, TYPE_LEN;
+    private static final int DATATYPE_O, DATATYPE_LEN;
+    private static final int XMLLANG_O, XMLLANG_LEN;
+    static {
+        StringBuilder sb = new StringBuilder();
+        L_BRACKET_O  = sb.length(); L_BRACKET_LEN  = sb.append("["       ).length()-L_BRACKET_O;
+        L_BRACE_O    = sb.length(); L_BRACE_LEN    = sb.append("{"       ).length()-L_BRACE_O;
+        NULL_O       = sb.length(); NULL_LEN       = sb.append("NULL"    ).length()-NULL_O;
+        TRUE_O       = sb.length(); TRUE_LEN       = sb.append("TRUE"    ).length()-TRUE_O;
+        FALSE_O      = sb.length(); FALSE_LEN      = sb.append("FALSE"   ).length()-FALSE_O;
+        IRI_O        = sb.length(); IRI_LEN        = sb.append("IRI"     ).length()-IRI_O;
+        URI_O        = sb.length(); URI_LEN        = sb.append("URI"     ).length()-URI_O;
+        LITERAL_O    = sb.length(); LITERAL_LEN    = sb.append("LITERAL" ).length()-LITERAL_O;
+        LIT_O        = sb.length(); LIT_LEN        = sb.append("LIT"     ).length()-LIT_O;
+        BNODE_O      = sb.length(); BNODE_LEN      = sb.append("BNODE"   ).length()-BNODE_O;
+        BLANK_O      = sb.length(); BLANK_LEN      = sb.append("BLANK"   ).length()-BLANK_O;
+        P_HEAD_O     = sb.length(); P_HEAD_LEN     = sb.append("HEAD"    ).length()-P_HEAD_O;
+        P_RESULTS_O  = sb.length(); P_RESULTS_LEN  = sb.append("RESULTS" ).length()-P_RESULTS_O;
+        P_BOOLEAN_O  = sb.length(); P_BOOLEAN_LEN  = sb.append("BOOLEAN" ).length()-P_BOOLEAN_O;
+        P_VARS_O     = sb.length(); P_VARS_LEN     = sb.append("VARS"    ).length()-P_VARS_O;
+        P_BINDINGS_O = sb.length(); P_BINDINGS_LEN = sb.append("BINDINGS").length()-P_BINDINGS_O;
+        VALUE_O      = sb.length(); VALUE_LEN      = sb.append("VALUE"   ).length()-VALUE_O;
+        TYPE_O       = sb.length(); TYPE_LEN       = sb.append("TYPE"    ).length()-TYPE_O;
+        DATATYPE_O   = sb.length(); DATATYPE_LEN   = sb.append("DATATYPE").length()-DATATYPE_O;
+        XMLLANG_O    = sb.length(); XMLLANG_LEN    = sb.append("XML:LANG").length()-XMLLANG_O;
+        CONSTS = sb.toString().getBytes(UTF_8);
+    }
+
+    private static final FinalSegmentRope L_BRACKET = new FinalSegmentRope(CONSTS, L_BRACKET_O, L_BRACKET_LEN);
+    private static final FinalSegmentRope L_BRACE   = new FinalSegmentRope(CONSTS, L_BRACE_O, L_BRACE_LEN);
+    private static final FinalSegmentRope NULL      = new FinalSegmentRope(CONSTS, NULL_O, NULL_LEN);
+    private static final FinalSegmentRope TRUE      = new FinalSegmentRope(CONSTS, TRUE_O, TRUE_LEN);
+    private static final FinalSegmentRope FALSE     = new FinalSegmentRope(CONSTS, FALSE_O, FALSE_LEN);
 
     private static final int[] UNQUOTED_VALUE = Rope.invert(Rope.alphabet(",}]", Rope.Range.WS));
 
@@ -154,7 +193,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
 
     private int suspend(SegmentRope r, int b, int e) {
         if (b >= e) return e;
-        partial = allocPartial == null ? allocPartial=new ByteRope(32+(e-b)) : allocPartial;
+        partial = allocPartial == null ? allocPartial=new MutableRope(32+(e-b)) : allocPartial;
         if (r == partial)
             partial.erase(e, partial.len).erase(0, b);
         else
@@ -203,29 +242,41 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
              SparqlState next = switch (this) {
                 case ROOT -> {
                     SparqlState s;
-                    if      (l==4 && r.hasAnyCase(b, P_HEAD.u8()))    s = HEAD;
-                    else if (l==7 && r.hasAnyCase(b, P_RESULTS.u8())) s = RESULTS;
-                    else if (l==7 && r.hasAnyCase(b, P_BOOLEAN.u8())) s = BOOLEAN;
-                    else                                              s = null;
-                    if (s != null) p.hadSparqlProperties = true;
+                    if      (l==4 && r.hasAnyCase(b, CONSTS, P_HEAD_O, P_HEAD_LEN))
+                        s = HEAD;
+                    else if (l==7 && r.hasAnyCase(b, CONSTS, P_RESULTS_O, P_RESULTS_LEN))
+                        s = RESULTS;
+                    else if (l==7 && r.hasAnyCase(b, CONSTS, P_BOOLEAN_O, P_BOOLEAN_LEN))
+                        s = BOOLEAN;
+                    else
+                        s = null;
+                    if (s != null)
+                        p.hadSparqlProperties = true;
                     yield s;
                 }
                 case IGNORE -> IGNORE;
-                case HEAD    -> l==4 && r.hasAnyCase(b, P_VARS.u8())     ? VARS     : IGNORE;
-                case RESULTS -> l==8 && r.hasAnyCase(b, P_BINDINGS.u8()) ? BINDINGS : IGNORE;
+                case HEAD    -> l==4 && r.hasAnyCase(b, CONSTS, P_VARS_O, P_VARS_LEN)
+                              ? VARS     : IGNORE;
+                case RESULTS -> l==8 && r.hasAnyCase(b, CONSTS, P_BINDINGS_O, P_BINDINGS_LEN)
+                              ? BINDINGS : IGNORE;
                 case BINDING_ROW -> {
                     p.dtSuffix.clear();
                     p.type = null;
                     p.value.clear();
                     p.lang.clear();
-                    p.varName.wrapSegment(r.segment, r.utf8, r.offset+b, e-b);
+                    p.varName.wrap(r.segment, r.utf8, r.offset+b, e-b);
                     yield (p.column = p.vars.indexOf(p.varName)) >= 0 ? BINDING_VALUE : IGNORE;
                 }
                 case BINDING_VALUE -> {
-                    if   (l==5 && r.hasAnyCase(b, VALUE.u8()))    yield BINDING_VALUE_VALUE;
-                    if   (l==4 && r.hasAnyCase(b, TYPE.u8()))     yield BINDING_VALUE_TYPE;
-                    if   (l==8 && r.hasAnyCase(b, DATATYPE.u8())) yield BINDING_VALUE_DATATYPE;
-                    yield l==8 && r.hasAnyCase(b, XMLLANG.u8())   ?     BINDING_VALUE_LANG : null;
+                    if (l==5 && r.hasAnyCase(b, CONSTS, VALUE_O, VALUE_LEN))
+                        yield BINDING_VALUE_VALUE;
+                    if (l==4 && r.hasAnyCase(b, CONSTS, TYPE_O, TYPE_LEN))
+                        yield BINDING_VALUE_TYPE;
+                    if (l==8 && r.hasAnyCase(b, CONSTS, DATATYPE_O, DATATYPE_LEN))
+                        yield BINDING_VALUE_DATATYPE;
+                    if (l==8 && r.hasAnyCase(b, CONSTS, XMLLANG_O, XMLLANG_LEN))
+                        yield BINDING_VALUE_LANG;
+                    yield null;
                 }
                 default -> null;
             };
@@ -260,7 +311,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                 case ROOT -> p.feedEnd();
                 case IGNORE, HEAD, RESULTS -> {}
                 case BINDING_VALUE -> {
-                    final ByteRope v = p.value;
+                    final MutableRope v = p.value;
                     Batch<?> rb = p.batch;
                     int col = p.column;
                     switch (p.type) {
@@ -276,7 +327,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                         case LIT -> {
                             byte[] u8 = v.u8();
                             u8[0] = '"';  u8[v.len-1] = '"'; //replace <> with ""
-                            SegmentRope sh;
+                            FinalSegmentRope sh;
                             int localLen;
                             if (p.dtSuffix.len == 0) {
                                 sh = null;
@@ -358,26 +409,37 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                 case IGNORE -> {}
                 case BOOLEAN -> {
                     int len = e - b;
-                    if      (len == 4 && r.hasAnyCase(b,  TRUE.u8())) onBool(p, true);
-                    else if (len == 5 && r.hasAnyCase(b, FALSE.u8())) onBool(p, false);
-                    else throw ex(this, r, b, e);
+                    if      (len == 4 && r.hasAnyCase(b, CONSTS,  TRUE_O,  TRUE_LEN))
+                        onBool(p, true);
+                    else if (len == 5 && r.hasAnyCase(b, CONSTS, FALSE_O, FALSE_LEN))
+                        onBool(p, false);
+                    else
+                        throw ex(this, r, b, e);
                 }
                 case BINDING_VALUE_TYPE -> {
-                    ByteRope v1 = null, v2 = null;
+                    int off1 = 0, len1 = 0, off2 = 0, len2 = 0;
                     p.type = switch (b < e ? r.get(b) : 0) {
-                        case 'i', 'I' -> {v1 = IRI; yield Term.Type.IRI;}
-                        case 'u', 'U' -> {v1 = URI; yield Term.Type.IRI;}
-                        case 'b', 'B' -> {v1 = BNODE; v2 = BLANK; yield Term.Type.BLANK;}
-                        case 'l', 'L' -> {v1 = LITERAL; v2 = LIT; yield Term.Type.LIT;}
+                        case 'i', 'I' -> {off1 = IRI_O; len1 = IRI_LEN; yield Term.Type.IRI;}
+                        case 'u', 'U' -> {off1 = URI_O; len1 = URI_LEN; yield Term.Type.IRI;}
+                        case 'b', 'B' -> {
+                            off1 = BNODE_O; len1 = BNODE_LEN;
+                            off2 = BLANK_O; len2 = BLANK_LEN;
+                            yield Term.Type.BLANK;
+                        }
+                        case 'l', 'L' -> {
+                            off1 = LITERAL_O; len1 = LITERAL_LEN;
+                            off2 = LIT_O; len2 = LIT_LEN;
+                            yield Term.Type.LIT;
+                        }
                         default -> Term.Type.LIT;
                     };
-                    if ((v1 == null || !r.hasAnyCase(b, v1.u8()))
-                            && (v2 == null || !r.hasAnyCase(b, v2.u8()))) {
+                    if (       (len1 == 0 || !r.hasAnyCase(b, CONSTS, off1, len1))
+                            && (len2 == 0 || !r.hasAnyCase(b, CONSTS, off2, len2))) {
                         throw ex(this, r, b, e);
                     }
                 }
                 case BINDING_VALUE_DATATYPE ->
-                    p.dtSuffix.clear().append(ByteRope.DT_MID_LT).append(r, b, e).append('>');
+                    p.dtSuffix.clear().append(FinalSegmentRope.DT_MID_LT).append(r, b, e).append('>');
                 case BINDING_VALUE_VALUE -> p.value.clear().append('<').append(r, b, e).append('>');
                 case BINDING_VALUE_LANG  -> p.lang.clear().append(r, b, e);
                 default -> throw ex(this, r, b, e);
@@ -419,11 +481,11 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                         int ue = r.skip(b, e, UNQUOTED_VALUE);
                         if (ue == e) yield -1;
                         parser.pop();
-                        if ((c == 'n' || c == 'N') && r.hasAnyCase(b, NULL.u8()))
+                        if ((c == 'n' || c == 'N') && r.hasAnyCase(b, CONSTS, NULL_O, NULL_LEN))
                             spState.onNull(parser);
-                        else if ((c == 'f' || c == 'F') && r.hasAnyCase(b, FALSE.u8()))
+                        else if ((c == 'f' || c == 'F') && r.hasAnyCase(b, CONSTS, FALSE_O, FALSE_LEN))
                             spState.onBool(parser, false);
-                        else if ((c == 't' || c == 'T') && r.hasAnyCase(b, TRUE.u8()))
+                        else if ((c == 't' || c == 'T') && r.hasAnyCase(b, CONSTS, TRUE_O, TRUE_LEN))
                             spState.onBool(parser, true);
                         else if (Rope.contains(SparqlSkip.NUMBER_FIRST, c))
                             spState.onNumber(parser, r, b, ue);

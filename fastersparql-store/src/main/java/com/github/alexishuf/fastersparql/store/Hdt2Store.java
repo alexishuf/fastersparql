@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.store;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
-import com.github.alexishuf.fastersparql.store.index.HdtConverter;
+import com.github.alexishuf.fastersparql.store.index.Hdt2StoreIndexConverter;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import org.rdfhdt.hdt.hdt.HDT;
 import org.rdfhdt.hdt.hdt.HDTManager;
@@ -167,7 +167,7 @@ public class Hdt2Store implements Callable<Void> {
                 log.info("--dry-run: Would convert {} into {}", hdtFile, dest);
             } else {
                 log.info("Converting {} triples in {} into {}", triples, hdt, dest);
-                new HdtConverter()
+                new Hdt2StoreIndexConverter()
                         .tempDir(tempDir == null ? destPath : tempDir)
                         .splitMode(prolongSplit ? PROLONG : penultimateSplit ? PENULTIMATE : LAST)
                         .standaloneDict(standaloneDict)

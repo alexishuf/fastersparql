@@ -1,18 +1,18 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.openjdk.jmh.annotations.*;
 
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 import static com.github.alexishuf.fastersparql.lrb.Workloads.fromName;
-import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 
 @SuppressWarnings({"rawtypes"})
@@ -36,12 +36,12 @@ public class RopeDictBench {
         rt = new RopeTypeHolder(ropeType);
         ByteSink sink = rt.byteSink().touch();
         int terms = 0, i = 0;
-        var batches = uniformCols(fromName(TermBatchType.TERM, sizeName), TermBatchType.TERM);
-        for (TermBatch b : batches)
-            terms += b.totalRows()*b.cols;
-        int[] starts = new int[terms+1];
-        for (TermBatch b : batches) {
-            for (var n = b; n != null; n = n.next) {
+        try (var g = new Guard.BatchGuard<>(this)) {
+            Batch<?> queue = g.set(fromName(TermBatchType.TERM, sizeName));
+            for (var n = queue; n != null; n = n.next)
+                terms += n.totalRows()*n.cols;
+            int[] starts = new int[terms+1];
+            for (var n = queue; n != null; n = n.next) {
                 for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
                         starts[i++] = sink.len();
@@ -50,14 +50,14 @@ public class RopeDictBench {
                     }
                 }
             }
-        }
-        starts[i] = sink.len();
-        Rope rope = rt.takeRope(sink);
-        startsArray = new int[64][];
-        ropes = new SegmentRope[64];
-        for (int rep = 0; rep < ropes.length; rep++) {
-             ropes[rep] = rt.takeRope(rt.byteSink().append(rope));
-             startsArray[rep] = Arrays.copyOf(starts, starts.length);
+            starts[i] = sink.len();
+            Rope rope = rt.takeRope(sink);
+            startsArray = new int[64][];
+            ropes = new SegmentRope[64];
+            for (int rep = 0; rep < ropes.length; rep++) {
+                ropes[rep] = rt.takeRope(rt.byteSink().append(rope));
+                startsArray[rep] = Arrays.copyOf(starts, starts.length);
+            }
         }
         Workloads.cooldown(500);
     }

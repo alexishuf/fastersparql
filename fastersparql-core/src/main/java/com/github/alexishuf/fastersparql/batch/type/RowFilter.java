@@ -2,8 +2,10 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.emit.Rebindable;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 
-public interface RowFilter<B extends Batch<B>> extends Rebindable {
+public interface RowFilter<B extends Batch<B>, R extends RowFilter<B, R>>
+        extends Rebindable, Owned<R> {
     enum Decision {
         /** Do not drop the evaluated row. */
         KEEP,
@@ -28,22 +30,6 @@ public interface RowFilter<B extends Batch<B>> extends Rebindable {
     default boolean targetsProjection() { return false; }
 
     default boolean isNoOp() { return false; }
-
-    /**
-     * Notifies that this {@link RowFilter} will not receive any subsequent calls and it
-     * should release resources it holds.
-     */
-    default void release() { }
-
-    @Override default void rebindAcquire() {
-        // Nearly all RowFilter implementations hold no resources or are extremely heavy and
-        // thus require pooling (Dedup). For the former, this and rebindRelease() can safely
-        // be a no-op. For the latter, the pooled object cannot pool itself due to the risk
-        // that other object keeps a reference, which can lead to 2+ concurrent random users
-        // of the object.
-    }
-
-    @Override default void rebindRelease() {}
 
     default @Override Vars bindableVars() { return Vars.EMPTY; }
 }

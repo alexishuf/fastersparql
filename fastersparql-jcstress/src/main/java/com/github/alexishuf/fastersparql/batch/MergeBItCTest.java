@@ -34,6 +34,7 @@ import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.L_Result;
 
@@ -51,11 +52,14 @@ import static java.util.stream.IntStream.range;
 public class MergeBItCTest extends BItCTest {
     private final SPSCBIt<TermBatch> cb1;
     private final SPSCBIt<TermBatch> cb2;
-    private final TermBatch[] batches1 = {batch(3), batch(4), batch(5)};
-    private final TermBatch[] batches2 = {batch(6), batch(7)};
+    private final TermBatch[] batches1 = {batch(3).takeOwnership(this),
+                                          batch(4).takeOwnership(this),
+                                          batch(5).takeOwnership(this)};
+    private final TermBatch[] batches2 = {batch(6).takeOwnership(this),
+                                          batch(7).takeOwnership(this)};
 
     @SuppressWarnings("resource") private static MergeBIt<TermBatch> makeMerge() {
-        List<TermBatch> itBatches = List.of(batch(1), batch(2));
+        List<Orphan<TermBatch>> itBatches = List.of(batch(1), batch(2));
         List<BIt<TermBatch>> sources = List.of(
                 new IteratorBIt<>(itBatches, TERM, X).maxBatch(1),
                 new SPSCBIt<>(TERM, X, 2),
@@ -67,7 +71,8 @@ public class MergeBItCTest extends BItCTest {
     }
 
     public MergeBItCTest() {
-        super(makeMerge(), range(1, 8).mapToObj(BItCTest::batch).toArray(TermBatch[]::new));
+        //noinspection unchecked
+        super(makeMerge(), range(1, 8).mapToObj(BItCTest::batch).toArray(Orphan[]::new));
         var sources = ((MergeBIt<TermBatch>) it).sources();
         cb1 = (SPSCBIt<TermBatch>) sources.get(1);
         cb2 = (SPSCBIt<TermBatch>) sources.get(2);
@@ -114,7 +119,7 @@ public class MergeBItCTest extends BItCTest {
         r.r1 =  desc.toString();
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] ignoredArgs) throws Exception {
         MergeBItCTest t = new MergeBItCTest();
         Thread t1 = new Thread(t::producer1);
         Thread t2 = new Thread(t::producer2);

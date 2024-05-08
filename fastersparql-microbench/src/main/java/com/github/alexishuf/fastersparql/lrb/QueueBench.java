@@ -7,18 +7,17 @@ import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 
 import java.util.ArrayDeque;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
-import static com.github.alexishuf.fastersparql.lrb.Workloads.uniformCols;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static java.util.Objects.requireNonNull;
 
 @SuppressWarnings({"unchecked", "rawtypes"})
@@ -37,8 +36,8 @@ public class QueueBench {
 
     BatchType bt;
     private Vars vars;
-    private List<Batch> seedInputs;
-    private ArrayDeque<List<Batch>> inputsQueue;
+    private Batch<?> seedInputs;
+    private ArrayDeque<Batch> inputsQueue;
     private volatile @Nullable CallbackBIt it;
     private volatile boolean stopFeeder = false;
     private boolean warnedNoInputs;
@@ -51,12 +50,12 @@ public class QueueBench {
         inputsQueue = new ArrayDeque<>(expectedInvocations);
         long setupStart = nanoTime();
         System.out.println("trialSetup(): loading first invocation batches...");
-        seedInputs = uniformCols(Workloads.<Batch>fromName(bt, sizeName), bt);
+        seedInputs = Workloads.fromName(bt, sizeName).takeOwnership(this);
         System.out.printf("trialSetup(): loaded first invocation batches in %.3fms\n", (nanoTime()-setupStart)/1_000_000.0);
-        int cols = seedInputs.getFirst().cols;
+        int cols = seedInputs.cols;
         vars = new Vars.Mutable(cols);
         for (int i = 0; i < cols; i++)
-            vars.add(Rope.of("x", i));
+            vars.add(RopeFactory.make(4).add('x').add(i).take());
         feederThread = Thread.ofPlatform().name("feeder").start(this::feeder);
         try { Thread.sleep(500); } catch (InterruptedException ignored) {}
         System.out.printf("trialSetup() complete for %d invocations in %.3fs\n", expectedInvocations, (nanoTime()-setupStart)/1_000_000_000.0);
@@ -64,6 +63,7 @@ public class QueueBench {
     }
 
     @TearDown(Level.Trial) public void trialTearDown() throws InterruptedException {
+        seedInputs.recycle(this);
         stopFeeder = true;
         Unparker.unpark(feederThread);
         feederThread.join(1_000);
@@ -73,7 +73,7 @@ public class QueueBench {
     @Setup(Level.Iteration) public void setup() {
         warnedNoInputs = false;
         invocations = 0;
-        Workloads.repeat(seedInputs, expectedInvocations, inputsQueue);
+        Workloads.<Batch>repeat(seedInputs, expectedInvocations, inputsQueue, this);
         System.gc();
         vars = Workloads.makeVars(requireNonNull(inputsQueue.peekFirst()));
         invocations = 0;
@@ -94,17 +94,15 @@ public class QueueBench {
             if (it == null) continue;
             ++invocations;
             try {
-                List<Batch> inputs = inputsQueue.pollFirst();
-                if (inputs == null) {
+                Batch batch = inputsQueue.pollFirst();
+                if (batch == null) {
                     if (!warnedNoInputs)
                         System.out.println("NO MORE INPUTS!");
                     warnedNoInputs = true;
                 } else {
-                    for (Batch b : inputs) {
-                        try {
-                            bt.recycle(it.offer(b));
-                        } catch (BatchQueue.QueueStateException ignored) {}
-                    }
+                    try {
+                        it.offer(batch.releaseOwnership(this));
+                    } catch (BatchQueue.QueueStateException ignored) {}
                 }
                 it.complete(null);
             } catch (Throwable t) {
@@ -120,11 +118,13 @@ public class QueueBench {
         this.it = it;
         Unparker.unpark(this.feederThread);
         int count = 0;
-        for (B b = null; (b = it.nextBatch(b)) != null; ) {
-            for (var n = b; n != null; n = n.next) {
-                for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
-                    for (int c = 0; c < cols; c++) {
-                        if (n.termType(r, c) != null) ++count;
+        try (var g = new Guard.BatchGuard<B>(this)) {
+            for (B b; (b = g.nextBatch(it)) != null; ) {
+                for (var n = b; n != null; n = n.next) {
+                    for (int r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
+                        for (int c = 0; c < cols; c++) {
+                            if (n.termType(r, c) != null) ++count;
+                        }
                     }
                 }
             }

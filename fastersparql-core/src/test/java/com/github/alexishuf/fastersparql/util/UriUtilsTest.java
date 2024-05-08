@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.util;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -122,7 +123,11 @@ class UriUtilsTest {
         String    input = dataString.replaceAll("\\|.*$", "");
         String expected = dataString.substring(dataString.indexOf('|')+1);
         assertEquals(expected, escapeQueryParam(input));
-        assertEquals(expected, escapeQueryParam(new ByteRope(input)).toString());
+
+        try (var m = PooledMutableRope.get()) {
+            escapeQueryParam(m, FinalSegmentRope.asFinal(input));
+            assertEquals(expected, m.toString());
+        }
 
         StringBuilder builder = new StringBuilder(input);
         assertEquals(expected, escapeQueryParam(builder).toString());
@@ -133,9 +138,10 @@ class UriUtilsTest {
         assertEquals(expected, output.toString());
         assertEquals(input, builder.toString(), "builder mutated by escapeQueryParam");
 
-        var rOutput = new ByteRope();
-        escapeQueryParam(rOutput, new ByteRope(builder));
-        assertEquals(expected, rOutput.toString());
+        try (var rOutput = PooledMutableRope.get()) {
+            escapeQueryParam(rOutput, FinalSegmentRope.asFinal(builder));
+            assertEquals(expected, rOutput.toString());
+        }
     }
 
     @ParameterizedTest

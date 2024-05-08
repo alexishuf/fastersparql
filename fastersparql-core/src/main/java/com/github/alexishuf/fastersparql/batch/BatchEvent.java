@@ -3,11 +3,20 @@ package com.github.alexishuf.fastersparql.batch;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
+import com.github.alexishuf.fastersparql.util.owned.LeakDetector;
 import jdk.jfr.*;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.lang.reflect.Array;
+
+import static java.lang.Integer.numberOfLeadingZeros;
+import static java.lang.Runtime.getRuntime;
+import static java.lang.String.format;
+import static java.lang.invoke.MethodHandles.arrayElementVarHandle;
+import static java.lang.invoke.MethodType.methodType;
 
 @SuppressWarnings("unused")
 @Enabled
@@ -32,19 +41,6 @@ public abstract class BatchEvent extends Event {
     }
     /** Whether the {@code record} methods should effectively create, fill and commit events. */
     public static final boolean RECORD = FSProperties.batchJFREnabled();
-    /** Whether Batch.finalize() is implemented. Without finalize() leaks are not detected */
-    private static final boolean REPORT_LEAKED;
-
-    static {
-        boolean hasFinalize = false;
-        try {
-            if (FSProperties.batchPooledMark()) { //noinspection JavaReflectionMemberAccess
-                Batch.class.getDeclaredMethod("finalize");
-                hasFinalize = true;
-            }
-        } catch (Throwable ignored) { }
-        REPORT_LEAKED = hasFinalize;
-    }
 
     @SuppressWarnings("unused") public static void resetCounters() {
         POOLED  .setOpaque(0);
@@ -62,14 +58,19 @@ public abstract class BatchEvent extends Event {
     }
 
     public static void dumpStats() {
-        String leaked = REPORT_LEAKED ? String.format("%,6d", (int)LEAKED.getOpaque()) : " (off)";
+        if (LeakDetector.ENABLED) {
+            PoolCleaner.INSTANCE.sync();
+            System.gc();
+            Async.uninterruptibleSleep(500);
+        }
+        var leaked = LeakDetector.ENABLED ? format("%,9d", (int)LEAKED.getOpaque()) : " (off)";
         System.err.printf("""
-                  Pooled: %,6d
-                Unpooled: %,6d
-                 Garbage: %,6d
-                  Leaked: %s
-                 Created: %,6d
-                   Grown: %,6d
+                Batches   Pooled: %,9d
+                Batches Unpooled: %,9d
+                Batches  Garbage: %,9d
+                Batches   Leaked: %s
+                Batches  Created: %,9d
+                Batches    Grown: %,9d
                 """, (int)POOLED.getOpaque(), (int)UNPOOLED.getOpaque(), (int)GARBAGE.getOpaque(),
                      leaked,                  (int)CREATED.getOpaque(),  (int)GROWN.getOpaque());
     }
@@ -87,25 +88,54 @@ public abstract class BatchEvent extends Event {
             "directly.")
     public int bytesCapacity;
 
-    protected void fillCommitAndRecycle(Batch<?> b, int poolCol) {
+    protected void fillAndCommit(Batch<?> b) {
         termsCapacity = b.termsCapacity();
         bytesCapacity = b.totalBytesCapacity();
         commit();
-        GlobalAffinityShallowPool.offer(poolCol, this);
+    }
+
+    private static final VarHandle POOL_HANDLE = arrayElementVarHandle(BatchEvent[].class);
+    private static final int POOL_BUCKETS
+            = 1 << (32-numberOfLeadingZeros(getRuntime().availableProcessors()*(128/4)-1));
+    private static final int POOL_BUCKETS_MASK = POOL_BUCKETS-1;
+    static {assert Integer.bitCount(POOL_BUCKETS) == 1;}
+
+    @SuppressWarnings("unchecked")
+    private static <T extends BatchEvent> T[] createPool(Class<T> cls) {
+        T[] pool = (T[]) Array.newInstance(cls, POOL_BUCKETS);
+        try {
+            var c = MethodHandles.lookup().findConstructor(cls, methodType(void.class));
+            for (int i = 0; i < pool.length; i++)
+                pool[i] = (T)c.invoke();
+        } catch (Throwable t) {
+            throw new ExceptionInInitializerError(t);
+        }
+        return pool;
+    }
+
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    private static boolean fillAndCommitPooled(BatchEvent[] pool, Batch<?> batch) {
+        int bucket = (int)Thread.currentThread().threadId()&POOL_BUCKETS_MASK;
+        BatchEvent e = (BatchEvent) POOL_HANDLE.getAndSetAcquire(pool, bucket, null);
+        if (e != null) {
+            e.fillAndCommit(batch);
+            return true;
+        }
+        return false;
     }
 
     @Label("Batch pooled")
     @Name("com.github.alexishuf.fastersparql.batch.Pooled")
     @Description("A batch entered a pool")
     public static class Pooled extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final Pooled[] EV_POOL = createPool(Pooled.class);
 
         /** Creates and {@link Event#commit()}s a {@link Pooled} event with given {@code capacity}. */
         public static void record(Batch<?> batch) {
             if (!RECORD) return;
             POOLED.getAndAddRelease(1);
-            Pooled e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new Pooled() : e).fillCommitAndRecycle(batch, POOL_COL);
+            if (!fillAndCommitPooled(EV_POOL, batch))
+                new Pooled().fillAndCommit(batch);
         }
     }
 
@@ -113,14 +143,14 @@ public abstract class BatchEvent extends Event {
     @Name("com.github.alexishuf.fastersparql.batch.Unpooled")
     @Description("The batch left a pool to be used")
     public static class Unpooled extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final Unpooled[] EV_POOL = createPool(Unpooled.class);
 
         /** Creates and {@link #commit()}s a {@link Unpooled} event with given {@code capacity}. */
         public static void record(Batch<?> batch) {
             if (!RECORD) return;
             UNPOOLED.getAndAddRelease(1);
-            Unpooled e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new Unpooled() : e).fillCommitAndRecycle(batch, POOL_COL);
+            if (!BatchEvent.fillAndCommitPooled(EV_POOL, batch))
+                new Unpooled().fillAndCommit(batch);
         }
     }
 
@@ -128,32 +158,30 @@ public abstract class BatchEvent extends Event {
     @Name("com.github.alexishuf.fastersparql.batch.Created")
     @Description("A new Batch instance was created instead of acquiring one from a pool")
     public static class Created extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final Created[] EV_POOL = createPool(Created.class);
 
         /** Creates and {@link #commit()}s a {@link Created} event for the given {@code batch}. */
         public static void record(Batch<?> batch) {
             if (!RECORD) return;
             CREATED.getAndAddRelease(1);
-            Created e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new Created() : e).fillCommitAndRecycle(batch, POOL_COL);
+            if (!BatchEvent.fillAndCommitPooled(EV_POOL, batch))
+                new Created().fillAndCommit(batch);
         }
     }
 
-    @SuppressWarnings("unused") // Batch.finalize() is commented-out
     @Label("Batch leaked")
     @Name("com.github.alexishuf.fastersparql.batch.Leaked")
     @Description("A batch is leaked if was created or unpooled but never offered back to a pool, " +
                  "which would cause it be marked as pooled or as (intentional) garbage.")
     @StackTrace(false)
     public static class Leaked extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final Leaked[] EV_POOL = createPool(Leaked.class);
 
-        /** Creates and {@link #commit()}s a {@link Leaked} event for the given {@code batch}. */
-        public static void record(Batch<?> b) {
-            if (!RECORD) return;
+        public void fillAndCommit(int termsCapacity, int bytesCapacity) {
             LEAKED.getAndAddRelease(1);
-            Leaked e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new Leaked() : e).fillCommitAndRecycle(b, POOL_COL);
+            this.termsCapacity = termsCapacity;
+            this.bytesCapacity = bytesCapacity;
+            commit();
         }
     }
 
@@ -161,14 +189,14 @@ public abstract class BatchEvent extends Event {
     @Name("com.github.alexishuf.fastersparql.batch.Garbage")
     @Description("The batch was offered to a pool which was full and thus was left for collection")
     public static class Garbage extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final Garbage[] EV_POOL = createPool(Garbage.class);
 
         /** Creates and {@link #commit()}s a {@link Garbage} event with given {@code capacity}. */
         public static void record(Batch<?> batch) {
             if (!RECORD) return;
             GARBAGE.getAndAddRelease(1);
-            Garbage e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new Garbage() : e).fillCommitAndRecycle(batch, POOL_COL);
+            if (!BatchEvent.fillAndCommitPooled(EV_POOL, batch))
+                new Garbage().fillAndCommit(batch);
         }
     }
 
@@ -177,7 +205,7 @@ public abstract class BatchEvent extends Event {
     @Description("A batch had its internal storage for local segments reallocated. " +
                  "The capacity represents the capacity after the growth.")
     public static class LocalsGrown extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final LocalsGrown[] EV_POOL = createPool(LocalsGrown.class);
 
         /**
          * Creates and {@link #commit()}s a {@link LocalsGrown} event.
@@ -185,8 +213,8 @@ public abstract class BatchEvent extends Event {
          */
         public static <B extends Batch<B>> void record(Batch<?> batch) {
             if (!RECORD) return;
-            LocalsGrown e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new LocalsGrown() : e).fillCommitAndRecycle(batch, POOL_COL);
+            if (!BatchEvent.fillAndCommitPooled(EV_POOL, batch))
+                new LocalsGrown().fillAndCommit(batch);
         }
     }
 
@@ -195,7 +223,7 @@ public abstract class BatchEvent extends Event {
     @Description("A batch had its internal storage reallocate to hold more terms. " +
                  "The capacity represents the capacity after the growth.")
     public static class TermsGrown extends BatchEvent {
-        private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+        private static final TermsGrown[] EV_POOL = createPool(TermsGrown.class);
 
         /**
          * Creates and {@link #commit()}s a {@link TermsGrown} event.
@@ -203,8 +231,8 @@ public abstract class BatchEvent extends Event {
          */
         public static <B extends Batch<B>> void record(Batch<?> batch) {
             if (!RECORD) return;
-            TermsGrown e = GlobalAffinityShallowPool.get(POOL_COL);
-            (e == null ? new TermsGrown() : e).fillCommitAndRecycle(batch, POOL_COL);
+            if (!BatchEvent.fillAndCommitPooled(EV_POOL, batch))
+                new TermsGrown().fillAndCommit(batch);
         }
     }
 }

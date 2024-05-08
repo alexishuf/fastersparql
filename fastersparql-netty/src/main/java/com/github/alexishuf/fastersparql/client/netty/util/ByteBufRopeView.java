@@ -1,13 +1,9 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
-import io.netty.buffer.Unpooled;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -16,57 +12,125 @@ import java.lang.foreign.MemorySegment;
 
 import static java.util.Objects.requireNonNull;
 
-public final class ByteBufRopeView {
-    private static final int POOL_COLUMN = GlobalAffinityShallowPool.reserveColumn();
-    private static final MemorySegment   EMPTY_SEGMENT = ByteRope.EMPTY.segment;
-    private static final byte @NonNull[] EMPTY_U8      = requireNonNull(ByteRope.EMPTY.utf8);
+public final class ByteBufRopeView implements AutoCloseable {
+    private static final MemorySegment   EMPTY_SEGMENT = FinalSegmentRope.EMPTY.segment;
+    private static final byte @NonNull[] EMPTY_U8      = requireNonNull(FinalSegmentRope.EMPTY.utf8);
 
-    private final SegmentRope sr = new SegmentRope();
+    private SegmentRopeView sr;
     private @MonotonicNonNull TwoSegmentRope tsr;
-    private byte @MonotonicNonNull[] copy;
+    private @Nullable Bytes copy;
 
-    public static ByteBufRopeView create() {
-        ByteBufRopeView v = GlobalAffinityShallowPool.get(POOL_COLUMN);
-        return v == null ? new ByteBufRopeView() : v;
+    public ByteBufRopeView(SegmentRopeView view) { sr = view; }
+
+    @Override public void close() {
+        if (copy != null)
+            copy.recycle(this);
+        if (sr instanceof PooledSegmentRopeView p) {
+            p.close();
+            sr = null;
+        } else {
+            sr.wrapEmpty();
+        }
+        if (tsr != null) {
+            tsr.wrapFirst (EMPTY_SEGMENT, EMPTY_U8, 0, 0);
+            tsr.wrapSecond(EMPTY_SEGMENT, EMPTY_U8, 0, 0);
+        }
     }
 
-    private ByteBufRopeView() {}
-
-    public void recycle() {
-        GlobalAffinityShallowPool.offer(POOL_COLUMN, this);
-    }
-
+    /**
+     * Get a {@link SegmentRope} whose bytes are the same as those in {@code bb} between
+     * {@link ByteBuf#readerIndex()} and {@link ByteBuf#writerIndex()} (not inclusive). If
+     * possible, the segment rope will directly wrap the underlying heap or native memory that the
+     * {@link ByteBuf} is itself wrapping.
+     *
+     *
+     * <p><strong>Important</strong>: The returned {@link SegmentRope} will become empty or wrap
+     * invalid data if <strong>ANY</strong> of these methods are called:</p>
+     * <ul>
+     *     <li>{@link #close()} is called on {@code this}</li>
+     *     <li>{@link #wrap(ByteBuf)} is called on {@code this}</li>
+     *     <li>{@code wrapAsSingle(ByteBuf)} is called on {@code this}</li>
+     *     <li>{@link ByteBuf#release()} is called on {@code bb}</li>
+     * </ul>
+     *
+     * @param bb a {@link ByteBuf}
+     * @return A {@link SegmentRope} wrapping the readable bytes in {@code bb} or a copy of them.
+     *         The {@link SegmentRope} is invalidated when {@code bb} is released, {@code this}
+     *         is closed or another {@code wrap*()} calls is made on {@code this}.
+     */
     public SegmentRope wrapAsSingle(ByteBuf bb) {
-        if (bb instanceof CompositeByteBuf c) {
-            switch (c.numComponents()) {
-                case 0  ->   bb = Unpooled.EMPTY_BUFFER;
-                case 1  -> { return wrapAsSingle(c.component(0)); }
-                default -> { return copy(c); }
+        if (!bb.isReadable())
+            return sr.wrapEmpty();
+        while (bb instanceof CompositeByteBuf c) {
+            ByteBuf c0 = c.component(0), c1;
+            int n = c.numComponents();
+            if (n == 1) {
+                bb = c0;
+            } else {
+                if (n == 2) {
+                    if (!(c1=c.component(1)).isReadable()) {
+                        bb = c0;
+                        continue;
+                    } else if (!c0.isReadable()) {
+                        bb = c1;
+                        continue;
+                    }
+                }
+                return copy(bb);
             }
         }
         return wrapSingle(bb);
     }
 
     /**
-     * Get a {@link PlainRope} wrapping the underlying {@link ByteBuf#readableBytes()} bytes
-     * of {@code bb}. The returned {@link PlainRope} will be invalidated if this method or
-     * {@link #wrapAsSingle(ByteBuf)} is invoked or if {@code bb} lifetime ends (zero references).
-     * This method does not call {@link ByteBuf#retain()}.
+     * Get a {@link PlainRope} whose bytes are the same as those in {@code bb} between
+     * {@link ByteBuf#readerIndex()} and {@link ByteBuf#writerIndex()} (not inclusive). If
+     * possible, the {@link PlainRope} rope will directly wrap the underlying heap or native
+     * memory segment(s) that the {@link ByteBuf} is itself wrapping.
      *
-     * <p>This method is implemented to avoid copies and usually returns a {@link SegmentRope}.
-     * If {@code bb} is a {@link CompositeByteBuf} with 2 non-composite components, this method
-     * returns a {@link TwoSegmentRope}. For more than 2 components (or for composite components)
-     * Data will be copied into temporary storage that will be invalidated by future  calls to
-     * this method or to {@link #wrapAsSingle(ByteBuf)}.</p>
      *
-     * @param bb A {@link ByteBuf} to view as a {@link PlainRope}
-     * @return A {@link PlainRope} exposing the {@link ByteBuf#readableBytes()} in {@code bb}.
+     * <p><strong>Important</strong>: The returned {@link PlainRope} will become empty or wrap
+     * invalid data if <strong>ANY</strong> of these methods are called:</p>
+     * <ul>
+     *     <li>{@link #close()} is called on {@code this}</li>
+     *     <li>{@link #wrapAsSingle(ByteBuf)} is called on {@code this}</li>
+     *     <li>{@code wrap(ByteBuf)} is called on {@code this}</li>
+     *     <li>{@link ByteBuf#release()} is called on {@code bb}</li>
+     * </ul>
+     *
+     * @param bb a {@link ByteBuf}
+     * @return A {@link SegmentRope} wrapping the readable bytes in {@code bb} or a copy of them.
+     *         The {@link SegmentRope} is invalidated when {@code bb} is released, {@code this}
+     *         is closed or another {@code wrap*()} calls is made on {@code this}.
      */
     public PlainRope wrap(ByteBuf bb) {
-        return bb instanceof CompositeByteBuf c ? wrapComposite(c) : wrapSingle(bb);
+        if (!bb.isReadable())
+            return sr.wrapEmpty();
+        while (bb instanceof CompositeByteBuf c) {
+            ByteBuf c0 = c.component(0), c1;
+            int n = c.numComponents();
+            if (n == 1) {
+                bb = c0;
+            } else {
+                if (n == 2) {
+                    c1 = c.component(1);
+                    if (!c0.isReadable()) {
+                        bb = c1;
+                        continue;
+                    } else if (!c1.isReadable()) {
+                        bb = c0;
+                        continue;
+                    } else if (tryWrapTwo(c0, c1)) {
+                        return tsr;
+                    }
+                }
+                return copy(bb);
+            }
+        }
+        return wrapSingle(bb);
     }
 
-    private SegmentRope wrapSingle(ByteBuf bb) {
+    private @Nullable SegmentRope wrapSingleNoCopy(ByteBuf bb) {
         MemorySegment segment;
         byte[] u8 = null;
         int offset = bb.readerIndex();
@@ -84,62 +148,42 @@ public final class ByteBufRopeView {
             segment = MemorySegment.ofBuffer(bb.internalNioBuffer(offset, len));
             offset = 0;
         } else {
-            return copy(bb);
-        }
-        sr.wrapSegment(segment, u8, offset, len);
-        return sr;
-    }
-
-    private @Nullable SegmentRope wrapComponent(ByteBuf bb) {
-        MemorySegment seg;
-        byte[] u8 = null;
-        int off = bb.readerIndex(), len = bb.readableBytes();
-        if (bb.hasArray()) {
-            seg = MemorySegment.ofArray(u8 = bb.array());
-            off += bb.arrayOffset();
-        } else if (bb.hasMemoryAddress()) {
-            seg = MemorySegment.ofAddress(bb.memoryAddress()).reinterpret(off+len);
-        } else if (bb.nioBufferCount() == 1 && bb.isDirect()) {
-            seg = MemorySegment.ofBuffer(bb.nioBuffer());
-            off = 0;
-        } else {
             return null;
         }
-        sr.wrapSegment(seg, u8, off, len);
+        sr.wrap(segment, u8, offset, len);
         return sr;
     }
 
-    private PlainRope wrapComposite(CompositeByteBuf c) {
-        int n = c.numComponents();
-        if (n == 0) {
-            sr.wrapEmptyBuffer();
-            return sr;
-        } else if (n == 1) {
-            return wrap(c.component(0));
-        } else if (n == 2) {
-            var tsr = this.tsr;
-            if (tsr == null)
-                this.tsr = tsr = new TwoSegmentRope();
-            var sr = wrapComponent(c.component(0));
+    private SegmentRope wrapSingle(ByteBuf bb) {
+        var sr = wrapSingleNoCopy(bb);
+        return sr != null ? sr : copy(bb);
+    }
+
+    private boolean tryWrapTwo(ByteBuf c0, ByteBuf c1) {
+        var tsr = this.tsr;
+        if (tsr == null)
+            this.tsr = tsr = new TwoSegmentRope();
+        var sr = wrapSingleNoCopy(c0);
+        if (sr != null) {
+            tsr.wrapFirst(sr);
+            sr  = wrapSingleNoCopy(c1);
             if (sr != null) {
-                tsr.wrapFirst(sr);
-                sr = wrapComponent(c.component(1));
-                if (sr != null) {
-                    tsr.wrapSecond(sr);
-                    return tsr;
-                }
+                tsr.wrapSecond(sr);
+                return true;
             }
         }
-        return copy(c);
+        return false;
     }
 
     private SegmentRope copy(ByteBuf bb) {
         int size = bb.readableBytes();
-        byte[] copy = this.copy;
-        if (copy == null || copy.length < size)
-            this.copy = copy = new byte[size];
-        bb.readBytes(copy, 0, size);
-        sr.wrapSegment(MemorySegment.ofArray(copy), copy, 0, size);
+        Bytes copy = this.copy;
+        if (copy == null || copy.arr.length < size) {
+            if (copy != null) copy.recycle(this);
+            this.copy = copy = Bytes.atLeast(size).takeOwnership(this);
+        }
+        bb.readBytes(copy.arr, 0, size);
+        sr.wrap(copy.segment, copy.arr, 0, size);
         return sr;
     }
 }

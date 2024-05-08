@@ -85,10 +85,10 @@ public class SegmentRopeCompareNumbersTest {
         byte[] rU8 = r.getBytes(UTF_8);
         MemorySegment lSeg = MemorySegment.ofArray(lU8);
         MemorySegment rSeg = MemorySegment.ofArray(rU8);
-        SegmentRope lRope = new SegmentRope(lSeg, lU8, lOff, lLen);
-        SegmentRope rRope = new SegmentRope(rSeg, rU8, rOff, rLen);
-        SegmentRope lAbsRope = new SegmentRope(lSeg, lU8, 0, lU8.length);
-        SegmentRope rAbsRope = new SegmentRope(rSeg, rU8, 0, rU8.length);
+        SegmentRopeView lRope = new SegmentRopeView().wrap(lSeg, lU8, lOff, lLen);
+        SegmentRopeView rRope = new SegmentRopeView().wrap(rSeg, rU8, rOff, rLen);
+        SegmentRopeView lAbsRope = new SegmentRopeView().wrap(lSeg, lU8, 0, lU8.length);
+        SegmentRopeView rAbsRope = new SegmentRopeView().wrap(rSeg, rU8, 0, rU8.length);
 
         assertEquals(expected, signum(compareNumbers(lU8,  lOff, lLen, rU8,  rOff, rLen)));
         assertEquals(expected, signum(compareNumbers(lSeg, lOff, lLen, rSeg, rOff, rLen)));

@@ -10,17 +10,19 @@ import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
-import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+
+import static com.github.alexishuf.fastersparql.model.BindType.MINUS;
 
 public abstract class AbstractSparqlClient implements SparqlClient {
     private static final Logger log = LoggerFactory.getLogger(AbstractSparqlClient.class);
@@ -94,6 +96,10 @@ public abstract class AbstractSparqlClient implements SparqlClient {
 
     protected abstract void doClose();
 
+    public boolean isClosed() {
+        return (int)REFS.getAcquire(this) == 0;
+    }
+
     @Override public final void close() {
         if (closeCalled) return;
         closeCalled = true;
@@ -103,15 +109,16 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     /* --- --- --- query implementations --- --- --- */
 
     protected abstract <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql);
-    protected abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
-                                                              Vars rebindHint);
+    protected abstract <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint);
 
     protected <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
         return new ClientBindingBIt<>(bq, this);
     }
 
-    protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query, Vars rebindHint) {
-        return new BindingStage<>(query, rebindHint, this);
+    protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(EmitBindQuery<B> query, Vars rebindHint) {
+        return BindingStage.create(query, rebindHint, this);
     }
 
     /* --- --- --- interface implementations --- --- --- */
@@ -132,8 +139,8 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     }
 
     @Override
-    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> bt, SparqlQuery sparql,
-                                                      Vars rebindHint) {
+    public final <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         if (sparql.isGraph())
             throw new InvalidSparqlQueryType("query() method only takes SELECT/ASK queries");
         acquireRef();
@@ -152,7 +159,7 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         acquireRef();
         try {
             BIt<B> bindings = q.bindings;
-            if (q.type == BindType.MINUS && !bindings.vars().intersects(q.nonAskQuery.publicVars()))
+            if (q.type == MINUS && !bindings.vars().intersects(q.nonAskQuery.publicVars()))
                 return bindings;
             return doQuery(q);
         } catch (Throwable t) {
@@ -162,15 +169,14 @@ public abstract class AbstractSparqlClient implements SparqlClient {
         }
     }
 
-    @Override public final <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> q,
-                                                                Vars rebindHint) {
+    @Override public final <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(EmitBindQuery<B> q, Vars rebindHint) {
         if (q.query.isGraph())
             throw new InvalidSparqlQueryType("emit() method only takes SELECT/ASK queries");
         acquireRef();
         try {
-            var bindings = q.bindings;
-            if (q.type == BindType.MINUS && !bindings.vars().intersects(q.nonAskQuery.publicVars()))
-                return bindings;
+            if (q.type == MINUS && !q.bindingsVars().intersects(q.nonAskQuery.publicVars()))
+                return q.bindings;
             return doEmit(q, rebindHint);
         } catch (Throwable t) {
             throw FSException.wrap(endpoint, t);

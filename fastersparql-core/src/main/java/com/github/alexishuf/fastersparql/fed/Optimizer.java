@@ -10,7 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -31,7 +31,8 @@ public class Optimizer extends CardinalityEstimator {
     private static final int INIT_OPS_LEN = 22;
     private static final int INIT_DEPTH   = 10;
     private final IdentityHashMap<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
-    private final AffinityShallowPool<State> pool = new AffinityShallowPool<>(State.class);
+    private final Alloc<State> stateAlloc = new Alloc<>(State.class, this+".stateAlloc",
+            Alloc.THREADS*8, State::new, State.BYTES);
 
     public Optimizer() {
         super(new CompletableFuture<>());
@@ -81,14 +82,18 @@ public class Optimizer extends CardinalityEstimator {
         }
     }
 
-    private State getState(Plan plan) {
-        State state = pool.get();
-        if (state == null) state = new State();
+    private State state(Plan plan) {
+        State state = stateAlloc.create();
         state.setup(plan);
         return state;
     }
 
-    private final class State {
+    private final class State implements AutoCloseable {
+        private static final int BYTES = 16 + 14*4 + 2*8
+                + 2*Vars.BYTES + 3*(16+8) /*ArrayList*/
+                + ArrayBinding.BYTES
+                + 2*((INIT_DEPTH+1)*20) /*groundedStack, estimatesStack*/
+                + 20 /*estimates*/;
         private final Vars.Mutable tmpVars = new Vars.Mutable(10);
         private int upFiltersCount = 0;
         private Vars upFilterVars = Vars.EMPTY;
@@ -112,13 +117,19 @@ public class Optimizer extends CardinalityEstimator {
                 estimatesStack[i] = new int[INIT_OPS_LEN];
         }
 
-        public void release() {
-            inUse = false;
-            pool.offer(this);
+        @Override public void close() {
+            if (inUse) {
+                inUse = false;
+                stateAlloc.offer(this);
+            } else {
+                throw new IllegalStateException("duplicate/concurrent close()");
+            }
         }
 
         public void setup(Plan plan) {
-            assert !inUse;
+            if (inUse)
+                throw new IllegalStateException("State object already in-use");
+            inUse = true;
             tmpVars.clear();
             tmpFilters.clear();
             upFilters.clear();
@@ -555,11 +566,12 @@ public class Optimizer extends CardinalityEstimator {
      *         possibly mutated tree.
      */
     public Plan optimize(Plan plan, Vars assumeGrounded) {
-        State state = getState(plan);
-        if (!assumeGrounded.isEmpty())
-            groundVars(assumeGrounded, state);
-        Plan out = state.optimize(plan, true);
-        state.release();
+        Plan out;
+        try (var state = state(plan)) {
+            if (!assumeGrounded.isEmpty())
+                groundVars(assumeGrounded, state);
+            out = state.optimize(plan, true);
+        }
         return out;
     }
 
@@ -606,40 +618,40 @@ public class Optimizer extends CardinalityEstimator {
         }
 
         // get and init State object
-        State st = getState(join);
-        groundVars(boundVars, st);
+        try (State st = state(join)) {
+            groundVars(boundVars, st);
 
-        // try to push filters on outer modifier
-        List<Expr> filters = mod != null && !mod.filters.isEmpty()
-                           ? mod.filters = new ArrayList<>(mod.filters) : List.of();
-        long taken = 0;
-        if (!filters.isEmpty()) {
-            for (int i = 0, n = join.opCount(); i < n; i++) {
-                st.tmpVars.addAll(boundVars);
-                st.tmpVars.addAll(join.op(i).publicVars());
-                List<Expr> opFilters = null;
-                for (int j = 0; j < filters.size(); j++) {
-                    Expr e = filters.get(j);
-                    if (st.tmpVars.containsAll(e.vars())) {
-                        taken |= 1L << j;
-                        (opFilters == null ? opFilters = new ArrayList<>() : opFilters).add(e);
+            // try to push filters on outer modifier
+            List<Expr> filters = mod != null && !mod.filters.isEmpty()
+                    ? mod.filters = new ArrayList<>(mod.filters) : List.of();
+            long taken = 0;
+            if (!filters.isEmpty()) {
+                for (int i = 0, n = join.opCount(); i < n; i++) {
+                    st.tmpVars.addAll(boundVars);
+                    st.tmpVars.addAll(join.op(i).publicVars());
+                    List<Expr> opFilters = null;
+                    for (int j = 0; j < filters.size(); j++) {
+                        Expr e = filters.get(j);
+                        if (st.tmpVars.containsAll(e.vars())) {
+                            taken |= 1L << j;
+                            (opFilters == null ? opFilters = new ArrayList<>() : opFilters).add(e);
+                        }
                     }
+                    if (opFilters != null)
+                        join.replace(i, FS.filter(join.op(i), opFilters));
+                    st.tmpVars.clear();
                 }
-                if (opFilters != null)
-                    join.replace(i, FS.filter(join.op(i), opFilters));
-                st.tmpVars.clear();
+                // removed pushed filters from outer modifier
+                for (int i; (i = 63 - numberOfLeadingZeros(taken)) >= 0; taken &= ~(1L << i))
+                    filters.remove(i);
+                if (mod.isNoOp()) // remove outer modifier if it became a no-op
+                    joinOrMod = join;
             }
-            // removed pushed filters from outer modifier
-            for (int i; (i=63- numberOfLeadingZeros(taken)) >= 0; taken &= ~(1L << i))
-                filters.remove(i);
-            if (mod.isNoOp()) // remove outer modifier if it became a no-op
-                joinOrMod = join;
+            // reorder join operands by cost. will not push filters to subsets of operands
+            Plan[] arr = join.operandsArray;
+            if (arr == null) st.reorderBinary(join);
+            else st.reorderNary(join, arr);
         }
-        // reorder join operands by cost. will not push filters to subsets of operands
-        Plan[] arr = join.operandsArray;
-        if (arr == null) st.reorderBinary(join);
-        else             st.reorderNary(join, arr);
-        st.release();
         return joinOrMod;
     }
 

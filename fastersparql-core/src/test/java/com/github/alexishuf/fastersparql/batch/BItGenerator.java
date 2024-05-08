@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.adapters.IteratorBIt;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
@@ -24,13 +25,13 @@ public sealed interface BItGenerator {
     /** Equivalent to {@link #asBIt(Consumer, RuntimeException, int...)} with a
      *  no-op {@code batchingSetup} */
     default BIt<TermBatch> asBIt(@Nullable RuntimeException err, int... ints) {
-        return asBIt(it -> {}, err, ints);
+        return asBIt(ignored -> {}, err, ints);
     }
 
     /** Equivalent to {@link #asBIt(Consumer, RuntimeException, int...)} with
      *  {@code err=null} and a no-op {@code batchingSetup} */
     default BIt<TermBatch> asBIt(int... ints) {
-        return asBIt(it -> {}, null, ints);
+        return asBIt(ignored -> {}, null, ints);
     }
 
     /**
@@ -96,13 +97,14 @@ public sealed interface BItGenerator {
                 this.err = err;
             }
 
-            @Override public @Nullable TermBatch nextBatch(@Nullable TermBatch offer) {
+            @Override public @Nullable Orphan<TermBatch>
+            nextBatch(@Nullable Orphan<TermBatch> offer) {
                 if (!started) {
                     started = true;
                     Thread.startVirtualThread(() -> {
                         for (int i : ints) {
                             try {
-                                TERM.recycle(offer(intsBatch(i)));
+                                offer(intsBatch(i));
                             } catch (TerminatedException|CancelledException e) { break; }
                         }
                         complete(err);

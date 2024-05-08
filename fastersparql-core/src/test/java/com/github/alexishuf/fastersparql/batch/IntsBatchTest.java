@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -11,6 +12,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.*;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -59,9 +61,13 @@ public class IntsBatchTest {
     }
 
     @Test void testFill() {
-        TermBatch ex = TermBatch.of(termList(1), termList(2),  termList(3));
-        var b = IntsBatch.fill(new TermBatch(new Term[3], 0, 1, true), 1, 2, 3);
-        assertEquals(ex, b);
+        try (var ex = new Guard.BatchGuard<TermBatch>(this);
+             var ac = new Guard.BatchGuard<TermBatch>(this)) {
+            ex.set(TermBatch.of(termList(1), termList(2), termList(3)));
+            var b = IntsBatch.fill(ac.set(TERM.create(1)), 1, 2, 3);
+            assertSame(b, ac.get());
+            assertEquals(ex.get(), b);
+        }
     }
 
     static Stream<Arguments> testHistogram() {

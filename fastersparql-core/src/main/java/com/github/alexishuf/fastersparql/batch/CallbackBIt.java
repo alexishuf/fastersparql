@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 /**
@@ -8,18 +9,8 @@ import org.checkerframework.common.returnsreceiver.qual.This;
  */
 public interface CallbackBIt<B extends Batch<B>> extends BIt<B>, CompletableBatchQueue<B> {
     /**
-     * Copies the content of {@code batch} into internal storage managed by {@code this} so that
-     * the rows can later by consumed via {@link #nextBatch(Batch)}
-     * @param batch batch whose rows will be copied. It will not be modified and caller ALWAYS
-     *              retains ownership
-     * @throws CancelledException see {@link #offer(Batch)}
-     * @throws TerminatedException see {@link #offer(Batch)}
-     */
-    void copy(B batch) throws CancelledException, TerminatedException;
-
-    /**
      * How many items, spread across all queued batches can be hold without causing the
-     * next {@link CallbackBIt#offer(Batch)} call to block.
+     * next {@link CallbackBIt#offer(Orphan)} call to block.
      *
      * @return the maximum number of queued items or {@link Long#MAX_VALUE} if not enforced.
      */

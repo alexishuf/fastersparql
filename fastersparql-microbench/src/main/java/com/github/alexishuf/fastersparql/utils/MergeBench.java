@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.utils;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -14,7 +13,10 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
+import com.github.alexishuf.fastersparql.util.concurrent.BackgroundTasks;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
@@ -48,7 +50,7 @@ public class MergeBench {
 
     private <B extends Batch<B>> B makeBatch(int rows, int value) {
         BatchType<B> type = (BatchType<B>) batchKind.asType();
-        B b = type.create(1);
+        B b = type.create(1).takeOwnership(this);
         for (int r = 0; r < rows; r++) {
             b.beginPut();
             b.putTerm(0, Term.valueOf("\""+(value++)+"\""));
@@ -71,12 +73,15 @@ public class MergeBench {
         for (int i = 0; i < nTall; i++, next += tallHeight)
             columns.add(makeBatch(tallHeight, next));
         for (int i = 0; i < nEmpty; i++, next += tallHeight)
-            columns.add(type.create(1));
+            columns.add(type.create(1).takeOwnership(this));
         Async.uninterruptibleSleep(100); // thermal slack
     }
 
     @TearDown(Level.Iteration) public void tearDown() {
-        PoolCleaner.INSTANCE.sync();
+        BackgroundTasks.sync();
+        for (Batch<?> b : columns)
+            b.recycle(this);
+        columns.clear();
     }
 
     private static final class SourceBIt<B extends Batch<B>> extends UnitaryBIt<B> {
@@ -105,8 +110,8 @@ public class MergeBench {
         for (var source : columns)
             sources.add(new SourceBIt<>(type, (B)source));
         int h = 0;
-        try (var it = new MergeBIt<>(sources, type, X)) {
-            for (B b = null; (b = it.nextBatch(b)) != null; ) {
+        try (var g = new Guard.ItGuard<>(this, new MergeBIt<>(sources, type, X))) {
+            for (B b; (b = g.nextBatch()) != null; ) {
                 for (var n = b; n != null; n = n.next) {
                     for (int r = 0, rows = n.rows; r < rows; r++)
                         h ^= n.hash(r);
@@ -119,28 +124,36 @@ public class MergeBench {
     @Benchmark
     public <B extends Batch<B>> int emit() {
         BatchType<B> type = (BatchType<B>) this.type;
-        var gather = new GatheringEmitter<>(type, X);
+        var gather = GatheringEmitter.create(type, X).takeOwnership(this);
         for (Batch<?> source : columns) {
             gather.subscribeTo(new SourceProducer<>(type, (B)source));
         }
-        return new BenchReceiver<B>().subscribeTo(gather).getSimple().h;
+        return new BenchReceiver<B>().subscribeTo(gather.releaseOwnership(this)).getSimple().h;
     }
 
     private static final class BenchReceiver<B extends Batch<B>>
-            extends ReceiverFuture<BenchReceiver<B>, B> {
+            extends ReceiverFuture<BenchReceiver<B>, B, BenchReceiver<B>> {
         public int h;
-        @Override public B onBatch(B batch) {
+
+        @Override public void onBatch(Orphan<B> orphan) {
+            B b = orphan.takeOwnership(this);
+            onBatchByCopy(b);
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B batch) {
             for (var b = batch; b != null; b = b.next) {
                 for (int r = 0, rows = b.rows; r < rows; r++)
                     h ^= b.hash(r);
             }
-            return batch;
         }
         @Override public void onComplete() { complete(this); }
     }
 
 
-    private static final class SourceProducer<B extends Batch<B>> extends TaskEmitter<B> {
+    private static final class SourceProducer<B extends Batch<B>>
+            extends TaskEmitter<B, SourceProducer<B>>
+            implements Orphan<SourceProducer<B>> {
         private static final int TICK_CHECK = 0x1f;
         private @Nullable B current;
         private int row;
@@ -150,12 +163,21 @@ public class MergeBench {
             this.current = source;
         }
 
+        @Override public @Nullable SourceProducer<B> recycle(Object currentOwner) {
+            current = Batch.recycle(current, this);
+            return super.recycle(currentOwner);
+        }
+
+        @Override public SourceProducer<B> takeOwnership(Object newOwner) {
+            return takeOwnership0(newOwner);
+        }
+
         @Override protected int produceAndDeliver(int state) {
             int r = row;
             var curr = current;
             if (curr == null)
                 return COMPLETED;
-            B b = bt.createForThread(threadId, 1);
+            B b = bt.createForThread(threadId, 1).takeOwnership(this);
             int end = r+(int)Math.min(curr.rows-r, requested());
             long deadline = Timestamp.nextTick(1);
             while (r < end) {
@@ -164,10 +186,11 @@ public class MergeBench {
                     break;
             }
             row = r;
-            bt.recycleForThread(threadId, deliver(b));
+            deliver(b.releaseOwnership(this));
             if (r >= curr.rows) {
-                this.current = curr.next;
-                return COMPLETED;
+                row = 0;
+                if ((this.current = curr.next) == null)
+                    return COMPLETED;
             }
             return state;
         }

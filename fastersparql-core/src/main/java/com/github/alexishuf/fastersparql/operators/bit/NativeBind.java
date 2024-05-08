@@ -2,8 +2,6 @@ package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ScatterBIt;
@@ -27,6 +25,8 @@ import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.operators.plan.Union;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -74,11 +74,11 @@ public class NativeBind {
         scatter.start();
         boolean crossDedup = right.crossDedup;
         int dedupCols = outVars.size();
-        Dedup<B> dedup;
-        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols, WEAK);
-        else if (crossDedup) dedup = new WeakCrossSourceDedup<>(bt, dedupCols);
+        Orphan<? extends Dedup<B, ?>> dedup;
+        if      ( weakDedup) dedup = Dedup.weak(bt, dedupCols, WEAK);
+        else if (crossDedup) dedup = Dedup.weakCrossSource(bt, dedupCols);
         else                 return new MergeBIt<>(boundIts, bt, outVars, metrics);
-        return new DedupMergeBIt<>(boundIts, outVars, metrics, dedup);
+        return new DedupMergeBIt<>(boundIts, bt, outVars, metrics, dedup);
     }
 
     public static <B extends Batch<B>> BIt<B> preferNative(BatchType<B> batchType, Plan join,
@@ -112,12 +112,12 @@ public class NativeBind {
         return ProcessorBIt.project(join.publicVars(), left);
     }
 
-    public static <B extends Batch<B>> Emitter<B>
-    multiBindEmit(Emitter<B> left, BindType type, Vars outVars, Union right,
+    public static <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    multiBindEmit(Orphan<? extends Emitter<B, ?>> left, BindType type, Vars outVars, Union right,
                   Vars rebindHints, boolean weakDedup, SparqlClient clientForAlgebra) {
-        var bt = left.batchType();
+        var bt = Emitter.peekBatchType(left);
         var scatter = new ScatterStage<>(left);
-        var gather = new GatheringEmitter<>(left.batchType(), outVars);
+        var gather = GatheringEmitter.create(bt, outVars).takeOwnership(MULTI_BIND_EMIT);
         for (int i = 0, n = right.opCount(); i < n; i++) {
             Plan operand = right.op(i);
             SparqlClient client;
@@ -135,26 +135,29 @@ public class NativeBind {
             var bind = client.emit(new EmitBindQuery<>(sparql, conn, type), rebindHints);
             gather.subscribeTo(bind);
         }
+        var orphanGather = gather.releaseOwnership(MULTI_BIND_EMIT);
 
         boolean crossDedup = right.crossDedup;
         int dedupCols = outVars.size();
-        Dedup<B> dedup;
-        if      ( weakDedup) dedup = new WeakDedup<>(bt, dedupCols, WEAK);
-        else if (crossDedup) dedup = new WeakCrossSourceDedup<>(bt, dedupCols);
-        else                return gather;
-        return bt.filter(outVars, dedup).subscribeTo(gather);
+        Orphan<? extends Dedup<B, ?>> dedup;
+        if      ( weakDedup) dedup = Dedup.weak(bt, dedupCols, WEAK);
+        else if (crossDedup) dedup = Dedup.weakCrossSource(bt, dedupCols);
+        else                 return orphanGather;
+        return bt.filter(outVars, dedup).takeOwnership(MULTI_BIND_EMIT)
+                 .subscribeTo(orphanGather).releaseOwnership(MULTI_BIND_EMIT);
     }
+    private static final StaticMethodOwner MULTI_BIND_EMIT = new StaticMethodOwner("multiBindEmit");
 
-    public static <B extends Batch<B>> Emitter<B>
+    public static <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     preferNativeEmit(BatchType<B> bType, Plan join, Vars rebindHint, boolean weakDedup) {
         BindType type = join.type.bindType();
         if (type == null) throw new IllegalArgumentException("Unsupported: Plan type");
-        Emitter<B> left = join.op(0).emit(bType, rebindHint, weakDedup);
+        var left = join.op(0).emit(bType, rebindHint, weakDedup);
         for (int i = 1, n = join.opCount(); i < n; i++) {
             var r = join.op(i);
             if (r instanceof Union u && u.right == null) r = u.left();
             var projection = i == n-1 ? join.publicVars()
-                    : type.resultVars(left.vars(), r.publicVars());
+                    : type.resultVars(Emitter.peekVars(left), r.publicVars());
             if (r instanceof Query q && q.client.usesBindingAwareProtocol()) {
                 var sparql = q.query();
                 if (weakDedup)        sparql = sparql.toDistinct(q.client.cheapestDistinct());
@@ -163,8 +166,8 @@ public class NativeBind {
                 left = multiBindEmit(left, type, projection, rUnion, rebindHint,
                                      weakDedup, null);
             } else {
-                left = new BindingStage<>(new EmitBindQuery<>(r, left, type), rebindHint,
-                                          weakDedup, projection);
+                left = BindingStage.create(new EmitBindQuery<>(r, left, type), rebindHint,
+                                           weakDedup, projection);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)

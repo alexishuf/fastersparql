@@ -5,6 +5,8 @@ import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.SharedRopes;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static java.util.Objects.requireNonNull;
@@ -30,12 +32,13 @@ public class BItCTest {
     private static final IllegalArgumentException LINKED_EX
             = new IllegalArgumentException("linked batches are not supported");
 
-    public BItCTest(CallbackBIt<TermBatch> it, TermBatch[] batches) {
+    public BItCTest(CallbackBIt<TermBatch> it, Orphan<TermBatch>[] batches) {
         this.it = it;
-        this.batches = batches;
+        this.batches = new TermBatch[batches.length];
         int consumedCapacity = 0;
         int resultBytes = 0;
-        for (TermBatch b : batches) {
+        for (var orphan : batches) {
+            TermBatch b = orphan.takeOwnership(this);
             if (b.next != null)
                 throw LINKED_EX;
             consumedCapacity += b.rows;
@@ -47,24 +50,12 @@ public class BItCTest {
         this.consumed = new int[consumedCapacity];
     }
 
-    static TermBatch batch(int i) {
-        TermBatch b = TermBatchType.TERM.create(1);
+    static Orphan<TermBatch> batch(int i) {
+        TermBatch b = TermBatchType.TERM.create(1).takeOwnership(BItCTest.class);
         b.beginPut();
         b.putTerm(0, INTS[i]);
         b.commitPut();
-        return b;
-    }
-
-    static void offerAndInvalidate(CallbackBIt<TermBatch> it, TermBatch b) {
-        try {
-            TermBatch mine = it.offer(b);
-            if (mine != null) {
-                mine.clear();
-                mine.beginPut();
-                mine.putTerm(0, INTS[999]);
-                mine.commitPut();
-            }
-        } catch (BatchQueue.QueueStateException ignored) {}
+        return b.releaseOwnership(BItCTest.class);
     }
 
     static int parseInt(@Nullable Term term) {
@@ -77,9 +68,11 @@ public class BItCTest {
         return value;
     }
 
-    protected static void produceAndComplete(CallbackBIt<TermBatch> it, TermBatch[] batches) {
+    protected void produceAndComplete(CallbackBIt<TermBatch> it, TermBatch[] batches) {
         for (TermBatch batch : batches)
-            offerAndInvalidate(it, batch);
+            try {
+                it.offer(batch.releaseOwnership(this));
+            } catch (BatchQueue.QueueStateException ignored) {}
         it.complete(null);
     }
 
@@ -89,11 +82,14 @@ public class BItCTest {
 
     protected void consumeToCompletion() {
         int i = 0;
-        for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
-            for (var n = b; n != null; n = n.next) {
-                for (int r = 0; r < n.rows; r++)
-                    consumed[i++] = parseInt(n.get(r, 0));
+        try (var g = new Guard.BatchGuard<TermBatch>(this)) {
+            for (TermBatch b; (b = g.nextBatch(it)) != null; ) {
+                for (; b != null; b = b.next) {
+                    for (int r = 0; r < b.rows; r++)
+                        consumed[i++] = parseInt(b.get(r, 0));
+                }
             }
+
         }
         consumedSize = i;
     }

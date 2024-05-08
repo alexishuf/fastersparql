@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;

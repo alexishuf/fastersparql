@@ -2,15 +2,23 @@ package com.github.alexishuf.fastersparql.store.index.dict;
 
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.SUFFIX_CHAR;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public final class SortedCompositeDict extends Dict {
@@ -44,7 +52,7 @@ public final class SortedCompositeDict extends Dict {
         this(file, new SortedStandaloneDict(file.resolveSibling("shared")));
     }
 
-    static void validateNtStrings(AbstractLookup lookup) throws IOException {
+    static void validateNtStrings(AbstractLookup<?> lookup) throws IOException {
         @SuppressWarnings("resource") Dict dict = lookup.dict();
         for (long id = 1, n = dict.strings(); id <= n; id++) {
             PlainRope t = lookup.get(id);
@@ -77,35 +85,76 @@ public final class SortedCompositeDict extends Dict {
 
     @Override public void validate() throws IOException {
         super.validate();
-        validateNtStrings(lookup());
+        try (var guard = new Guard<Lookup>(this)) {
+            validateNtStrings(guard.set(lookup()));
+        }
     }
 
     /** Get the shared strings {@link Dict} or {@code null} if this is a standalone dict. */
     @SuppressWarnings("unused") public @Nullable Dict shared() { return sharedDict; }
 
-    @Override public AbstractLookup polymorphicLookup() { return lookup(); }
+    @Override public Orphan<Lookup> polymorphicLookup() { return lookup(); }
 
-    public Lookup lookup() { return new Lookup(); }
+    public Orphan<Lookup> lookup() {return LOOKUP.create().thaw(this).releaseOwnership(RECYCLED);}
 
-    public final class Lookup extends AbstractLookup {
-        private final AbstractLookup shared = sharedDict == null ? null : sharedDict.lookup();
-        private final SegmentRope tmp =  new SegmentRope(seg, 0, 1);
+    private static final Supplier<Lookup> LOOKUP_FAC = new Supplier<>() {
+        @Override public Lookup get() {return new Lookup.Concrete().takeOwnership(RECYCLED);}
+        @Override public String toString() {return "SortedCompositeDict.LOOKUP_FAC";}
+    };
+    private static final Alloc<Lookup> LOOKUP = new Alloc<>(Lookup.class,
+            "SortedCompositeDict.LOOKUP", LOOKUP_POOL_CAPACITY, LOOKUP_FAC, Lookup.BYTES);
+    //static { Primer.primeLocal(LOOKUP); }
+
+    public static abstract sealed class Lookup extends AbstractLookup<Lookup> {
+        public static final int BYTES = 16 + 8*4 + 8
+                + SegmentRopeView.BYTES + 2*TwoSegmentRope.BYTES + Splitter.BYTES;
+        private SortedCompositeDict dict;
+        private SortedStandaloneDict.Lookup shared;
+        private final SegmentRopeView tmp =  new SegmentRopeView();
         private final TwoSegmentRope out = new TwoSegmentRope();
         private final TwoSegmentRope termTmp = new TwoSegmentRope();
-        private final Splitter split = new Splitter(splitMode);
+        private final Splitter split = Splitter.create(Splitter.Mode.LAST).takeOwnership(this);
         private final byte[] b64Base = (byte[]) split.b64(MIN_ID).segment.heapBase().orElse(null);
         private final long b64Off = split.b64(MIN_ID).segment.address();
 
-        @Override public SortedCompositeDict dict() { return SortedCompositeDict.this; }
+        private Lookup() {}
+
+        private @This Lookup thaw(SortedCompositeDict dict) {
+            if (dict != this.dict) {
+                this.dict = dict;
+                Owned.recycle(shared, this);
+                this.shared = dict.sharedDict.lookup().takeOwnership(this);
+                this.split.mode(dict.splitMode);
+                this.tmp.wrap(dict.seg, 0, 1);
+            }
+            return this;
+        }
+
+        @Override public @Nullable Lookup recycle(Object currentOwner) {
+            internalMarkRecycled(currentOwner);
+            if (LOOKUP.offer(this) != null) {
+                split.recycle(this);
+                Owned.safeRecycle(shared, this);
+                internalMarkGarbage(RECYCLED);
+            }
+            return null;
+        }
+
+        private static final class Concrete extends Lookup implements Orphan<Lookup> {
+            @Override public Lookup takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        @Override public SortedCompositeDict dict() { return dict; }
 
         @Override public long find(PlainRope rope) {
+            var d = dict;
             var b64 = split.b64(switch (split.split(rope)) {
-                case NONE -> sharedDict.emptyId;
+                case NONE -> d.sharedDict.emptyId;
                 case PREFIX,SUFFIX -> shared.find(split.shared());
             });
             long id = find(b64, split.local());
-            if (id == NOT_FOUND && sharedOverflow) {
-                split.b64(sharedDict.emptyId);
+            if (id == NOT_FOUND && d.sharedOverflow) {
+                split.b64(d.sharedDict.emptyId);
                 id = find(b64, rope);
             }
             return id;
@@ -118,18 +167,19 @@ public final class SortedCompositeDict extends Dict {
         }
 
         private long find(SegmentRope b64, PlainRope local) {
-            long lo = 0, hi = nStrings-1;
+            var d = dict;
+            long lo = 0, hi = d.nStrings-1;
             if (U != null && local instanceof SegmentRope s) {
                 byte[] lBase = s.utf8; //(byte[]) s.segment.array().orElse(null);
                 long lOff = s.segment.address() + s.offset;
                 int lLen = local.len;
                 while (lo <= hi) {
                     long mid = ((lo + hi) >>> 1);
-                    long off = readOffUnsafe(mid);
-                    int len = (int) (readOffUnsafe(mid + 1) - off);
-                    int diff = SegmentRope.compare1_1(null, valBase + off, 5, b64Base, b64Off, 5);
+                    long off = d.readOffUnsafe(mid);
+                    int len = (int) (d.readOffUnsafe(mid + 1) - off);
+                    int diff = SegmentRope.compare1_1(null, d.valBase + off, 5, b64Base, b64Off, 5);
                     if (diff == 0)
-                        diff = SegmentRope.compare1_1(null, valBase + off + 5, len - 5, lBase, lOff, lLen);
+                        diff = SegmentRope.compare1_1(null, d.valBase + off + 5, len - 5, lBase, lOff, lLen);
                     if      (diff > 0) hi = mid - 1;
                     else if (diff < 0) lo = mid + 1;
                     else               return mid + Dict.MIN_ID;
@@ -137,8 +187,8 @@ public final class SortedCompositeDict extends Dict {
             } else {
                 while (lo <= hi) {
                     long mid = ((lo + hi) >>> 1);
-                    long off = readOffUnsafe(mid);
-                    int len = (int) (readOffUnsafe(mid+1) - off);
+                    long off = d.readOffUnsafe(mid);
+                    int len = (int) (d.readOffUnsafe(mid+1) - off);
                     tmp.slice(off, len);
                     int diff = b64.compareTo(tmp, 0, Math.min(b64.len, len));
                     if (diff == 0)
@@ -153,16 +203,17 @@ public final class SortedCompositeDict extends Dict {
 
 
         @Override public TwoSegmentRope get(long id)  {
-            if (id < MIN_ID || id > nStrings) return null;
-            long off = readOffUnsafe(id - 1);
-            int len = (int)(readOffUnsafe(id) - off);
-            long sId = Splitter.decode(seg, off);
-            SegmentRope sharedRope = (SegmentRope) this.shared.get(sId);
+            var d = dict;
+            if (id < MIN_ID || id > d.nStrings) return null;
+            long off = d.readOffUnsafe(id - 1);
+            int len = (int)(d.readOffUnsafe(id) - off);
+            long sId = Splitter.decode(d.seg, off);
+            var sharedRope = this.shared.get(sId);
             if (sharedRope == null)
-                throw new BadSharedId(id, SortedCompositeDict.this, off, len);
+                throw new BadSharedId(id, d, off, len);
             out.wrapFirst(sharedRope);
-            out.wrapSecond(seg, null, off+5, len-5);
-            if (seg.get(JAVA_BYTE, off+4) == SUFFIX_CHAR)
+            out.wrapSecond(d.seg, null, off+5, len-5);
+            if (d.seg.get(JAVA_BYTE, off+4) == SUFFIX_CHAR)
                 out.flipSegments();
             return out;
         }

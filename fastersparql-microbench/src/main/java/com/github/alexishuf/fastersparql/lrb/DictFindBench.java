@@ -1,15 +1,14 @@
 package com.github.alexishuf.fastersparql.lrb;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.PlainRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.store.index.HdtConverter;
+import com.github.alexishuf.fastersparql.store.index.Hdt2StoreIndexConverter;
 import com.github.alexishuf.fastersparql.store.index.dict.*;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.openjdk.jmh.annotations.*;
 import org.rdfhdt.hdt.dictionary.Dictionary;
 import org.rdfhdt.hdt.enums.TripleComponentRole;
@@ -54,7 +53,7 @@ public class DictFindBench {
 
     private Path sourceDir, currentDir;
     private Dict dict;
-    private Dict.AbstractLookup lookup;
+    private Dict.AbstractLookup<?> lookup;
     private Path hdtSource;
     private HDT hdt;
     private Dictionary hdtDict;
@@ -74,45 +73,52 @@ public class DictFindBench {
             if (is == null) throw new RuntimeException("Resource NYT.hdt not found");
             if (is.transferTo(out) == 0) throw new RuntimeException("Empty NYT.hdt");
         }
-        new HdtConverter().optimizeLocality(optimizeLocality).standaloneDict(standalone)
+        new Hdt2StoreIndexConverter().optimizeLocality(optimizeLocality).standaloneDict(standalone)
                           .convert(hdtSource, sourceDir);
 
         Random random = new Random(seed);
         int nStrings;
+        Dict.AbstractLookup<?> lookup = null;
         try (var d = Dict.load(sourceDir.resolve("strings"))) {
-            var lookup = d.polymorphicLookup();
+            lookup = d.polymorphicLookup().takeOwnership(this);
             nStrings = (int) Math.min(Integer.MAX_VALUE>>2, d.strings());
             int nQueries = (int) Math.max(1, nStrings*queryProportion);
 
             queries = new PlainRope[nQueries];
             List<Integer> ids = new ArrayList<>(IntStream.range(1, nStrings + 1).boxed().toList());
             Collections.shuffle(ids, random);
-            Splitter split = new Splitter(Splitter.Mode.LAST);
-            for (int i = 0; i < nQueries; i++) {
-                var r = lookup.get(ids.get(i).longValue());
-                assert r != null;
-                queries[i] = switch (ropeType) {
-                    case SEGMENT -> new ByteRope(r.len).append(r);
-                    case TWO_SEGMENT -> {
-                        TwoSegmentRope tsr = new TwoSegmentRope();
-                        boolean flip = split.split(r) == Splitter.SharedSide.SUFFIX;
-                        tsr.wrapFirst((SegmentRope)split.shared());
-                        tsr.wrapSecond((SegmentRope)split.local());
-                        if (flip) tsr.flipSegments();
-                        yield tsr;
-                    }
-                };
+            try (var splitG = new Guard<Splitter>(this)) {
+                var split = splitG.set(Splitter.create(Splitter.Mode.LAST));
+                for (int i = 0; i < nQueries; i++) {
+                    var r = lookup.get(ids.get(i).longValue());
+                    assert r != null;
+                    queries[i] = switch (ropeType) {
+                        case SEGMENT -> FinalSegmentRope.asFinal(r);
+                        case TWO_SEGMENT -> {
+                            TwoSegmentRope tsr = new TwoSegmentRope();
+                            boolean flip = split.split(r) == Splitter.SharedSide.SUFFIX;
+                            tsr.wrapFirst((SegmentRope)split.shared());
+                            tsr.wrapSecond((SegmentRope)split.local());
+                            if (flip) tsr.flipSegments();
+                            yield tsr;
+                        }
+                    };
+                }
             }
+            //noinspection ConstantValue
             if (testHdt == 1) {
                 hdtQueries = new ReplazableString[nQueries];
                 for (int i = 0; i < nQueries; i++)
                     hdtQueries[i] = term2hdtLookup(Term.valueOf(queries[i]));
             }
+            //noinspection ConstantValue
             if (testHdt >= 2) {
                 hdtTerms = new Term[nQueries];
                 for (int i = 0; i < nQueries; i++)
                     hdtTerms[i] = Term.valueOf(queries[i]);
             }
+        } finally {
+            Owned.recycle(lookup, this);
         }
         long us = Timestamp.nanoTime()-setupStart/1_000;
         log.info("setup in {}.{}ms, queries={}/{}. fsync()ing...",
@@ -126,10 +132,17 @@ public class DictFindBench {
             case LIT -> {
                 int endLex = t.endLex(), required = 1 + t.unescapedLexicalSize() + t.len-endLex;
                 var str = new ReplazableString(required);
-                var unescaped = new ByteRope(str.getBuffer(), 0, 0);
-                unescaped.append('"');
-                t.unescapedLexical(unescaped);
-                unescaped.append(t, endLex, t.len);
+                byte[] buf = str.getBuffer();
+                if (required == t.len) { // no escape sequences
+                    t.copy(0, t.len, buf, 0);
+                } else { // has escape sequences
+                    try (var tmp = PooledMutableRope.get()) {
+                        tmp.append('"');
+                        t.unescapedLexical(tmp);
+                        tmp.append(t, endLex, t.len);
+                        tmp.copy(0, tmp.len, buf, tmp.len);
+                    }
+                }
                 yield str;
             }
             case IRI -> {
@@ -169,8 +182,10 @@ public class DictFindBench {
             Files.copy(shared, sharedCopy);
         Files.copy(strings, stringsCopy);
         IOUtils.fsync(10_000);
-        lookup = (dict = Dict.load(currentDir.resolve("strings"))).polymorphicLookup();
+        dict = Dict.load(currentDir.resolve("strings"));
+        lookup = dict.polymorphicLookup().takeOwnership(this);
 
+        //noinspection ConstantValue
         if (testHdt > 0) {
             Path hdtCopy = currentDir.resolve("NYT.hdt");
             Files.copy(hdtSource, hdtCopy);
@@ -184,6 +199,7 @@ public class DictFindBench {
         if (hdtDictId != 0)
             IdAccess.release(hdtDictId);
         hdtDictId = 0;
+        lookup = lookup.recycle(this);
         dict.close();
         if (hdt != null) {
             hdt.close();
@@ -254,7 +270,7 @@ public class DictFindBench {
         return xor;
     }
 
-    @Benchmark public long find() {
+    @SuppressWarnings("ConstantValue") @Benchmark public long find() {
         if      (testHdt == 1                                     ) return findHdt();
         else if (testHdt == 2                                     ) return findHdtUnescape();
         else if (lookup instanceof SortedStandaloneDict.Lookup   l) return find(l);

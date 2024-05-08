@@ -1,119 +1,82 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.batch.BatchEvent;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Arrays;
-
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.mergerSources;
 import static com.github.alexishuf.fastersparql.batch.type.BatchMerger.projectorSources;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Thread.currentThread;
 
 public final class TermBatchType extends BatchType<TermBatch> {
-    public static final short DEF_BATCH_TERMS = PREFERRED_BATCH_TERMS*2;
     public static final TermBatchType TERM = new TermBatchType();
-
-    static {
-        WeakDedup.registerBatchType(TERM);
-    }
-
-    private final LevelBatchPool<TermBatch> levelPool;
 
     @SuppressWarnings("SameReturnValue") public static TermBatchType get() { return TERM; }
 
-    private static final class TermBatchFactory implements BatchPool.Factory<TermBatch> {
-        @Override public TermBatch create() {
-            var b = new TermBatch(new Term[DEF_BATCH_TERMS], 0, 1, false);
-            b.markPooled();
-            return b;
-        }
-    }
-
-    private static final class SizedTermBatchFactory implements LevelBatchPool.Factory<TermBatch> {
-        @Override public TermBatch create(int terms) {
-            TermBatch b = new TermBatch(new Term[terms], 0, 1, true);
-            b.markPooled();
-            return b;
-        }
-    }
-
     private TermBatchType() {
-        super(TermBatch.class, new TermBatchFactory());
-        levelPool = new LevelBatchPool<>(new SizedTermBatchFactory(), pool, DEF_BATCH_TERMS);
+        super(TermBatch.class, TermBatchCleaner.INSTANCE.newInstance,
+              TermBatchCleaner.INSTANCE.clearElseMake, TermBatch.BYTES);
+        TermBatchCleaner.INSTANCE.pool = this.pool;
     }
 
-    public TermBatch createSpecial(int terms) {
-        TermBatch b = levelPool.get(terms);
-        BatchEvent.Unpooled.record(b.markUnpooled());
-        return b;
+    @Override public Orphan<TermBatch> createForThread(int threadId, int cols) {
+        return createForThread0(threadId).clear(cols).releaseOwnership(RECYCLED);
     }
 
-    public @Nullable TermBatch recycleSpecial(TermBatch b) { return recycle(b); }
-
-    @Override public TermBatch createForThread(int threadId, int cols) {
-        return createForThread0(threadId).clear(cols);
+    @Override public @Nullable Orphan<TermBatch> pollForThread(int threadId, int cols) {
+        TermBatch b = pollForThread0(threadId);
+        return b == null ? null : b.clear(cols).releaseOwnership(RECYCLED);
     }
 
-    @Override public TermBatch emptyForThread(int threadId, @Nullable TermBatch offer, int cols) {
-        return emptyForThread0(threadId, offer).clear(cols);
+    @Override public TermBatch emptyForThread(int threadId, @Nullable TermBatch offer,
+                                              Object owner, int cols) {
+        return emptyForThread0(threadId, offer, owner).clear(cols);
     }
 
-    @Override public @Nullable TermBatch recycleForThread(int threadId, @Nullable TermBatch b) {
-        for (TermBatch next; b != null; b = next) {
-            next = b.next;
-            Arrays.fill(b.arr, 0, b.rows*b.cols, null);
-            b.rows = 0;
-            b.next = null;
-            b.tail = b;
-            BatchEvent.Pooled.record(b.markPooled());
-            b = b.special ? levelPool.offer(b) : pool.offer(threadId, b);
-            if (b != null) b.markGarbage();
-        }
-        return null;
-    }
-
-    @Override public TermBatch create(int cols) {
+    @Override public Orphan<TermBatch> create(int cols) {
         return createForThread((int)currentThread().threadId(), cols);
     }
-    @Override public TermBatch empty(@Nullable TermBatch offer, int cols) {
-        return emptyForThread((int)currentThread().threadId(), offer, cols);
-    }
-    @Override public @Nullable TermBatch recycle(@Nullable TermBatch b) {
-        return recycleForThread((int)currentThread().threadId(), b);
+
+    @Override public @Nullable Orphan<TermBatch> poll(int cols) {
+        return pollForThread((int)currentThread().threadId(), cols);
     }
 
-    @Override public short preferredTermsPerBatch() {
-        return DEF_BATCH_TERMS;
+    @Override public TermBatch empty(@Nullable TermBatch offer, Object owner, int cols) {
+        return emptyForThread((int)currentThread().threadId(), offer, owner, cols);
     }
 
-    @Override public RowBucket<TermBatch> createBucket(int rowsCapacity, int cols) {
-        return new TermBatchBucket(rowsCapacity, cols);
+    @Override public Orphan<TermBatchBucket> createBucket(int rowsCapacity, int cols) {
+        return new TermBatchBucket.Concrete(rowsCapacity, cols);
+    }
+
+    @Override public int bucketBytesCost(int rowsCapacity, int cols) {
+        return TermBatchBucket.estimateBytes(rowsCapacity, cols);
     }
 
     @Override
-    public @Nullable Merger projector(Vars out, Vars in) {
+    public @Nullable Orphan<Merger> projector(Vars out, Vars in) {
         short[] sources = projectorSources(out, in);
-        return sources == null ? null : new Merger(this, out, sources);
+        return sources == null ? null : new Merger.Concrete(this, out, sources);
     }
 
     @Override
-    public @NonNull Merger merger(Vars out, Vars left, Vars right) {
-        return new Merger(this, out, mergerSources(out, left, right));
+    public @NonNull Orphan<Merger> merger(Vars out, Vars left, Vars right) {
+        return new Merger.Concrete(this, out, mergerSources(out, left, right));
     }
 
-    @Override public Filter filter(Vars out, Vars in, RowFilter<TermBatch> filter,
-                                   BatchFilter<TermBatch> before) {
-        return new Filter(this, out, projector(out, in), filter, before);
+    @Override public Orphan<Filter>
+    filter(Vars out, Vars in, Orphan<? extends RowFilter<TermBatch, ?>> filter,
+           @Nullable Orphan<? extends BatchFilter<TermBatch, ?>> before) {
+        return new Filter.Concrete(this, out, projector(out, in), filter, before);
     }
 
-    @Override public Filter filter(Vars vars, RowFilter<TermBatch> filter,
-                                   BatchFilter<TermBatch> before) {
-        return new Filter(this, vars, null, filter, before);
+    @Override public Orphan<Filter>
+    filter(Vars vars, Orphan<? extends RowFilter<TermBatch, ?>> filter,
+           @Nullable Orphan<? extends BatchFilter<TermBatch, ?>> before) {
+        return new Filter.Concrete(this, vars, null, filter, before);
     }
 }

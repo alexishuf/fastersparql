@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -17,7 +18,8 @@ import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequest
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 
-public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> {
+public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P>>
+        extends BatchProcessor<B, P> {
     private static final VarHandle REQ_LIMIT, DOWN_REQ;
 
     static {
@@ -29,19 +31,20 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
         }
     }
 
-    public final RowFilter<B> rowFilter;
-    public final @Nullable BatchFilter<B> before;
+    public final RowFilter<B, ?> rowFilter;
+    public final @Nullable BatchFilter<B, ?> before;
     protected final short outColumns;
     @SuppressWarnings("unused") private long plainReqLimit, plainDownReq;
 
     /* --- --- --- lifecycle --- --- --- */
 
     public BatchFilter(BatchType<B> batchType, Vars outVars,
-                       RowFilter<B> rowFilter, @Nullable BatchFilter<B> before) {
+                       Orphan<? extends RowFilter<B, ?>> rowFilter,
+                       @Nullable Orphan<? extends BatchFilter<B, ?>> before) {
         super(batchType, outVars, CREATED, PROC_FLAGS);
-        this.rowFilter    = rowFilter;
-        this.bindableVars = rowFilter.bindableVars();
-        this.before       = before;
+        this.rowFilter    = rowFilter.takeOwnership(this);
+        this.bindableVars = this.rowFilter.bindableVars();
+        this.before       = before == null ? null : before.takeOwnership(this);
         this.outColumns   = (short)outVars.size();
         resetReqLimit();
         if (ResultJournal.ENABLED)
@@ -50,7 +53,7 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     private void resetReqLimit() {
         long limit = Long.MAX_VALUE;
-        for (var bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
+        for (BatchFilter<B, ?> bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
             limit = bf.rowFilter.upstreamRequestLimit();
         REQ_LIMIT.setRelease(this, limit);
         DOWN_REQ .setRelease(this, 0);
@@ -58,23 +61,15 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     @Override protected void doRelease() {
         try {
-            rowFilter.release();
-            if (before != null) before.release();
+            rowFilter.recycle(this);
+            if (before != null) before.recycle(this);
         } finally {
             super.doRelease();
         }
     }
 
-    @Override public void rebindAcquire() {
-        super.rebindAcquire();
-        if (rowFilter != null) rowFilter.rebindAcquire();
-        if (before    != null) before.rebindAcquire();
-    }
-
-    @Override public void rebindRelease() {
-        super.rebindRelease();
-        if (rowFilter != null) rowFilter.rebindRelease();
-        if (before    != null) before.rebindRelease();
+    @Override public @Nullable P recycle(Object currentOwner) {
+        return super.recycle(currentOwner);
     }
 
     /* --- --- --- Emitter methods --- --- --- */
@@ -122,32 +117,34 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
 
     /* --- --- --- Receiver methods --- --- --- */
 
-    @Override protected @Nullable B afterOnBatch(@Nullable B batch, long receivedRows) {
+    @Override protected void afterOnBatch(@Nullable Orphan<B> orphan, long receivedRows) {
         boolean request = false;
-        if (batch != null) {
-            long survivors = batch.totalRows();
+        if (orphan != null) {
+            long survivors = Batch.peekTotalRows(orphan);
             DOWN_REQ.getAndAddRelease(this, -survivors);
             if ((long)REQ_LIMIT.getAndAddRelease(this, -survivors)-survivors <= 0)
                 cancelUpstream();
             else if (survivors < receivedRows)
                 request = true;
         }
-        B offer = super.afterOnBatch(batch, receivedRows);
-        if (request)
-            upstream.request((long)DOWN_REQ.getOpaque(this));
-        return offer;
+        super.afterOnBatch(orphan, receivedRows);
+        if (request) {
+            var up = upstream;
+            if (up != null)
+                up.request((long)DOWN_REQ.getOpaque(this));
+        }
     }
 
     /* --- --- --- BatchProcessor methods --- --- --- */
 
     public final boolean isDedup() {
-        return rowFilter instanceof Dedup<B> || (before != null && before.isDedup());
+        return rowFilter instanceof Dedup<?, ?> || (before != null && before.isDedup());
     }
 
-    public abstract B filterInPlace(B in);
+    public abstract Orphan<B> filterInPlace(Orphan<B> in);
 
     protected final B filterInPlaceSkipEmpty(B b, B prev) {
-        prev.next = b.dropHead();
+        prev.next = b.dropHead(b == prev ? this : prev);
         return prev;
     }
 
@@ -157,14 +154,14 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
             last.tail = last;
             if (in.rows == 0) {
                 if (in.next == null) in.cols = outColumns;
-                else                 in = in.dropHead();
+                else                 in = in.dropHead(this);
             }
             assert in == null || in.validate();
         }
         return in;
     }
 
-    protected B filterEmpty(@Nullable B dst, B originalIn, B in) {
+    protected B filterEmpty(@Nullable B in) {
         if (in == null) return null;
         short survivors = 0;
         for (int r = 0, rows = in.rows; r < rows; r++) {
@@ -173,18 +170,8 @@ public abstract class BatchFilter<B extends Batch<B>> extends BatchProcessor<B> 
                 case TERMINATE -> rows = -1;
             }
         }
-        if (dst == in) {
-            dst.rows = survivors;
-        } else {
-            if (dst == null)
-                dst = batchType.create(outColumns);
-            else if (dst.rows > 0 && dst.cols != outColumns)
-                throw new IllegalArgumentException("dst not empty and dst.cols != outColumns");
-            dst.rows += survivors;
-        }
-        dst.cols = outColumns;
-        if (in != originalIn && in != dst)
-            in.recycle();
-        return dst;
+        in.rows = survivors;
+        in.cols = outColumns;
+        return in;
     }
 }

@@ -11,9 +11,11 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
+import com.github.alexishuf.fastersparql.util.IntList;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -45,50 +47,72 @@ public class BItProducerTest {
         }
 
         public void testEmitter() {
-            check(new IntsReceiver(new BItEmitter<>(itSupplier.get())));
+            check(new IntsReceiver.Concrete(BItEmitter.create(itSupplier.get())));
         }
 
-        private void check(IntsReceiver receiver) {
+        private void check(Orphan<IntsReceiver> orphan) {
+            var receiver = orphan.takeOwnership(this);
             try {
-                receiver.getSimple();
-                if (expectedErrCls != null)
-                    fail("Expected "+expectedErrCls.getSimpleName());
-            } catch (RuntimeExecutionException e) {
-                Throwable inner = e.getCause();
-                if (inner instanceof BItReadFailedException r)
-                    inner = r.getCause();
-                if (expectedErrCls == null)
-                    fail("Unexpected error", inner);
-                else if (expectedErrCls != inner.getClass())
-                    fail("Expected "+ expectedErrCls.getSimpleName(), inner);
-            }
-            if (ordered) {
-                assertEqualsOrdered(expected, receiver.ints, receiver.size);
-            } else {
-                assertEqualsUnordered(expected, receiver.ints, receiver.size,
-                        false, false, false);
+                try {
+                    receiver.getSimple();
+                    if (expectedErrCls != null)
+                        fail("Expected "+expectedErrCls.getSimpleName());
+                } catch (RuntimeExecutionException e) {
+                    Throwable inner = e.getCause();
+                    if (inner instanceof BItReadFailedException r)
+                        inner = r.getCause();
+                    if (expectedErrCls == null)
+                        fail("Unexpected error", inner);
+                    else if (expectedErrCls != inner.getClass())
+                        fail("Expected "+ expectedErrCls.getSimpleName(), inner);
+                }
+                if (ordered) {
+                    assertEqualsOrdered(expected, receiver.ints);
+                } else {
+                    assertEqualsUnordered(expected, receiver.ints,
+                            false, false, false);
+                }
+            } finally {
+                receiver.recycle(this);
             }
         }
 
-        private static final class IntsReceiver extends ReceiverFuture<int[], TermBatch> {
-            private int[] ints = ArrayPool.intsAtLeast(16);
-            private int size;
+        private static abstract sealed class IntsReceiver extends
+                ReceiverFuture<IntList, TermBatch, IntsReceiver> {
+            private final IntList ints = new IntList(128);
 
-            public IntsReceiver(Emitter<TermBatch> emitter) { subscribeTo(emitter); }
+            private IntsReceiver(Orphan<? extends Emitter<TermBatch, ?>> emitter) {
+                subscribeTo(emitter);
+            }
 
-            @Override public TermBatch onBatch(TermBatch batch) {
-                Term view = Term.pooledMutable();
-                for (var node = batch; node != null; node = node.next) {
-                    for (int r = 0, rows = node.rows; r < rows; r++) {
-                        if (!node.getView(r, 0, view))
-                            continue;
-                        if (size == ints.length)
-                            ints = ArrayPool.grow(ints, size << 1);
-                        ints[size++] = IntsBatch.parse(view);
+            @Override public @Nullable IntsReceiver recycle(Object currentOwner) {
+                super.recycle(currentOwner);
+                ints.clear();
+                return null;
+            }
+
+            private static final class Concrete extends IntsReceiver
+                    implements Orphan<IntsReceiver>{
+                public Concrete(Orphan<? extends Emitter<TermBatch, ?>> emitter) {super(emitter);}
+                @Override public IntsReceiver takeOwnership(Object o) {return takeOwnership0(o);}
+            }
+
+            @Override public void onBatch(Orphan<TermBatch> orphan) {
+                var batch = orphan.takeOwnership(this);
+                onBatchByCopy(batch);
+                batch.recycle(this);
+            }
+
+            @Override public void onBatchByCopy(TermBatch batch) {
+                try (var view = PooledTermView.ofEmptyString()) {
+                    for (var node = batch; node != null; node = node.next) {
+                        for (int r = 0, rows = node.rows; r < rows; r++) {
+                            if (!node.getView(r, 0, view))
+                                continue;
+                            ints.add(IntsBatch.parse(view));
+                        }
                     }
                 }
-                view.recycle();
-                return batch;
             }
 
             @Override public void onComplete() { complete(ints); }

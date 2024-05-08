@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -46,14 +48,14 @@ class DictSorterTest {
 
     @ParameterizedTest @MethodSource
     void test(int nStrings, boolean localityOptimized) throws IOException {
-        List<SegmentRope> strings = new ArrayList<>(nStrings);
+        List<FinalSegmentRope> strings = new ArrayList<>(nStrings);
         for (int i = 0; i < nStrings; i++)
-            strings.add(new ByteRope().append((long) nStrings - i));
+            strings.add(RopeFactory.make(12).add((long)nStrings-i).take());
 
         // build dict
         Path mergedPath = tempDir.resolve("merged");
-        try (var sorter = new DictSorter(tempDir, false, localityOptimized, 32)) {
-            ByteRope tmp = new ByteRope();
+        try (var sorter = new DictSorter(tempDir, false, localityOptimized, 32);
+             var tmp = PooledMutableRope.get()) {
             int i = 0;
             for (SegmentRope s : strings) {
                 sorter.copy(tmp.clear().append(s));
@@ -65,12 +67,9 @@ class DictSorterTest {
             sorter.writeDict(mergedPath);
         }
 
+        Dict.AbstractLookup<?> lookup = null;
         try (Dict dict = Dict.loadStandalone(mergedPath)) {
-            Dict.AbstractLookup lookup;
-            if (dict instanceof LocalityStandaloneDict d)
-                lookup = d.lookup();
-            else
-                lookup = ((SortedStandaloneDict)dict).lookup();
+            lookup = dict.polymorphicLookup().takeOwnership(this);
             assertEquals(strings.size(), dict.strings());
             // find all strings in merged dict
             for (SegmentRope s : strings) {
@@ -92,6 +91,9 @@ class DictSorterTest {
                 exBuilder.setLength(Math.max(0, exBuilder.length() - 1));
                 assertEquals(exBuilder.toString(), dict.dump());
             }
+        } finally {
+            if (lookup != null)
+                lookup.recycle(this);
         }
 
         String[] filenames = tempDir.toFile().list();

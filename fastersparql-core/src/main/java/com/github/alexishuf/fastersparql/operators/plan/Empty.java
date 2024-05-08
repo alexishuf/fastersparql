@@ -4,11 +4,12 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Emitters;
+import com.github.alexishuf.fastersparql.emit.EmptyEmitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -43,8 +44,8 @@ public final class Empty extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>>
-    Emitter<B> doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
+    public <B extends Batch<B>> Orphan<EmptyEmitter<B>>
+    doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         return Emitters.empty(type, publicVars);
     }
 

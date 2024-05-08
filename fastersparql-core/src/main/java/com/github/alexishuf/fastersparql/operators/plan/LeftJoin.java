@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.NativeBind;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -31,8 +32,8 @@ public final class LeftJoin extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
-                                                  boolean weakDedup) {
+    public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         if (right instanceof Query q && q.sparql.isAsk())
             return left().emit(type, rebindHint, weakDedup);
         return NativeBind.preferNativeEmit(type, this, rebindHint, weakDedup);

@@ -1,15 +1,18 @@
 package com.github.alexishuf.fastersparql.operators.impl.bind;
 
 import com.github.alexishuf.fastersparql.FS;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.PlanBindingBIt;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.Results;
-import org.junit.jupiter.api.Test;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -83,7 +86,8 @@ class NativeBindTest {
                 }
 
                 // check Emitter variant
-                finalResults.check(preferNativeEmit(TERM, join, Vars.EMPTY, false));
+                Orphan<? extends Emitter<TermBatch, ?>> em = preferNativeEmit(TERM, join, Vars.EMPTY, false);
+                finalResults.check(em);
 
                 for (var client : clients)
                     client.assertNoErrors();
@@ -125,11 +129,11 @@ class NativeBindTest {
     @ParameterizedTest @MethodSource
     void test(D d) { d.run(); }
 
-    @Test
+    @RepeatedTest(10)
     void testConcurrent() throws Exception {
         List<D> data = data();
         int threads = Runtime.getRuntime().availableProcessors();
-        try (var tasks = TestTaskSet.virtualTaskSet(getClass().getSimpleName())) {
+        try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
             for (int i = 0; i < data.size(); i++) {
                 tasks.repeat(threads, data.get(i));
                 try {
@@ -142,7 +146,7 @@ class NativeBindTest {
     }
 
     @SuppressWarnings({"ResultOfMethodCallIgnored"})
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] ignoredArgs) throws IOException {
         List<D> cases = data();
         cases.forEach(D::run);
         System.out.println("Press [ENTER] to start...");

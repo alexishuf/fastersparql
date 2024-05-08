@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.model;
 
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -11,9 +11,13 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.ropeList;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static java.util.stream.Collectors.toList;
@@ -23,13 +27,15 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @SuppressWarnings("unused")
 class VarsTest {
-    private static List<SegmentRope> list(int begin, int end) {
-        return range(begin, end).mapToObj(SegmentRope::of).collect(toList());
+    private static List<FinalSegmentRope> list(int begin, int end) {
+        return range(begin, end).mapToObj(Integer::toString)
+                                .map(FinalSegmentRope::asFinal).collect(toList());
     }
 
-    private static List<SegmentRope> revList(int begin, int end) {
-        var list = new ArrayList<>(range(begin, end).mapToObj(SegmentRope::of).toList());
-        Collections.reverse(list);
+    private static List<FinalSegmentRope> revList(int begin, int end) {
+        List<FinalSegmentRope> list = new ArrayList<>(end-begin);
+        for (int i = end-1; i >= begin; --i)
+            list.add(asFinal(Integer.toString(i)));
         return list;
     }
 
@@ -43,7 +49,7 @@ class VarsTest {
         @Override public Vars create(int size, int slack) {
             SegmentRope[] array = new SegmentRope[size+slack];
             for (int i = 0; i < size; i++)
-                array[i] = SegmentRope.of(i);
+                array[i] = asFinal(Integer.toString(i));
             return Vars.wrapSet(array, size);
         }
     }
@@ -68,7 +74,7 @@ class VarsTest {
         @Override public Vars create(int size, int slack) {
             Vars.Mutable vars = new Vars.Mutable(size+slack);
             for (int i = 0; i < size; i++)
-                vars.add(SegmentRope.of(i));
+                vars.add(asFinal(Integer.toString(i)));
             return vars;
         }
     }
@@ -141,7 +147,7 @@ class VarsTest {
 
         //get()-based iteration
         for (int i = 0; i < size; i++)
-            assertEquals(Rope.of(i), vars.get(i));
+            assertEquals(asFinal(Integer.toString(i)), vars.get(i));
         assertThrows(IndexOutOfBoundsException.class, () -> vars.get(size));
         assertThrows(IndexOutOfBoundsException.class, () -> vars.get(size+1));
         assertThrows(IndexOutOfBoundsException.class, () -> vars.get(-1));
@@ -153,7 +159,7 @@ class VarsTest {
 
         // indexOf
         for (int i = 0; i < size; i++) {
-            var iStr = SegmentRope.of(i);
+            var iStr = asFinal(Integer.toString(i));
             assertEquals(i, vars.indexOf(iStr), "i="+i);
             assertEquals(i, vars.indexOf(Term.valueOf("?"+i)), "i="+i);
             assertEquals(i, vars.indexOf(Term.valueOf("$"+i)), "i="+i);
@@ -161,18 +167,18 @@ class VarsTest {
         }
 
         // negative indexOf
-        assertEquals(-1, vars.indexOf(ByteRope.EMPTY));
+        assertEquals(-1, vars.indexOf(FinalSegmentRope.EMPTY));
         for (int i = size; i < size + slack + 1; i++)
-            assertEquals(-1, vars.indexOf(SegmentRope.of(i)));
+            assertEquals(-1, vars.indexOf(asFinal(Integer.toString(i))));
 
         // contains
         for (int i = 0; i < size; i++)
-            assertTrue(vars.contains(SegmentRope.of(i)));
+            assertTrue(vars.contains(asFinal(Integer.toString(i))));
 
         // negative contains
-        assertFalse(vars.contains(ByteRope.EMPTY));
+        assertFalse(vars.contains(FinalSegmentRope.EMPTY));
         for (int i = size; i < size + slack + 1; i++)
-            assertFalse(vars.contains(SegmentRope.of(i)));
+            assertFalse(vars.contains(asFinal(Integer.toString(i))));
     }
 
 //    @ParameterizedTest @MethodSource("mutableData")
@@ -216,8 +222,8 @@ class VarsTest {
     void testAddReversedDoubled(Factory factory, int size, int slack) {
         Vars v = factory.create(size, slack);
         for (int i = size*2; i >= size; i--) {
-            assertTrue(v.add(SegmentRope.of(i)));
-            assertFalse(v.add(SegmentRope.of(i)));
+            assertTrue(v.add(asFinal(Integer.toString(i))));
+            assertFalse(v.add(asFinal(Integer.toString(i))));
         }
         var expected = list(0, size);
         expected.addAll(revList(size, size*2+1));
@@ -266,15 +272,15 @@ class VarsTest {
 
         // remove one item
         for (int i = 0; i < size; i++) {
-            Vars right = Vars.of(Rope.of(i));
-            List<SegmentRope> expected = list(0, size);
-            expected.remove(SegmentRope.of(i));
+            Vars right = Vars.of(asFinal(Integer.toString(i)));
+            List<FinalSegmentRope> expected = list(0, size);
+            expected.remove(asFinal(Integer.toString(i)));
             assertEquals(expected, new ArrayList<>(left.minus(right)));
             assertEquals(list(0, size), new ArrayList<>(left), "left mutated");
         }
 
         //remove nothing
-        assertSame(left, left.minus(Vars.of(Rope.of("-1"), Rope.of(size))));
+        assertSame(left, left.minus(Vars.of(asFinal("-1"), asFinal(Integer.toString(size)))));
         assertEquals(list(0, size), left, "left mutated");
     }
 
@@ -293,12 +299,12 @@ class VarsTest {
 
             assertFalse(left.intersects(Rope.ropeList("-1")));
             assertFalse(left.intersects(Vars.of("-1")));
-            assertFalse(left.intersects(List.of(Rope.of(size))));
-            assertFalse(left.intersects(Vars.of(Rope.of(size))));
+            assertFalse(left.intersects(List.of(asFinal(Integer.toString(size)))));
+            assertFalse(left.intersects(Vars.of(asFinal(Integer.toString(size)))));
 
             for (int i = 0; i < size; i++) {
-                assertTrue(left.intersects(List.of(Rope.of(i))));
-                assertTrue(left.intersects(Vars.of(Rope.of(i))));
+                assertTrue(left.intersects(List.of(asFinal(Integer.toString(i)))));
+                assertTrue(left.intersects(Vars.of(asFinal(Integer.toString(i)))));
             }
         }
     }
@@ -315,7 +321,7 @@ class VarsTest {
         assertSame(Vars.EMPTY, left.intersection(Vars.of("-1", String.valueOf(size))));
 
         for (int i = 0; i < size; i++) {
-            Vars right = Vars.of(Rope.of(i));
+            Vars right = Vars.of(asFinal(Integer.toString(i)));
             assertEquals(new ArrayList<>(right), new ArrayList<>(left.intersection(right)));
             assertSame(size == 1 ? left : right, left.intersection(right));
         }
@@ -326,8 +332,8 @@ class VarsTest {
         }
 
         for (int i = 0; i < size-1; i++) {
-            Vars right = Vars.of(Rope.of(i), Rope.of(i+1));
-            assertEquals(List.of(Rope.of(i), Rope.of(i+1)),
+            Vars right = Vars.of(asFinal(Integer.toString(i)), asFinal(Integer.toString(i+1)));
+            assertEquals(List.of(asFinal(Integer.toString(i)), asFinal(Integer.toString(i+1))),
                          new ArrayList<>(left.intersection(right)));
         }
     }

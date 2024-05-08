@@ -1,13 +1,14 @@
 package com.github.alexishuf.fastersparql.model.row.dedup;
 
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -19,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -31,8 +33,8 @@ class DedupTest {
 
     private static final String[] DOMAINS = {"example.org", "www.informatik.de", "somewhere.com"};
     private static final String[] PATHS = {"/#", "/ns#", "/d/", "/ontology/", "/graph/"};
-    TermBatch generateRows(int n) {
-        TermBatch batch = TermBatchType.TERM.create(1);
+    Orphan<TermBatch> generateRows(int n) {
+        TermBatch batch = TermBatchType.TERM.create(1).takeOwnership(this);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < n; i++) {
             sb.setLength(0);
@@ -57,10 +59,10 @@ class DedupTest {
                                    .toString();
                     yield batch.putRow(new Term[]{Term.valueOf(lit)});
                 }
-                default -> batch;
+                default -> throw new UnsupportedOperationException();
             };
         }
-        return batch;
+        return batch.releaseOwnership(this);
     }
 
     static Stream<Arguments> testGenerateRows() {
@@ -70,38 +72,40 @@ class DedupTest {
 
     @ParameterizedTest @MethodSource
     void testGenerateRows(int n) {
-        TermBatch batch = generateRows(n);
-        assertEquals(1, batch.cols);
-        assertEquals(n, batch.totalRows());
+        try (var g = new BatchGuard<TermBatch>(this)) {
+            var batch  =g.set(generateRows(n));
+            assertEquals(1, batch.cols);
+            assertEquals(n, batch.totalRows());
 
-        Map<Term, Integer> histogram = new HashMap<>();
-        for (var node = batch; node != null; node = node.next) {
-            for (int r = 0; r < node.rows; r++) {
-                Term t = node.get(r, 0);
-                histogram.put(t, 1 + histogram.getOrDefault(t, 0));
+            Map<Term, Integer> histogram = new HashMap<>();
+            for (var node = batch; node != null; node = node.next) {
+                for (int r = 0; r < node.rows; r++) {
+                    Term t = node.get(r, 0);
+                    histogram.put(t, 1 + histogram.getOrDefault(t, 0));
+                }
             }
+            var duplicates = histogram.entrySet().stream().filter(e -> e.getValue() > 1)
+                    .map(Map.Entry::getKey).toList();
+            if (!duplicates.isEmpty())
+                fail("duplicate rows: "+duplicates);
         }
-        var duplicates = histogram.entrySet().stream().filter(e -> e.getValue() > 1)
-                .map(Map.Entry::getKey).toList();
-        if (!duplicates.isEmpty())
-            fail("duplicate rows: "+duplicates);
     }
 
-    private static final Function<Integer, Dedup<TermBatch>> wFac = new Function<>() {
-        @Override public Dedup<TermBatch> apply(Integer c) {
-            return new WeakDedup<>(TermBatchType.TERM, 1, DistinctType.WEAK);
+    private static final Function<Integer, Orphan<? extends Dedup<TermBatch, ?>>> wFac = new Function<>() {
+        @Override public Orphan<? extends Dedup<TermBatch, ?>> apply(Integer c) {
+            return Dedup.weak(TermBatchType.TERM, 1, DistinctType.WEAK);
         }
         @Override public String toString() { return "WeakDedup"; }
     };
-    private static final Function<Integer, Dedup<TermBatch>> sFac = new Function<>() {
-        @Override public Dedup<TermBatch> apply(Integer c) {
-            return StrongDedup.strongForever(TermBatchType.TERM, c, 1);
+    private static final Function<Integer, Orphan<? extends Dedup<TermBatch, ?>>> sFac = new Function<>() {
+        @Override public Orphan<? extends Dedup<TermBatch, ?>> apply(Integer c) {
+            return Dedup.strongForever(TermBatchType.TERM, c, 1);
         }
         @Override public String toString() { return "StrongDedup"; }
     };
-    private static final Function<Integer, Dedup<TermBatch>> cFac = new Function<>() {
-        @Override public Dedup<TermBatch> apply(Integer c) {
-            return new WeakCrossSourceDedup<>(TermBatchType.TERM, 1);
+    private static final Function<Integer, Orphan<? extends Dedup<TermBatch, ?>>> cFac = new Function<>() {
+        @Override public Orphan<? extends Dedup<TermBatch, ?>> apply(Integer c) {
+            return Dedup.weakCrossSource(TermBatchType.TERM, 1);
         }
         @Override public String toString() { return "WeakCrossSourceDedup"; }
     };
@@ -137,7 +141,7 @@ class DedupTest {
         return list.stream();
     }
 
-    private void work(D d, TermBatch batch, int thread, Dedup<TermBatch> dedup) {
+    private void work(D d, TermBatch batch, int thread, Dedup<TermBatch, ?> dedup) {
         int totalRows = batch.totalRows();
         int chunk = totalRows/d.threads;
         int begin = thread*chunk, end = thread == d.threads-1 ? totalRows : begin+chunk;
@@ -190,49 +194,60 @@ class DedupTest {
     }
 
     @ParameterizedTest @MethodSource
-    void test(D d, Function<Integer, Dedup<TermBatch>> factory) throws Exception {
-        TermBatch rows = generateRows(d.uniqueRows);
-        Dedup<TermBatch> add = factory.apply(d.capacity);
-//        WeakDedup<TermBatch> dedup = new WeakDedup<>(ArrayRow.STRING, d.capacity);
-//        RowHashWindowSet<String[]> dedup = new RowHashWindowSet<>(d.capacity, ArrayRow.STRING);
-        if (d.threads > 1) {
-            try (var e = Executors.newFixedThreadPool(d.threads)) {
-                var tasks = IntStream.range(0, d.threads)
-                        .mapToObj(i -> e.submit(() -> work(d, rows, i, add)))
-                        .toList();
-                for (Future<?> t : tasks)
-                    t.get();
+    <DT extends Dedup<TermBatch, DT>>
+    void test(D d, Function<Integer, Orphan<? extends Dedup<TermBatch, ?>>> fac0) throws Exception {
+        try (var rowsGuard = new BatchGuard<TermBatch>(this);
+             var addGuard = new Guard<DT>(this)) {
+            TermBatch rows = rowsGuard.set(generateRows(d.uniqueRows));
+            //noinspection unchecked
+            var factory = (Function<Integer, Orphan<DT>>)(Object)fac0;
+            DT add =  addGuard.set(factory.apply(d.capacity));
+            if (d.threads > 1) {
+                try (var e = Executors.newFixedThreadPool(d.threads)) {
+                    var tasks = IntStream.range(0, d.threads)
+                            .mapToObj(i -> e.submit(() -> work(d, rows, i, add)))
+                            .toList();
+                    for (Future<?> t : tasks)
+                        t.get();
+                }
+            } else {
+                work(d, rows, 0, add);
             }
-        } else {
-            work(d, rows, 0, add);
         }
     }
 
 
     static Stream<Arguments> testHasAndAdd() {
-        return Stream.of(
-                StrongDedup.strongUntil(TermBatchType.TERM, 128, 1),
-                new WeakDedup<>(TermBatchType.TERM, 1, DistinctType.WEAK),
-                new WeakCrossSourceDedup<>(TermBatchType.TERM, 1)
-        ).map(Arguments::arguments);
+        List<Supplier<Orphan<? extends Dedup<TermBatch, ?>>>> factories = List.of(
+                () -> Dedup.strongUntil(TermBatchType.TERM, 128, 1),
+                () -> Dedup.weak(TermBatchType.TERM, 1, DistinctType.WEAK),
+                () -> Dedup.weakCrossSource(TermBatchType.TERM, 1)
+        );
+        return factories.stream().map(Arguments::arguments);
     }
 
     @ParameterizedTest @MethodSource
-    void testHasAndAdd(Dedup<TermBatch> set) {
-        var batch = TermBatch.rowMajor(termList("<a>", "_:bn", "23", "exns:bob", "\"alice\"@en"),
-                                       5, 1);
-        for (int r = 0; r < batch.rows; r++) {
-            assertFalse(set.contains(batch, r));
-            assertTrue(set.add(batch, r));
-            assertTrue(set.contains(batch, r));
-        }
-        if (!set.isWeak()) {
-            for (int r = 0; r < batch.rows; r++)
+    <DT extends Dedup<TermBatch, DT>>
+    void testHasAndAdd(Supplier<Orphan<DT>> setFactory) {
+        try (var batchGuard = new BatchGuard<TermBatch>(this);
+             var setGuard = new Guard<DT>(this)) {
+            var batch = batchGuard.set(TermBatch.rowMajor(
+                    termList("<a>", "_:bn", "23", "exns:bob", "\"alice\"@en"),
+                    5, 1));
+            var set = setGuard.set(setFactory.get());
+            for (int r = 0; r < batch.rows; r++) {
+                assertFalse(set.contains(batch, r));
+                assertTrue(set.add(batch, r));
                 assertTrue(set.contains(batch, r));
+            }
+            if (!set.isWeak()) {
+                for (int r = 0; r < batch.rows; r++)
+                    assertTrue(set.contains(batch, r));
+            }
         }
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] ignoredArgs) throws Exception {
         double secs = 10;
         int threads = Runtime.getRuntime().availableProcessors();
         int capacity = 1024*threads;

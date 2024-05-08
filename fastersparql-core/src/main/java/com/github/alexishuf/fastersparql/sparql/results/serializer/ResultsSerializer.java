@@ -10,19 +10,24 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Map;
 
-public abstract class ResultsSerializer {
+import static java.util.Objects.requireNonNull;
+
+public abstract class ResultsSerializer<S extends ResultsSerializer<S>>
+        extends AbstractOwned<S> {
     protected int[] columns = null;
     protected final MediaType contentType;
     protected boolean ask = false, empty = true;
     protected Vars vars = Vars.EMPTY, subset = Vars.EMPTY;
 
     public interface Factory extends NamedService<SparqlResultFormat> {
-        ResultsSerializer create(Map<String, String> params);
+        Orphan<? extends ResultsSerializer<?>> create(Map<String, String> params);
         default MediaType offers() { return name().asMediaType(); }
     }
 
@@ -62,7 +67,7 @@ public abstract class ResultsSerializer {
      * @return a new {@link ResultsSerializer}
      * @throws NoSerializerException if there is no serializer that supports {@code fmt}.
      */
-    public static ResultsSerializer create(SparqlResultFormat fmt) {
+    public static Orphan<? extends ResultsSerializer<?>> create(SparqlResultFormat fmt) {
         return NSL.get(fmt).create(Map.of());
     }
 
@@ -74,12 +79,16 @@ public abstract class ResultsSerializer {
      * @return a new {@link ResultsSerializer}
      * @throws NoSerializerException if there is no serializer that supports the media type.
      */
-    public static ResultsSerializer create(MediaType mediaType) {
+    public static Orphan<? extends ResultsSerializer<?>> create(MediaType mediaType) {
         return NSL.get(SparqlResultFormat.fromMediaType(mediaType)).create(mediaType.params());
     }
 
     public ResultsSerializer(MediaType contentType) {
         this.contentType = contentType;
+    }
+
+    @Override public @Nullable S recycle(Object currentOwner) {
+        return internalMarkGarbage(currentOwner);
     }
 
     protected void onInit() {}
@@ -90,7 +99,7 @@ public abstract class ResultsSerializer {
      * Write a results header with the given {@code subset} to {@code dest}.
      *
      * @param vars set of vars that name the columns in batches of subsequent calls to
-     *             {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+     *             {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
      * @param subset subset of {@code vars} that names the columns that shall be serialized
      * @param ask whether to serialize an results for an ASK query
      */
@@ -122,7 +131,7 @@ public abstract class ResultsSerializer {
 
     /**
      * A handler for heads detached from their linked list by
-     * {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+     * {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
      *
      * <p>To simply recycle nodes, use {@link #recycler(BatchType)}. To re-assembled the
      * linked list of serialized batches, use {@link Reassemble}.</p>
@@ -131,7 +140,7 @@ public abstract class ResultsSerializer {
      */
     public interface NodeConsumer<B extends Batch<B>> {
         /**
-         * Called from {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+         * Called from {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
          * after all rows in {@code node} have been serialized into chunks and delivered to a
          * {@link ChunkConsumer}.
          *
@@ -143,12 +152,12 @@ public abstract class ResultsSerializer {
          * @param node the node just serialized.
          * @throws Exception if something goes wrong. This exception will be rethrown as a
          *                   {@link SerializationException} from
-         *                   {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+         *                   {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
          */
-        void onSerializedNode(B node) throws Exception;
+        void onSerializedNode(Orphan<B> node) throws Exception;
 
         /**
-         * Similar to {@link #onSerializedNode(Batch)}, but this method will be called if there
+         * Similar to {@link #onSerializedNode(Orphan)}, but this method will be called if there
          * was a serialization error and {@code node} was not serialized
          * ({@code serializedUntilRow == 0}) or serialized only partially
          * ({@code serializedUntilRow > 0}).
@@ -159,7 +168,7 @@ public abstract class ResultsSerializer {
          *                  (see {@link Throwable#addSuppressed(Throwable)}) since this is
          *                  called from within an exception handler.
          */
-        default void onNotSerializedNode(B node, int serializedUntilRow) throws Exception {
+        default void onNotSerializedNode(Orphan<B> node, int serializedUntilRow) throws Exception {
             onSerializedNode(node);
         }
     }
@@ -179,38 +188,28 @@ public abstract class ResultsSerializer {
          * Take the linked list of {@link Batch}es reassembled by this instance.
          *
          * <p>This is not idempotent, a second call will return {@code null}, unless a new
-         * {@link #onSerializedNode(Batch)} call arrives int the meantime.</p>
+         * {@link #onSerializedNode(Orphan)} call arrives int the meantime.</p>
          * @return the reassembled linked list of {@link Batch}es.
          */
-        public @Nullable B take() {
+        public @Nullable Orphan<B> take() {
             B b = head;
             head = null;
-            return b;
+            return b == null ? null : b.releaseOwnership(this);
         }
 
-        @Override public void close() { Batch.recycle(take()); }
+        @Override public void close() { Orphan.recycle(take()); }
 
-        @Override public void onSerializedNode(B b) { head = Batch.quickAppend(head, b); }
-    }
-
-    /**
-     * A {@link NodeConsumer} that reassembles the linked list of {@link Batch}es as each node
-     * gets serialized by {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}.
-     *
-     * <p>Unlike {@link Reassemble}, this will not attempt to {@link Batch#recycle()} an
-     * un-{@link Reassemble#take()}n batch </p>
-     */
-    public static class LeakingReassemble<B extends Batch<B>> implements NodeConsumer<B> {
-        private @Nullable B head;
-        @Override public void onSerializedNode(B b) { head = Batch.quickAppend(head, b); }
+        @Override public void onSerializedNode(Orphan<B> b) {
+            head = Batch.quickAppend(head, this, b);
+        }
     }
 
     public record Recycler<B extends Batch<B>>(BatchType<B> t) implements NodeConsumer<B> {
-        @Override public void    onSerializedNode(B b)              { t.recycle(b); }
+        @Override public void onSerializedNode(Orphan<B> b) { Orphan.recycle(b); }
     }
 
     /**
-     * Get a {@link NodeConsumer} that {@link BatchType#recycle(Batch)}s the nodes.
+     * Get a {@link NodeConsumer} that {@link Batch#recycle(Object)}s the nodes.
      * @param type the {@link BatchType} of the batches to recycle
      * @return a lazy-init singleton {@link NodeConsumer} that calls {@code type.recycle(b)}
      */
@@ -230,7 +229,7 @@ public abstract class ResultsSerializer {
 
     /**
      * Consume a chunk produced by
-     * {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+     * {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
      */
     public interface ChunkConsumer<T> {
         /**
@@ -249,16 +248,16 @@ public abstract class ResultsSerializer {
          * @param chunk a chunk of serialized {@link Batch} data.
          * @throws Exception if something goes wrong, such as I/O error. The exception will be
          *                   re-thrown as a {@link SerializationException} from
-         *                   {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}.
+         *                   {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}.
          */
         void onSerializedChunk(T chunk) throws Exception;
 
         /**
          * If this method returns {@code true} at
-         * {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)} entry,
+         * {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)} entry,
          * {@link ByteSink#take()} and {@link #onSerializedChunk(Object)} will not be called.
          * Note that if {@code hardMaxBytes} is not large enough,
-         * {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)} will fail
+         * {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)} will fail
          * when {@link ByteSink#len()} exceeds it.
          */
         default boolean isNoOp() {return false;  }
@@ -310,29 +309,37 @@ public abstract class ResultsSerializer {
      *                      serialized and the nodes have been detached from the subsequent nodes
      * @param chunkConsumer object that will receive each chunk, as it is created.
      */
-    public abstract <B extends Batch<B>, S extends ByteSink<S, T>, T>
-    void serialize(Batch<B> batch, ByteSink<S, T> sink, int hardMaxBytes,
+    public abstract <B extends Batch<B>, T>
+    void serialize(Orphan<B> batch, ByteSink<?, T> sink, int hardMaxBytes,
                    NodeConsumer<B> nodeConsumer,
                    ChunkConsumer<T> chunkConsumer);
 
     /**
-     * Equivalent to {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+     * Equivalent to {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
      * with:
      *
      * <ul>
      *     <li>{@code softMaxBytes =} {@link Integer#MAX_VALUE}</li>
      *     <li>{@code hardMaxBytes =} {@link Integer#MAX_VALUE}</li>
-     *     <li>{@code nodeConsumer = new} {@link LeakingReassemble}</li>
+     *     <li>{@code nodeConsumer = new} {@link Reassemble}</li>
      *     <li>{@code chunkConsumer = } {@link #ignoreChunks()}</li>
      * </ul>
+     *
+     * <p>ownership of {@code batch} will be momentarily removed from {@code batchOwner} during
+     * serialization, but will be restored to {@code batchOwner} after serialization has been
+     * completed and the {@code batch} is reassembled as the same linked list.</p>
      *
      * @param batch the batch to serialize
      * @param sink destination of serialization bytes
      */
-    public <B extends Batch<B>, S extends ByteSink<S, T>, T>
-    void serialize(Batch<B> batch, ByteSink<S, T> sink) {
-        serialize(batch, sink, Integer.MAX_VALUE,
-                  new Reassemble<>(), ignoreChunks());
+    public <B extends Batch<B>, T>
+    void serialize(Batch<B> batch, Object batchOwner, ByteSink<?, T> sink) {
+        if (batch == null)
+            return;
+        var reassemble = new Reassemble<B>();
+        serialize(batch.releaseOwnership(batchOwner), sink, Integer.MAX_VALUE,
+                  reassemble, ignoreChunks());
+        requireNonNull(reassemble.take()).takeOwnership(batchOwner);
     }
 
     /**
@@ -345,10 +352,10 @@ public abstract class ResultsSerializer {
     public abstract
     void serialize(Batch<?> batch, ByteSink<?, ?> sink, int row);
 
-    /** Helper for use by {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+    /** Helper for use by {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
      *  implementations */
-    protected <S extends ByteSink<S, T>, T>
-    void deliver(ByteSink<S, T> sink, ChunkConsumer<T> chunkConsumer, int rowsInChunk,
+    protected <T>
+    void deliver(ByteSink<?, T> sink, ChunkConsumer<T> chunkConsumer, int rowsInChunk,
                     int lastSinkLen, int maxBytes) {
         int len = sink.len();
         if (rowsInChunk > 1 && len >= maxBytes)
@@ -363,34 +370,34 @@ public abstract class ResultsSerializer {
         }
     }
 
-    /** Helper for use by {@link #serialize(Batch, ByteSink, int, NodeConsumer, ChunkConsumer)}
+    /** Helper for use by {@link #serialize(Orphan, ByteSink, int, NodeConsumer, ChunkConsumer)}
      *  implementations */
-    protected static <B extends Batch<B>>
+    protected <B extends Batch<B>>
     @Nullable B detachAndDeliverNode(B batch, NodeConsumer<B> nodeConsumer) {
-        B next;
-        next = batch.detachHead();
+        B next = Orphan.takeOwnership(batch.detachHead(), this);
         try {
-            nodeConsumer.onSerializedNode(batch);
+            nodeConsumer.onSerializedNode(batch.releaseOwnership(this));
         } catch (Throwable e) {
-            throw new SerializationException("nodeConsumer failure", e);
+            handleNotSerialized(next, 0, nodeConsumer, e);
+            return null;
         }
         return next;
     }
 
-    protected static <B extends Batch<B>>
+    protected <B extends Batch<B>>
     void handleNotSerialized(B batch, int serializedUntilRow, NodeConsumer<B> consumer,
                              Throwable error) {
         if (batch == null) return;
-        B remainder = batch.detachHead();
+        B remainder = Orphan.takeOwnership(batch.detachHead(), this);
         try {
-            consumer.onNotSerializedNode(batch, serializedUntilRow);
+            consumer.onNotSerializedNode(batch.releaseOwnership(this), serializedUntilRow);
         } catch (Exception e) {
             error.addSuppressed(e);
         }
         for (batch = remainder; remainder != null; batch = remainder) {
-            remainder = batch.detachHead();
+            remainder = Orphan.takeOwnership(batch.detachHead(), this);
             try {
-                consumer.onNotSerializedNode(batch, 0);
+                consumer.onNotSerializedNode(batch.releaseOwnership(this), 0);
             } catch (Exception e) {
                 error.addSuppressed(e);
             }

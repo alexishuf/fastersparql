@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -121,10 +122,9 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
         int lastIdx = queues.length-1;
         var last = queues[lastIdx];
         Throwable cause = null;
-        B b = null;
-        try (upstream) {
+        try (var g = new Guard.ItGuard<>(this, upstream)) {
             // drain upstream
-            while ((b = upstream.nextBatch(b)) != null) {
+            for (B b; (b = g.nextBatch()) != null; ) {
                 if (EmitterStats.ENABLED && stats != null)
                     stats.onBatchPassThrough(b);
                 //copy b to all consumers, except last
@@ -141,18 +141,12 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
                 // deliver b by reference to the last consumer
                 if (last.cancelled == null) {
                     try {
-                        b = last.offer(b);
+                        last.offer(g.take());
                     } catch (BatchQueue.QueueStateException e) {
-                        b = null; // offer() recycles b
                         handleTerminatedDuringOffer(e, last);
                     }
                 }
             }
-            // this is not a leak. If nextBatch() throws, it SHOULD recycle b if it has not
-            // already passed ownership or recycled it. Therefore, this stack frame always
-            // looses ownership of b upon entry on upstream.nextBatch() and we must not recycle b
-            // in case of an exception.
-            Batch.recycle(b);
         } catch (Throwable e) {
             if (e instanceof BItReadFailedException rfe) {
                 cause = rfe.getCause();

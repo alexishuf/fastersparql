@@ -2,7 +2,8 @@ package com.github.alexishuf.fastersparql.client.netty.http;
 
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
 import io.netty.buffer.ByteBuf;
@@ -56,7 +57,7 @@ import static io.netty.handler.codec.http.HttpStatusClass.SUCCESS;
  *                     </li>
  *                 </ol>
  *             </li>
- *             <li>{@link #onFailureResponse(HttpResponse, ByteRope, boolean)} if the channel
+ *             <li>{@link #onFailureResponse(HttpResponse, MutableRope, boolean)} if the channel
  *                 closes before the server starts a response or if the server answers with a
  *                 non-200 response (which may be incomplete if the channel closes before
  *                 it completes)</li>
@@ -94,7 +95,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private @Nullable HttpRequest pendingRequest;
     private int doSendRequestCookie, doCancelCookie;
     @SuppressWarnings("FieldMayBeFinal") private int plainCookie = RECYCLED_COOKIE;
-    private ByteRope failureBody = ByteRope.EMPTY;
+    private PooledMutableRope failureBody;
 
     private static final int RECYCLED_COOKIE = 0x80000000;
 
@@ -388,7 +389,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
      * @param bodyComplete if {@code true} {@code body} contains the full response
      */
     protected abstract void onFailureResponse(@Nullable HttpResponse response,
-                                              @Nullable ByteRope body,
+                                              @Nullable MutableRope body,
                                               boolean bodyComplete);
 
     /**
@@ -465,6 +466,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         actions.runNow();
         actions.executor(ForkJoinPool.commonPool());
         this.ctx = null;
+        if (failureBody != null) {
+            failureBody.close();
+            failureBody = null;
+        }
     }
 
     @Override public void channelActive(ChannelHandlerContext ctx) throws Exception {
@@ -564,13 +569,13 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     }
 
     private void appendFailContent(HttpContent content) {
-        if (failureBody == ByteRope.EMPTY)
-            failureBody = new ByteRope();
         ByteBuf bb = content.content();
         int nBytes = bb.readableBytes();
-        if (failureBody.len+nBytes > 4096) {
+        if ((failureBody == null ? 0 : failureBody.len)+nBytes > 4096) {
             st |= ST_FAIL_RESP_TRUNC;
         } else {
+            if (failureBody == null)
+                failureBody = PooledMutableRope.get();
             failureBody.ensureFreeCapacity(nBytes);
             bb.readBytes(failureBody.u8(), failureBody.len, nBytes);
             failureBody.len += nBytes;

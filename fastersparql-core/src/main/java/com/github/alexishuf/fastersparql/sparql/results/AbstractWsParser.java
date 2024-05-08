@@ -4,14 +4,16 @@ import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<B> {
@@ -41,7 +43,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     public static final int MAX_FRAME_LEN = 65536;
     /**
      * Recommended maximum WebSocket frame for clients or servers sending the frames. See
-     * {@code hardMaxBYtes} in {@link ResultsSerializer#serialize(Batch, ByteSink, int, ResultsSerializer.NodeConsumer, ResultsSerializer.ChunkConsumer)}
+     * {@code hardMaxBytes} in {@link ResultsSerializer#serialize(Orphan, ByteSink, int, ResultsSerializer.NodeConsumer, ResultsSerializer.ChunkConsumer)}
      */
     public static final int REC_MAX_FRAME_LEN = MAX_FRAME_LEN - 8192 /* 2 pages */; // 56KiB
 
@@ -118,16 +120,17 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
                 if (r.get(colon + 1) == '<')
                     iri = Term.valueOf(r, iriBegin, eol);
                 else {
-                    var wrapped = new ByteRope(eol - iriBegin + 2)
-                            .append('<').append(r, colon + 1, eol).append('>');
-                    iri = Term.splitAndWrap(wrapped);
+                    try (var wrapped = PooledMutableRope.getWithCapacity(eol-iriBegin+2)) {
+                        wrapped.append('<').append(r, colon+1, eol).append('>');
+                        iri = Term.valueOf(wrapped, 0, wrapped.len);
+                    }
                 }
             } catch (InvalidTermException ignored) { }
         }
         if (iri == null)
             throw badPrefix(r, begin, eol);
-        var name = new ByteRope(colon - nameBegin).append(r, nameBegin, colon);
-        termParser.prefixMap.addRef(name, iri);
+        var name = asFinal(r, nameBegin, colon);
+        termParser.prefixMap().addRef(name, iri);
     }
 
     private void handleCancel() {

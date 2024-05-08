@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.util.CloseShieldOutputStream;
@@ -70,6 +69,7 @@ public class Watchdog implements AutoCloseable {
 
     @SuppressWarnings("unused")
     public static final class Spec implements Runnable {
+        private static final int DST_NONE   = 0x0;
         private static final int DST_STDOUT = 0x1;
         private static final int DST_STDERR = 0x2;
         private static final int DST_FILE   = 0x4;
@@ -128,6 +128,10 @@ public class Watchdog implements AutoCloseable {
         }
         public @This Spec thread(int cols) {
             threadCols = Math.max(threadCols, cols);
+            return this;
+        }
+        public @This Spec noThread() {
+            threadDst = DST_NONE;
             return this;
         }
 

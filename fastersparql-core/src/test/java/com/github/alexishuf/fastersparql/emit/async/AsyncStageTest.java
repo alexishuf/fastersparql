@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
@@ -8,14 +7,18 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -40,11 +43,12 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class AsyncStageTest {
     private static final Vars X = Vars.of("x");
 
-    private static final class P<B extends Batch<B>> extends TaskEmitter<B> {
+    private static final class P<B extends Batch<B>> extends TaskEmitter<B, P<B>>
+            implements Orphan<P<B>> {
         private final int begin, end;
         private int nextRow;
         private final @Nullable RuntimeException failCause;
-        private final ByteRope nt = new ByteRope();
+        private final MutableRope nt = new MutableRope(12);
 
         public P(BatchType<B> batchType, int begin, int end, @Nullable RuntimeException failCause) {
             super(batchType, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
@@ -52,6 +56,13 @@ class AsyncStageTest {
             this.nextRow = begin;
             this.end = end;
             this.failCause = failCause;
+        }
+
+        @Override public P<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override protected void doRelease() {
+            super.doRelease();
+            nt.close();
         }
 
         @Override protected StringBuilder minimalLabel() {
@@ -69,14 +80,14 @@ class AsyncStageTest {
         }
 
         @Override protected int produceAndDeliver(int state) {
-            B b = bt.createForThread(threadId, 1);
+            B b = bt.createForThread(threadId, 1).takeOwnership(this);
             for (int i = 0, n = 1+(nextRow&3); i < n && nextRow < end; i++) {
                 nt.clear().append('"').append(nextRow++);
                 b.beginPut();
                 b.putTerm(0, DT_integer, nt, 0, nt.len, true);
                 b.commitPut();
             }
-            bt.recycle(deliver(b));
+            deliver(b.releaseOwnership(this));
             if (nextRow == end) {
                 nextRow++;
                 if (failCause != null)
@@ -87,7 +98,8 @@ class AsyncStageTest {
         }
     }
 
-    private static final class C<B extends Batch<B>> implements Receiver<B> {
+    private static final class C<B extends Batch<B>> extends AbstractOwned<C<B>>
+            implements Receiver<B>, Orphan<C<B>> {
         private static final VarHandle RECEIVING;
         static {
             try {
@@ -96,20 +108,28 @@ class AsyncStageTest {
                 throw new ExceptionInInitializerError(e);
             }
         }
-        private final Emitter<B> upstream;
+        private final Emitter<B, ?> upstream;
         private final BitSet received   = new BitSet();
         private final BitSet duplicates = new BitSet();
         private final boolean slow;
         private boolean cancelled;
         private @Nullable Throwable error = null;
         @SuppressWarnings("FieldMayBeFinal") private int plainReceiving = 0;
-        private final SegmentRope view = new SegmentRope();
+        private final SegmentRopeView view = new SegmentRopeView();
         private final Semaphore ready = new Semaphore(0);
 
-        public C(Emitter<B> upstream, boolean slow) {
+        public C(Orphan<? extends Emitter<B, ?>> upstream, boolean slow) {
             this.slow     = slow;
-            this.upstream = upstream;
-            upstream.subscribe(this);
+            this.upstream = upstream.takeOwnership(this);
+            this.upstream.subscribe(this);
+        }
+
+        @Override public C<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override public @Nullable C<B> recycle(Object currentOwner) {
+            internalMarkGarbage(currentOwner);
+            upstream.recycle(this);
+            return null;
         }
 
         @Override public String label(StreamNodeDOT.Label type) {
@@ -127,7 +147,13 @@ class AsyncStageTest {
             assertFalse (cancelled);
         }
 
-        @Override public @Nullable B onBatch(B batch) {
+        @Override public void onBatch(Orphan<B> orphan) {
+            B b = orphan.takeOwnership(this);
+            onBatchByCopy(b);
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B batch) {
             long deadline = slow ? Timestamp.nextTick(2) : 0;
             if ((int)RECEIVING.compareAndExchangeAcquire(this, 0, 1) != 0)
                 error = new AssertionError("concurrent onBatch");
@@ -154,7 +180,6 @@ class AsyncStageTest {
                 while (Timestamp.nanoTime() <= deadline)
                     Thread.yield();
             }
-            return batch;
         }
 
         @Override public void onComplete() {
@@ -221,8 +246,8 @@ class AsyncStageTest {
     }
 
     @SuppressWarnings("unchecked")
-    @Test <B extends Batch<B>> void testConcurrent() throws Exception {
-        int repetitions = Runtime.getRuntime().availableProcessors()*4;
+    @RepeatedTest(2) <B extends Batch<B>> void testConcurrent() throws Exception {
+        int repetitions = Runtime.getRuntime().availableProcessors()*2;
         List<Runnable> runnableList = new ArrayList<>();
         for (var args : data()) {
             BatchType<B> bt = (BatchType<B>)args.get()[0];
@@ -238,23 +263,28 @@ class AsyncStageTest {
     }
 
 
-    private static <B extends Batch<B>> void doTest(BatchType<B> bt, int rows, int producers,
+    private <B extends Batch<B>> void doTest(BatchType<B> bt, int rows, int producers,
                                                     boolean slow, RuntimeException fail) {
         Watchdog.reset();
-        try (var w = Watchdog.spec("test").threadStdOut(100).create()) {
+        Emitter<B, ?> root;
+        C<B> consumer;
+        try (var w = Watchdog.spec("test").threadStdOut(100).create();
+             var consumerG = new Guard<C<B>>(this)) {
             w.start(5_000_000_000L);
-            Emitter<B> root;
             if (producers == 1) {
-                root = new AsyncStage<>(new P<>(bt, 0, rows, fail));
+                root = AsyncStage.create(new P<>(bt, 0, rows, fail)).takeOwnership(this);
             } else {
-                var ge = new GatheringEmitter<>(bt, X);
+                var ge = GatheringEmitter.create(bt, X).takeOwnership(this);
                 root = ge;
                 int begin = 0;
                 for (int i = 0; i < producers; i++, begin+=rows)
-                    ge.subscribeTo(new AsyncStage<>(new P<>(bt, begin, begin+rows, fail)));
+                    ge.subscribeTo(AsyncStage.create(new P<>(bt, begin, begin+rows, fail)));
             }
-            new C<>(root, slow).check(rows*producers, fail);
+            consumer = consumerG.set((Orphan<C<B>>)new C<>(root.releaseOwnership(this), slow));
+            consumer.check(rows*producers, fail);
         }
+        assertFalse(consumer.isAlive());
+        assertFalse(root.isAlive());
     }
 
 }

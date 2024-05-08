@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -116,16 +116,21 @@ public abstract class Binding {
     /* --- --- java.lang.Object methods --- --- --- */
 
     @Override public final String toString() {
-        var sb = new ByteRope().append('{');
-        Vars vars = vars();
-        int n = vars.size();
-        for (int i = 0; i < n; i++) {
-            Term t = get(i);
-            sb.append(vars.get(i)).append('=').append(t==null ? "null" : t.toSparql()).append(", ");
+        try (var sb = PooledMutableRope.get()) {
+            sb.append('{');
+            Vars vars = vars();
+            int n = vars.size();
+            for (int i = 0; i < n; i++) {
+                Term t = get(i);
+                sb.append(vars.get(i)).append('=');
+                if (t == null) sb.append("null");
+                else           t.toSparql(sb, PrefixAssigner.CANON);
+                sb.append(", ");
+            }
+            if (n > 0)
+                sb.unAppend(2);
+            return sb.append('}').toString();
         }
-        if (n > 0)
-            sb.unAppend(2);
-        return sb.append('}').toString();
     }
 
     @Override public final boolean equals(Object other) {

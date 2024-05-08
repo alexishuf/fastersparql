@@ -1,14 +1,14 @@
 package com.github.alexishuf.fastersparql;
 
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClientFactory;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
@@ -16,6 +16,9 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -121,7 +124,7 @@ public class FS {
     public static Empty empty() { return Empty.EMPTY; }
 
     public static Query query(SparqlClient client, CharSequence query) {
-        return new Query(new OpaqueSparqlQuery(new ByteRope(query)), client);
+        return new Query(new OpaqueSparqlQuery(FinalSegmentRope.asFinal(query)), client);
     }
 
     public static Query query(SparqlClient client, Rope query) {
@@ -133,7 +136,7 @@ public class FS {
     }
 
     public static Query query(CharSequence query) {
-        return new Query(new OpaqueSparqlQuery(new ByteRope(query)), UNBOUND_CLIENT);
+        return new Query(new OpaqueSparqlQuery(FinalSegmentRope.asFinal(query)), UNBOUND_CLIENT);
     }
 
     public static Query query(Rope query) {
@@ -145,13 +148,12 @@ public class FS {
     }
 
     public static Values values(Vars vars, Collection<?> rows) {
-        TermBatch b;
+        Orphan<TermBatch> orphan;
         int cols = vars.size(), rowsSize = rows.size();
         if (rowsSize == 0) {
-            b = null;
+            orphan = null;
         } else {
-            b = new TermBatch(new Term[rowsSize*cols], 0, cols, true);
-            b.markUntracked();
+            var b = TermBatchType.TERM.create(cols).takeOwnership(VALUES);
             for (Object row : rows) {
                 switch (row) {
                     case Term[] a -> b.putRow(a);
@@ -160,9 +162,11 @@ public class FS {
                     default -> throw new UnsupportedOperationException("Unexpected row type");
                 }
             }
+            orphan = b.releaseOwnership(VALUES);
         }
-        return new Values(vars, b);
+        return new Values(vars, orphan);
     }
+    private static final StaticMethodOwner VALUES = new StaticMethodOwner("FS.values");
 
     public static Plan join(Plan left, Plan right) {
         if (left.type == Operator.JOIN || right.type == Operator.JOIN)
@@ -399,15 +403,18 @@ public class FS {
             return List.of();
         List<Expr> parsed = new ArrayList<>(size);
         parsed.addAll(oldFilters);
-        var p = new ExprParser();
-        for (Object o : filters) {
-            if (o instanceof Expr e)
-                parsed.add(e);
-            else if (o != null)
-                parsed.add(p.parse(SegmentRope.of(o)));
+        try (var pGuard = new Guard<ExprParser>(PARSE_FILTERS)) {
+            var p = pGuard.set(ExprParser.create());
+            for (Object o : filters) {
+                if (o instanceof Expr e)
+                    parsed.add(e);
+                else if (o != null)
+                    parsed.add(p.parse(FinalSegmentRope.asFinal(o)));
+            }
         }
         return parsed;
     }
+    private static final StaticMethodOwner PARSE_FILTERS = new StaticMethodOwner("FS.parseFilters");
 
     /** See {@link FS#filter(Plan, Collection)} */
     public static Modifier filter(Plan input, String... filters) { return filter(input, Arrays.asList(filters)); }

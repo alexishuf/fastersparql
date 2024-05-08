@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
 
 import java.lang.foreign.MemorySegment;
 
@@ -11,26 +10,19 @@ import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
-    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+    public static final int BYTES = 16 + 2*4 + 2*(4+4+8+4);
     public MemorySegment fst, snd;
     public byte[] fstU8, sndU8;
     public long fstOff, sndOff;
     public int fstLen, sndLen;
 
-    public static TwoSegmentRope pooled() {
-        TwoSegmentRope r = GlobalAffinityShallowPool.get(POOL_COL);
-        return r == null ? new TwoSegmentRope() : r;
-    }
-    public void recycle() {
-        GlobalAffinityShallowPool.offer(POOL_COL, this);
-    }
 
     public TwoSegmentRope() {
         super(0);
-        fst = ByteRope.EMPTY_SEGMENT;
-        snd = ByteRope.EMPTY_SEGMENT;
-        fstU8 = ByteRope.EMPTY_UTF8;
-        sndU8 = ByteRope.EMPTY_UTF8;
+        fst = MutableRope.EMPTY_SEGMENT;
+        snd = MutableRope.EMPTY_SEGMENT;
+        fstU8 = MutableRope.EMPTY_UTF8;
+        sndU8 = MutableRope.EMPTY_UTF8;
     }
 
     public TwoSegmentRope(SegmentRope first, SegmentRope snd) {
@@ -421,6 +413,17 @@ public class TwoSegmentRope extends PlainRope {
     @Override public int hashCode() {
         int h = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
         return SegmentRope.hashCode(h, snd, sndOff, sndLen);
+    }
+
+    @Override public void appendTo(StringBuilder sb, int begin, int end) {
+        try (var d = RopeDecoder.create()) {
+            int n = Math.min(fstLen, end)-begin;
+            if (n > 0)
+                d.write(sb, fst, fstOff+begin, n);
+            n = end-begin-n;
+            if (n > 0)
+                d.write(sb, snd, sndOff+end-n, n);
+        }
     }
 
     @Override public int compareTo(SegmentRope o) {

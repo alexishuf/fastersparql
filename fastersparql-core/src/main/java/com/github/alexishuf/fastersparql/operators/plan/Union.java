@@ -2,8 +2,6 @@ package com.github.alexishuf.fastersparql.operators.plan;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.ConcatBIt;
 import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
@@ -15,6 +13,7 @@ import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
 import com.github.alexishuf.fastersparql.operators.bit.DedupMergeBIt;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -69,36 +68,40 @@ public final class Union extends Plan {
         var sources = new ArrayList<BIt<B>>(opCount());
         for (int i = 0, n = opCount(); i < n; i++)
             sources.add(op(i).execute(bt, binding, weakDedup));
-        Dedup<B> dedup = createDedup(bt, weakDedup);
+        var dedup = createDedup(bt, weakDedup);
         Metrics m = Metrics.createIf(this);
         if (singleEndpoint()) {//noinspection resource
             var it = dedup == null ? new ConcatBIt<>(sources, bt, publicVars())
-                                   : new DedupConcatBIt<>(sources, publicVars(), dedup);
+                                   : new DedupConcatBIt<>(sources, bt, publicVars(), dedup);
             return it.metrics(m);
         }
         return dedup == null ? new MergeBIt<>(sources, bt, publicVars(), m)
-                             : new DedupMergeBIt<>(sources, publicVars(), m, dedup);
+                             : new DedupMergeBIt<>(sources, bt, publicVars(), m, dedup);
     }
 
-    private <B extends Batch<B>> @Nullable Dedup<B> createDedup(BatchType<B> bt, boolean weak) {
+    private <B extends Batch<B>> @Nullable Orphan<? extends Dedup<B, ?>>
+    createDedup(BatchType<B> bt, boolean weak) {
         if (weak || crossDedup) {
             int cs = publicVars().size();
-            return weak ? new WeakDedup<>(bt, cs, WEAK) : new WeakCrossSourceDedup<>(bt, cs);
+            return weak ? Dedup.weak(bt, cs, WEAK) : Dedup.weakCrossSource(bt, cs);
         }
         return null;
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
-                                                  boolean weakDedup) {
+    public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         Vars outVars = publicVars();
-        var gather = new GatheringEmitter<>(type, outVars);
+        var gather = GatheringEmitter.create(type, outVars).takeOwnership(this);
         for (int i = 0, n = opCount(); i < n; i++)
             gather.subscribeTo(op(i).emit(type, rebindHint, weakDedup));
-        Dedup<B> dedup = createDedup(type, weakDedup);
+        var dedup = createDedup(type, weakDedup);
+        var orphanGather = gather.releaseOwnership(this);
         if (dedup == null)
-            return gather;
-        return type.filter(outVars, dedup).subscribeTo(gather);
+            return orphanGather;
+        return type.filter(outVars, dedup)
+                   .takeOwnership(this).subscribeTo(orphanGather)
+                   .releaseOwnership(this);
     }
 
     @Override public boolean equals(Object o) {

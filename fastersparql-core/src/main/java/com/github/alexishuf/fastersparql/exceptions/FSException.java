@@ -11,7 +11,6 @@ public class FSException extends RuntimeException {
 
     public static FSException wrap(SparqlEndpoint endpoint, Throwable t) {
         return switch (t) {
-            case null -> null;
             case FSException fs -> {
                 fs.endpoint(endpoint);
                 yield fs;

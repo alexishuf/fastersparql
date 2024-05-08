@@ -3,9 +3,8 @@ package com.github.alexishuf.fastersparql.batch.operators;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BItGenerator;
 import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakCrossSourceDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.bit.DedupConcatBIt;
@@ -14,6 +13,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.plan.Empty;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Union;
+import com.github.alexishuf.fastersparql.util.IntList;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.opentest4j.AssertionFailedError;
@@ -24,6 +24,7 @@ import java.util.List;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsOrdered;
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.assertEqualsUnordered;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.util.List.of;
 import static java.util.stream.Collectors.joining;
 
@@ -39,21 +40,22 @@ class WeakCrossSourceDedupBItTest {
                 operands[i] = new Empty(Vars.of("x"), Vars.of("x"));
             }
             var union = new Union(false, operands);
-            var dedup = new WeakCrossSourceDedup<>(TermBatchType.TERM, 1);
+            var dedup = Dedup.weakCrossSource(TERM, 1);
             Vars outVars = union.publicVars();
             Metrics m = Metrics.createIf(union);
             //noinspection resource
-            return sequential ? new DedupConcatBIt<>(its, outVars, dedup).metrics(m)
-                              : new DedupMergeBIt<>(its, outVars, m, dedup);
+            return sequential ? new DedupConcatBIt<>(its, TERM, outVars, dedup).metrics(m)
+                              : new DedupMergeBIt<>(its, TERM, outVars, m, dedup);
         }
 
         @Override public void run() {
-            int[] ints = drainer.drainToInts(createBIt(), expectedSequential.length);
+            IntList ints = drainer.drainToInts(createBIt(), expectedSequential.length);
             if (sequential) {
-                assertEqualsOrdered(expectedSequential, ints, ints.length);
+                assertEqualsOrdered(expectedSequential, ints);
             } else {
-                assertEqualsUnordered(expectedSequential, ints, ints.length, true, false, false);
+                assertEqualsUnordered(expectedSequential, ints, true, false, false);
             }
+            ints.clear();
         }
 
         @Override public String toString() {

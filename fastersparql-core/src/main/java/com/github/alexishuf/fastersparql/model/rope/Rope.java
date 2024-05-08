@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.*;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -52,7 +53,9 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return ((i-not) & 1) == 0;
     }
 
-    public Rope(int len) { this.len = len; }
+    public Rope(int len) {
+        this.len = len;
+    }
 
     /** Get the number of bytes in this {@link Rope}. */
     public final int len() { return len; }
@@ -122,9 +125,12 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         ArrayList<Rope> ropes = new ArrayList<>(items.length);
         for (Object obj : items) {
             switch (obj) {
-                case Collection<?> coll -> coll.forEach(o -> ropes.add(of(o)));
-                case Object[] a -> { for (var o : a) ropes.add(of(o)); }
-                default -> ropes.add(of(obj));
+                case Collection<?> coll -> coll.forEach(o -> ropes.add(asFinal(o)));
+                case Object[] a -> {
+                    for (var o : a)
+                        ropes.add(asFinal(o));
+                }
+                default -> ropes.add(asFinal(obj));
             }
         }
         return ropes;
@@ -133,59 +139,18 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     public static Set<Rope> ropeSet(Object... items) {
         LinkedHashSet<Rope> ropes = new LinkedHashSet<>(items.length);
         for (Object obj : items) {
-            if (obj instanceof List<?> l)
-                ropes.addAll(ropeList(l.toArray()));
-            else
-                ropes.add(obj instanceof Rope r ? r : new ByteRope(obj));
+            switch (obj) {
+                case Collection<?> l -> ropes.addAll(ropeList(l.toArray()));
+                case   byte[] u8     -> ropes.add(asFinal(u8));
+                case Object[] arr    -> ropes.addAll(ropeList(arr));
+                case null, default   -> ropes.add(asFinal(obj));
+            }
         }
         return ropes;
     }
 
-    public static Rope of(Object o) {
-        return o == null ? null : o instanceof Rope r ? r : new ByteRope(o);
-    }
-
-    public static ByteRope of(Object a0, Object a1) {
-        Rope r0 = a0 instanceof Rope r ? r : new ByteRope(a0.toString());
-        Rope r1 = a1 instanceof Rope r ? r : new ByteRope(a1.toString());
-        return new ByteRope(r0.len() + r1.len()).append(r0).append(r1);
-    }
-
-    public static ByteRope of(Object a0, Object a1, Object a2) {
-        Rope r0 = a0 instanceof Rope r ? r : new ByteRope(a0.toString());
-        Rope r1 = a1 instanceof Rope r ? r : new ByteRope(a1.toString());
-        Rope r2 = a2 instanceof Rope r ? r : new ByteRope(a2.toString());
-        return new ByteRope(r0.len() + r1.len() + r2.len()).append(r0).append(r1).append(r2);
-    }
-
-    private static final Rope[] CHARS;
-
-    static {
-        Rope[] chars = new Rope[127];
-        for (int i = 0; i < 127; i++)  //noinspection StaticInitializerReferencesSubClass
-            chars[i] = new ByteRope(new byte[]{(byte)i});
-        CHARS = chars;
-    }
-
-    /**
-     * Equivalent to {@code new ByteRope(Stream.of(args).map(Object::toString).reduce(String::concat).orElse(""))}
-     */
-    public static ByteRope of(Object... args) {
-        int size = 0;
-        for (int i = 0; i < args.length; i++) {
-            var arg = args[i];
-            if (arg instanceof Character c && c < 128)
-                args[i] = CHARS[c];
-            else if (arg instanceof CharSequence cs && cs.length() == 1 && cs.charAt(0) < 128)
-                args[i] = CHARS[cs.charAt(0)];
-            else if (!(arg instanceof Rope))
-                args[i] = new ByteRope(arg);
-            size += ((Rope)args[i]).len();
-        }
-        ByteRope out = new ByteRope(size);
-        for (Object a : args)
-            out.append(((Rope)a));
-        return out;
+    public static Rope asRope(Object o) {
+        return o instanceof Rope r ? r : asFinal(o);
     }
 
     public static final int[] ANY = new int[] {-1, -1, -1, -1};
@@ -610,13 +575,27 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return has(position, rope, 0, rope.len);
     }
 
-    /** Similar to {@link Rope#has(int, byte[])} but */
-    public boolean hasAnyCase(int position, byte[] uppercaseSequence) {
+    /** Equivalent to {@link #hasAnyCase(int, byte[], int, int)} with {@code uppercaseOffset=0}
+     * and {@code upperCaseLen=uppercase.length} */
+    public final boolean hasAnyCase(int position, byte[] uppercase) {
+        return hasAnyCase(position, uppercase, 0, uppercase.length);
+    }
+
+    /** Equivalent to {@link #hasAnyCase(int, byte[], int, int)} with {@code uppercaseOffset=0}
+     * and {@code upperCaseLen=uppercase.length} */
+    public final boolean hasAnyCase(int position, FinalSegmentRope up) {
+        return hasAnyCase(position, up.utf8, up.backingArrayOffset(), up.len);
+    }
+
+    /** Whether sub(position, upLen).toAsciiUpperCase() contains the same {@code upLen}
+     * UTF-8 bytes that start at {@code upoffset} in {@code up}. */
+    public boolean hasAnyCase(int position, byte[] up, int upOffset, int upLen) {
         if (position < 0) throw new IndexOutOfBoundsException(position);
-        if (position+uppercaseSequence.length > len) return false;
-        for (byte expected : uppercaseSequence) {
-            byte actual = get(position++);
-            if (actual != expected && ((actual < 'a' || actual > 'z') || actual - 32 != expected))
+        if (position+upLen > len)
+            return false;
+        for (int i = upOffset, upEnd = upOffset+upLen; i < upEnd; i++) {
+            byte actual = get(position++), ex = up[upOffset+i];
+            if (actual != ex && ((actual < 'a' || actual > 'z') || actual-32 != ex))
                 return false;
         }
         return true;
@@ -642,13 +621,12 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         int len = len();
         if (skip(0, len, until) == len)
             return this;
-        byte[] u8 = toArray(0, len);
-        ByteRope br = new ByteRope(u8);
-        for (int b = 0, end = br.len; b < end; ++b) {
-            if ((b = br.skip(b, len, until)) != len)
-                u8[b] += offset;
+        RopeFactory fac = RopeFactory.make(len);
+        for (int i = 0; i < len; ++i) {
+            byte c = get(i);
+            fac.add((byte)(contains(until, c) ? c : c + offset));
         }
-        return br;
+        return fac.take();
     }
 
     /**
@@ -768,4 +746,8 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     @Override public @NonNull String toString() {
         return new String(toArray(0, len()), UTF_8);
     }
+
+    public final void appendTo(StringBuilder sb) { appendTo(sb, 0, len); }
+
+    public abstract void appendTo(StringBuilder sb, int begin, int end);
 }

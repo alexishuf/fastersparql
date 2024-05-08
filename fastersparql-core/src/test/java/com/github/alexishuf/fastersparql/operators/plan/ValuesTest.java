@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -44,15 +45,17 @@ class ValuesTest {
             // iterate again, but converting the batch type
             drainer.drainOrdered(plan.execute(COMPRESSED), rows, null);
             // test Emitter
-            drainer.drainOrdered(plan.emit(TERM, Vars.EMPTY), rows, null);
-            drainer.drainOrdered(plan.emit(COMPRESSED, Vars.EMPTY), rows, null);
+            var em1 = plan.emit(TERM, Vars.EMPTY);
+            drainer.drainOrdered(em1, rows, null);
+            var em2 = plan.emit(COMPRESSED, Vars.EMPTY);
+            drainer.drainOrdered(em2, rows, null);
             if (rows.isEmpty()) return;
 
             // iterate again but write garbage to batch
-            Term[] garbageRow = range(0, vars.size()).mapToObj(i -> Term.valueOf("\"garbage\""))
+            Term[] garbageRow = range(0, vars.size()).mapToObj(ignored -> Term.valueOf("\"garbage\""))
                                                      .toArray(Term[]::new);
-            try (var it = plan.execute(TERM)) {
-                TermBatch b = it.nextBatch(null);
+            try (var g = new Guard.ItGuard<>(this, plan.execute(TERM))) {
+                TermBatch b = g.nextBatch();
                 assertNotNull(b);
                 b.clear();
                 b.putRow(garbageRow);

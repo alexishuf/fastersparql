@@ -1,17 +1,17 @@
 package com.github.alexishuf.fastersparql.grep;
 
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 
-public class FileChunk extends SegmentRope {
+public class FileChunk extends SegmentRopeView {
     private final ByteBuffer buffer;
     public long firstBytePos;
     public int chunkNumber;
 
     public FileChunk(MemorySegment segment) {
-        super(segment, 0, (int)Math.min(Integer.MAX_VALUE, segment.byteSize()));
+        wrap(segment);
         buffer = segment.asByteBuffer();
         len = 0;
     }

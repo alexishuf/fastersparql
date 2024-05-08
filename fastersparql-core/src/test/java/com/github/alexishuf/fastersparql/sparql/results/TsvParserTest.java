@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.util.Results;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -74,6 +74,6 @@ public class TsvParserTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(CharSequence input, Results expected) throws Exception {
-        doTest(new SVParser.TsvFactory(), expected, SegmentRope.of(input));
+        doTest(new SVParser.TsvFactory(), expected, FinalSegmentRope.asFinal(input));
     }
 }

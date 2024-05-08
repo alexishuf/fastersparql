@@ -439,8 +439,8 @@ public class DebugJournal {
     );
 
     private static final LIFOPool<RoleStorage> ROLE_STORAGE_POOL = new LIFOPool<>(
-            RoleStorage.class,
-            Runtime.getRuntime().availableProcessors()*8
+            RoleStorage.class, "DebugJournal.ROLE_STORAGE", Alloc.THREADS*8,
+            4*20 + LINES*(4*4 + 2*8 + 2*4 + 2*4)
     );
 
     public final class RoleJournal {

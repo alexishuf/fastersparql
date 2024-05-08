@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.sparql.parser;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
@@ -16,47 +16,88 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.Range.WS;
 import static com.github.alexishuf.fastersparql.sparql.DistinctType.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class SparqlParser {
-    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
+    private static final int BYTES = 16 + 8+4 + 8 + ExprParser.BYTES + GroupParser.BYTES;
+    private static final Supplier<SparqlParser> FAC = new Supplier<>() {
+        @Override public SparqlParser get() {return new Concrete().takeOwnership(RECYCLED);}
+        @Override public String toString() {return "SparqlParser.FAC";}
+    };
+    private static final Alloc<SparqlParser> ALLOC = new Alloc<>(SparqlParser.class,
+            "SparqlParser.ALLOC", Alloc.THREADS*32, FAC, BYTES);
+    static { Primer.INSTANCE.sched(ALLOC::prime); }
 
     private SegmentRope in;
     private int start, pos, end;
-    private final ExprParser exprParser = new ExprParser();
+    private final ExprParser exprParser = ExprParser.create().takeOwnership(this);
     private final GroupParser groupParser = new GroupParser();
     private DistinctType distinct;
     private long limit;
     private @Nullable Vars projection;
 
+    private SparqlParser() {}
 
-    public static Plan parse(SparqlQuery q) {
-        if (q instanceof Plan p) return p;
-        SparqlParser parser = GlobalAffinityShallowPool.get(POOL_COL);
-        if (parser == null) parser = new SparqlParser();
-        var plan = parser.parse(q.sparql(), 0);
-        GlobalAffinityShallowPool.offer(POOL_COL, parser);
-        return plan;
+    public static Orphan<SparqlParser> create() {
+        return ALLOC.create().releaseOwnership(RECYCLED);
     }
 
+    private static final class Concrete extends SparqlParser implements Orphan<SparqlParser> {
+        @Override public SparqlParser takeOwnership(Object o) {return takeOwnership0(o);}
+    }
+
+    @Override public @Nullable SparqlParser recycle(Object currentOwner) {
+        internalMarkRecycled(currentOwner);
+        if (ALLOC.offer(this) != null)
+            internalMarkGarbage(RECYCLED);
+        return null;
+    }
+
+    @Override protected @Nullable SparqlParser internalMarkGarbage(Object currentOwner) {
+        super.internalMarkGarbage(currentOwner);
+        exprParser.recycle(currentOwner);
+        return null;
+    }
+
+    public static Plan parse(SparqlQuery q) {
+        if (q instanceof Plan p)
+            return p;
+        var parser = create().takeOwnership(PARSE);
+        try {
+            return parser.parse(q.sparql(), 0);
+        } finally {
+            parser.recycle(PARSE);
+        }
+    }
+    private static final StaticMethodOwner PARSE = new StaticMethodOwner("SparqlParser.parse");
+
     public static Plan parse(SegmentRope rope) {
-        SparqlParser parser = GlobalAffinityShallowPool.get(POOL_COL);
-        if (parser == null) parser = new SparqlParser();
-        Plan plan = parser.parse(rope, 0);
-        GlobalAffinityShallowPool.offer(POOL_COL, parser);
-        return plan;
+        var parser = create().takeOwnership(PARSE);
+        try {
+            return parser.parse(rope, 0);
+        } finally {
+            parser.recycle(PARSE);
+        }
     }
 
     /**
@@ -72,9 +113,10 @@ public class SparqlParser {
      * @return The {@link Plan} equivalent to the block.
      */
     public Plan parseGroup(SegmentRope sparql, int start, PrefixMap prefixMap) {
+        requireAlive();
         this.end = (this.in = sparql).len();
         this.pos = start;
-        exprParser.termParser.prefixMap.resetToBuiltin().addAll(prefixMap);
+        exprParser.termParser.prefixMap().resetToCopy(prefixMap);
         exprParser.input(sparql);
         require('{');
         Plan plan = new GroupParser().read();
@@ -83,10 +125,11 @@ public class SparqlParser {
 
     }
     public Plan parse(SegmentRope query, int start) {
+        requireAlive();
         end = (in = query).len();
         this.start = start;
         pos = start;
-        exprParser.termParser.prefixMap.resetToBuiltin();
+        exprParser.termParser.prefixMap().resetToBuiltin();
         groupParser.reset();
         distinct = null;
         limit = Long.MAX_VALUE;
@@ -103,11 +146,13 @@ public class SparqlParser {
     /** Get index of the first char not consumed by this parser from its input string. */
     public int pos() { return pos; }
 
-    private InvalidSparqlException ex(Object expected, int where) {
+    private InvalidSparqlException ex(String expected, int where) {
         int acBegin = in.skipWS(where, end), acEnd = in.skip(acBegin, end, UNTIL_WS);
         String actual = acBegin >= end ? "EOF" : "\""+in.sub(acBegin, acEnd)+"\"";
-        String ex = (expected instanceof byte[] ? new ByteRope(expected) : expected).toString();
-        throw new InvalidSparqlException("Expected "+ex+" at position "+(where-start)+", got "+actual+" Full query: "+in.sub(start, end));
+        return new InvalidSparqlException("Expected "+expected+" at position "+(where-start)+", got "+actual+" Full query: "+in.sub(start, end));
+    }
+    private InvalidSparqlException ex(byte[] expected, int where) {
+        return ex(new String(expected, UTF_8), where);
     }
 
     private Term pTerm() {
@@ -119,14 +164,13 @@ public class SparqlParser {
         return termParser.asTerm();
     }
 
-    private SegmentRope pVarName() {
+    private FinalSegmentRope pVarName() {
         int begin = pos+1, e = in.skip(begin, end, VARNAME);
         while (e > begin && in.get(e) == '.') --e;
         if (e == begin)
             throw ex("non-empty var name", pos);
-        var rope = new ByteRope(e-begin).append(in, begin, e);
         pos = e;
-        return rope;
+        return asFinal(in, begin, e);
     }
 
     private Term pIri() {
@@ -200,10 +244,10 @@ public class SparqlParser {
         skipWS();
     }
 
-    private static final ByteRope BASE = new ByteRope(":BASE");
+    private static final FinalSegmentRope BASE = asFinal(":BASE");
 
     private void pPrologue() {
-        PrefixMap prefixMap = exprParser.termParser.prefixMap;
+        PrefixMap prefixMap = exprParser.termParser.prefixMap();
         while (true) {
             switch (skipWS()) {
                 case 'p', 'P' -> {
@@ -221,11 +265,12 @@ public class SparqlParser {
         }
     }
 
-    private ByteRope pPNameNS() {
+    private FinalSegmentRope pPNameNS() {
         if (skipWS() == '\0')
             throw ex("PNAME_NS", pos);
         int begin = pos;
-        var name = new ByteRope(in.toArray(begin, pos = in.skip(pos, end, PN_PREFIX)));
+        pos = in.skip(pos, end, PN_PREFIX);
+        var name = asFinal(in, begin, pos);
         require(':');
         return name;
     }
@@ -292,6 +337,7 @@ public class SparqlParser {
     }
 
     private class GroupParser {
+        private static final int BYTES = 16 + 4*4 + 16+8;
         private final List<Plan> operands = new ArrayList<>();
         private List<Plan> optionals, minus;
         private Values values;
@@ -432,7 +478,7 @@ public class SparqlParser {
             require(')');
             int n = vars.size();
             require('{');
-            var batch = TERM.create(n);
+            var batch = TERM.create(n).takeOwnership(this);
             while (poll('(')) {
                 batch.beginPut();
                 for (int c = 0; c < n; c++)
@@ -441,7 +487,7 @@ public class SparqlParser {
                 require(')');
             }
             require('}');
-            return new Values(vars, batch);
+            return new Values(vars, batch.releaseOwnership(this));
         }
 
         private void mergeValues(Values v) {
@@ -454,18 +500,22 @@ public class SparqlParser {
         }
 
         private void coldMergeValues(Values v) {
-            Vars currentVars = this.values.publicVars();
-            Vars union = currentVars.union(v.publicVars());
-            TermBatch current = this.values.values();
-            var p = TERM.projector(union, currentVars);
-            current = p == null ? current : p.projectInPlace(current);
-            p = TERM.projector(union, v.publicVars());
-            var b = v.values();
-            if (p == null)
-                current.copy(b);
-            else
-                current = p.project(current, b);
-            this.values = new Values(union, current);
+            TermBatch current = Orphan.takeOwnership(this.values.takeValues(), this);
+            Vars currentVars  = this.values.publicVars();
+            Vars union        = currentVars.union(v.publicVars());
+            var pOrphan = TERM.projector(union, currentVars);
+            var p = pOrphan == null ? null : pOrphan.takeOwnership(this);
+            var add = v.values();
+            if (p == null) {
+                if (current == null)
+                    current = TERM.create(union.size()).takeOwnership(this);
+                current.copy(add);
+            } else {
+                var dst = Owned.releaseOwnership(current, this);
+                current = p.project(dst, add).takeOwnership(this);
+                p.recycle(this);
+            }
+            this.values = new Values(union, current.releaseOwnership(this));
         }
 
         private static final byte[] UNION_u8 = "UNION".getBytes(UTF_8);

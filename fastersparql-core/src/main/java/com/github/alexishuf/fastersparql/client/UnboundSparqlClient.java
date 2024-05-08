@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 public class UnboundSparqlClient extends AbstractSparqlClient {
     private static final SparqlEndpoint UNBOUND_ENDPOINT
@@ -29,13 +30,13 @@ public class UnboundSparqlClient extends AbstractSparqlClient {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> bt, SparqlQuery sparql,
-                                                               Vars rebindHint) {
+    @Override protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
 
-    @Override protected <B extends Batch<B>> Emitter<B> doEmit(EmitBindQuery<B> query,
-                                                               Vars rebindHint) {
+    @Override protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(EmitBindQuery<B> query, Vars rebindHint) {
         throw new UnsupportedOperationException("UnboundSparqlClient cannot answer any query!");
     }
 }

@@ -5,8 +5,10 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -20,7 +22,9 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
+import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.make;
+import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.requiredBytes;
 import static com.github.alexishuf.fastersparql.model.rope.RopeWrapper.*;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare2_2;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNumbers;
@@ -31,10 +35,17 @@ import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-@SuppressWarnings("SpellCheckingInspection")
-public final class Term extends Rope implements Expr, ExprEvaluator, JournalNamed {
-    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
-    private static final byte IS_READONLY = 0x0000010;
+@SuppressWarnings("StaticInitializerReferencesSubClass")
+public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, JournalNamed
+        permits TermView, FinalTerm {
+    public static final int BYTES = 16 + 2*4 + 6*4;
+    public enum Type {
+        BLANK,
+        VAR,
+        LIT,
+        IRI
+    }
+    private static final Type[]    TYPES  = Type.values();
     private static final byte   IS_SUFFIX = 0x0000001;
     private static final byte   TYPE_MASK = 0x0000006;
     private static final int     TYPE_BIT = numberOfTrailingZeros(TYPE_MASK);
@@ -44,77 +55,73 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
     private static final byte    TYPE_IRI = (byte) (Type.IRI.ordinal() << TYPE_BIT);
 
 
-    public static final Term FALSE = new Term(DT_BOOLEAN, "\"false", true);
-    public static final Term TRUE = new Term(DT_BOOLEAN, "\"true", true);
-    public static final Term EMPTY_STRING = new Term(EMPTY, "\"\"", true);
+    public static final FinalTerm FALSE = new FinalTerm(DT_BOOLEAN, "\"false", true);
+    public static final FinalTerm TRUE = new FinalTerm(DT_BOOLEAN, "\"true", true);
+    public static final FinalTerm EMPTY_STRING = new FinalTerm(FinalSegmentRope.EMPTY, "\"\"", true);
 
-    public static final Term GROUND = Term.valueOf("<urn:fastersparql:ground>");
+    public static final FinalTerm GROUND = Term.valueOf("<urn:fastersparql:ground>");
 
-    public static final SegmentRope CLOSE_IRI = new SegmentRope(">".getBytes(UTF_8), 0, 1);
-    public static final Term EMPTY_IRI = new Term(new SegmentRope(MemorySegment.ofArray("<".getBytes(UTF_8)), 0, 1), CLOSE_IRI, false);
-    public static final Term XSD = new Term(P_XSD, CLOSE_IRI, false);
-    public static final Term RDF = new Term(P_RDF, CLOSE_IRI, false);
-    static {
-        XSD.flags |= IS_READONLY;
-        RDF.flags |= IS_READONLY;
-    }
+    public static final FinalSegmentRope CLOSE_IRI = new FinalSegmentRope(">".getBytes(UTF_8), 0, 1);
+    public static final FinalTerm EMPTY_IRI = new FinalTerm(new FinalSegmentRope("<".getBytes(UTF_8), 0, 1), CLOSE_IRI, false);
+    public static final FinalTerm XSD = new FinalTerm(P_XSD, CLOSE_IRI, false);
+    public static final FinalTerm RDF = new FinalTerm(P_RDF, CLOSE_IRI, false);
 
-    public static final Term XSD_DURATION = new Term(P_XSD, "duration>", false);
-    public static final Term XSD_DATETIME = new Term(P_XSD, "dateTime>", false);
-    public static final Term XSD_TIME = new Term(P_XSD, "time>", false);
-    public static final Term XSD_DATE = new Term(P_XSD, "date>", false);
-    public static final Term XSD_GYEARMONTH = new Term(P_XSD, "gYearMonth>", false);
-    public static final Term XSD_GYEAR = new Term(P_XSD, "gYear>", false);
-    public static final Term XSD_GMONTHDAY = new Term(P_XSD, "gMonthDay>", false);
-    public static final Term XSD_GDAY = new Term(P_XSD, "gDay>", false);
-    public static final Term XSD_GMONTH = new Term(P_XSD, "gMonth>", false);
-    public static final Term XSD_BOOLEAN = new Term(P_XSD, "boolean>", false);
-    public static final Term XSD_BASE64BINARY = new Term(P_XSD, "base64Binary>", false);
-    public static final Term XSD_HEXBINARY = new Term(P_XSD, "hexBinary>", false);
-    public static final Term XSD_FLOAT = new Term(P_XSD, "float>", false);
-    public static final Term XSD_DECIMAL = new Term(P_XSD, "decimal>", false);
-    public static final Term XSD_DOUBLE = new Term(P_XSD, "double>", false);
-    public static final Term XSD_ANYURI = new Term(P_XSD, "anyURI>", false);
-    public static final Term XSD_STRING = new Term(P_XSD, "string>", false);
-    public static final Term XSD_INTEGER = new Term(P_XSD, "integer>", false);
-    public static final Term XSD_NONPOSITIVEINTEGER = new Term(P_XSD, "nonPositiveInteger>", false);
-    public static final Term XSD_LONG = new Term(P_XSD, "long>", false);
-    public static final Term XSD_NONNEGATIVEINTEGER = new Term(P_XSD, "nonNegativeInteger>", false);
-    public static final Term XSD_NEGATIVEINTEGER = new Term(P_XSD, "negativeInteger>", false);
-    public static final Term XSD_INT = new Term(P_XSD, "int>", false);
-    public static final Term XSD_UNSIGNEDLONG = new Term(P_XSD, "unsignedLong>", false);
-    public static final Term XSD_POSITIVEINTEGER = new Term(P_XSD, "positiveInteger>", false);
-    public static final Term XSD_SHORT = new Term(P_XSD, "short>", false);
-    public static final Term XSD_UNSIGNEDINT = new Term(P_XSD, "unsignedInt>", false);
-    public static final Term XSD_BYTE = new Term(P_XSD, "byte>", false);
-    public static final Term XSD_UNSIGNEDSHORT = new Term(P_XSD, "unsignedShort>", false);
-    public static final Term XSD_UNSIGNEDBYTE = new Term(P_XSD, "unsignedByte>", false);
-    public static final Term XSD_NORMALIZEDSTRING = new Term(P_XSD, "normalizedString>", false);
-    public static final Term XSD_TOKEN = new Term(P_XSD, "token>", false);
-    public static final Term XSD_LANGUAGE = new Term(P_XSD, "language>", false);
+    public static final FinalTerm XSD_DURATION = new FinalTerm(P_XSD, "duration>", false);
+    public static final FinalTerm XSD_DATETIME = new FinalTerm(P_XSD, "dateTime>", false);
+    public static final FinalTerm XSD_TIME = new FinalTerm(P_XSD, "time>", false);
+    public static final FinalTerm XSD_DATE = new FinalTerm(P_XSD, "date>", false);
+    public static final FinalTerm XSD_GYEARMONTH = new FinalTerm(P_XSD, "gYearMonth>", false);
+    public static final FinalTerm XSD_GYEAR = new FinalTerm(P_XSD, "gYear>", false);
+    public static final FinalTerm XSD_GMONTHDAY = new FinalTerm(P_XSD, "gMonthDay>", false);
+    public static final FinalTerm XSD_GDAY = new FinalTerm(P_XSD, "gDay>", false);
+    public static final FinalTerm XSD_GMONTH = new FinalTerm(P_XSD, "gMonth>", false);
+    public static final FinalTerm XSD_BOOLEAN = new FinalTerm(P_XSD, "boolean>", false);
+    public static final FinalTerm XSD_BASE64BINARY = new FinalTerm(P_XSD, "base64Binary>", false);
+    public static final FinalTerm XSD_HEXBINARY = new FinalTerm(P_XSD, "hexBinary>", false);
+    public static final FinalTerm XSD_FLOAT = new FinalTerm(P_XSD, "float>", false);
+    public static final FinalTerm XSD_DECIMAL = new FinalTerm(P_XSD, "decimal>", false);
+    public static final FinalTerm XSD_DOUBLE = new FinalTerm(P_XSD, "double>", false);
+    public static final FinalTerm XSD_ANYURI = new FinalTerm(P_XSD, "anyURI>", false);
+    public static final FinalTerm XSD_STRING = new FinalTerm(P_XSD, "string>", false);
+    public static final FinalTerm XSD_INTEGER = new FinalTerm(P_XSD, "integer>", false);
+    public static final FinalTerm XSD_NONPOSITIVEINTEGER = new FinalTerm(P_XSD, "nonPositiveInteger>", false);
+    public static final FinalTerm XSD_LONG = new FinalTerm(P_XSD, "long>", false);
+    public static final FinalTerm XSD_NONNEGATIVEINTEGER = new FinalTerm(P_XSD, "nonNegativeInteger>", false);
+    public static final FinalTerm XSD_NEGATIVEINTEGER = new FinalTerm(P_XSD, "negativeInteger>", false);
+    public static final FinalTerm XSD_INT = new FinalTerm(P_XSD, "int>", false);
+    public static final FinalTerm XSD_UNSIGNEDLONG = new FinalTerm(P_XSD, "unsignedLong>", false);
+    public static final FinalTerm XSD_POSITIVEINTEGER = new FinalTerm(P_XSD, "positiveInteger>", false);
+    public static final FinalTerm XSD_SHORT = new FinalTerm(P_XSD, "short>", false);
+    public static final FinalTerm XSD_UNSIGNEDINT = new FinalTerm(P_XSD, "unsignedInt>", false);
+    public static final FinalTerm XSD_BYTE = new FinalTerm(P_XSD, "byte>", false);
+    public static final FinalTerm XSD_UNSIGNEDSHORT = new FinalTerm(P_XSD, "unsignedShort>", false);
+    public static final FinalTerm XSD_UNSIGNEDBYTE = new FinalTerm(P_XSD, "unsignedByte>", false);
+    public static final FinalTerm XSD_NORMALIZEDSTRING = new FinalTerm(P_XSD, "normalizedString>", false);
+    public static final FinalTerm XSD_TOKEN = new FinalTerm(P_XSD, "token>", false);
+    public static final FinalTerm XSD_LANGUAGE = new FinalTerm(P_XSD, "language>", false);
 
-    public static final Term RDF_LANGSTRING = new Term(P_RDF, "langString>", false);
-    public static final Term RDF_HTML = new Term(P_RDF, "HTML>", false);
-    public static final Term RDF_XMLLITERAL = new Term(P_RDF, "XMLLiteral>", false);
-    public static final Term RDF_JSON = new Term(P_RDF, "JSON>", false);
+    public static final FinalTerm RDF_LANGSTRING = new FinalTerm(P_RDF, "langString>", false);
+    public static final FinalTerm RDF_HTML = new FinalTerm(P_RDF, "HTML>", false);
+    public static final FinalTerm RDF_XMLLITERAL = new FinalTerm(P_RDF, "XMLLiteral>", false);
+    public static final FinalTerm RDF_JSON = new FinalTerm(P_RDF, "JSON>", false);
 
-    public static final Term RDF_TYPE = new Term(P_RDF, "type>", false);
-    public static final Term RDF_FIRST = new Term(P_RDF, "first>", false);
-    public static final Term RDF_REST = new Term(P_RDF, "rest>", false);
-    public static final Term RDF_NIL = new Term(P_RDF, "nil>", false);
-    public static final Term RDF_VALUE = new Term(P_RDF, "value>", false);
-    public static final Term RDF_PROPERTY = new Term(P_RDF, "Property>", false);
-    public static final Term RDF_LIST = new Term(P_RDF, "List>", false);
-    public static final Term RDF_BAG = new Term(P_RDF, "Bag>", false);
-    public static final Term RDF_SEQ = new Term(P_RDF, "Seq>", false);
-    public static final Term RDF_ALT = new Term(P_RDF, "Alt>", false);
-    public static final Term RDF_STATEMENT = new Term(P_RDF, "Statement>", false);
-    public static final Term RDF_SUBJECT = new Term(P_RDF, "subject>", false);
-    public static final Term RDF_PREDICATE = new Term(P_RDF, "predicate>", false);
-    public static final Term RDF_OBJECT = new Term(P_RDF, "object>", false);
-    public static final Term RDF_DIRECTION = new Term(P_RDF, "direction>", false);
+    public static final FinalTerm RDF_TYPE = new FinalTerm(P_RDF, "type>", false);
+    public static final FinalTerm RDF_FIRST = new FinalTerm(P_RDF, "first>", false);
+    public static final FinalTerm RDF_REST = new FinalTerm(P_RDF, "rest>", false);
+    public static final FinalTerm RDF_NIL = new FinalTerm(P_RDF, "nil>", false);
+    public static final FinalTerm RDF_VALUE = new FinalTerm(P_RDF, "value>", false);
+    public static final FinalTerm RDF_PROPERTY = new FinalTerm(P_RDF, "Property>", false);
+    public static final FinalTerm RDF_LIST = new FinalTerm(P_RDF, "List>", false);
+    public static final FinalTerm RDF_BAG = new FinalTerm(P_RDF, "Bag>", false);
+    public static final FinalTerm RDF_SEQ = new FinalTerm(P_RDF, "Seq>", false);
+    public static final FinalTerm RDF_ALT = new FinalTerm(P_RDF, "Alt>", false);
+    public static final FinalTerm RDF_STATEMENT = new FinalTerm(P_RDF, "Statement>", false);
+    public static final FinalTerm RDF_SUBJECT = new FinalTerm(P_RDF, "subject>", false);
+    public static final FinalTerm RDF_PREDICATE = new FinalTerm(P_RDF, "predicate>", false);
+    public static final FinalTerm RDF_OBJECT = new FinalTerm(P_RDF, "object>", false);
+    public static final FinalTerm RDF_DIRECTION = new FinalTerm(P_RDF, "direction>", false);
 
-    public static final Term[] FREQ_XSD_DT = new Term[] {
+    public static final FinalTerm[] FREQ_XSD_DT = new FinalTerm[] {
             XSD_INTEGER,
             XSD_DECIMAL,
             XSD_BOOLEAN,
@@ -154,7 +161,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             XSD_TOKEN
     };
 
-    public static final SegmentRope[] FREQ_XSD_DT_SUFF = {
+    public static final FinalSegmentRope[] FREQ_XSD_DT_SUFF = {
             DT_integer,
             DT_decimal,
             DT_BOOLEAN,
@@ -196,9 +203,9 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
 
     private static final byte[] INTERN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".getBytes(UTF_8);
     private static final int INTERN_W = 62;
-    private static final Term[][] PLAIN = {
-            new Term[INTERN_W],
-            new Term[INTERN_W*INTERN_W],
+    private static final FinalTerm[][] PLAIN = {
+            new FinalTerm[INTERN_W],
+            new FinalTerm[INTERN_W*INTERN_W],
     };
     private static final SegmentRope[][] IRI_LOCALS = {
             new SegmentRope[INTERN_W],
@@ -207,18 +214,35 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
 
     static {
         assert INTERN_W == INTERN_ALPHABET.length;
+        byte[] tmp = new byte[INTERN_W*(3 + 2 + INTERN_W*4 + INTERN_W*3)];
+        int pos = 0;
         for (int i0 = 0; i0 < INTERN_W; i0++) {
-            char c0 = (char) INTERN_ALPHABET[i0];
-            Term t = new Term(EMPTY, Rope.of('"', c0, '"'), true);
-            SegmentRope l = Rope.of(c0, '>');
-            PLAIN[0][internIdx(t.local(), 1, 1)] = t;
-            IRI_LOCALS[0][internIdx(l, 0, 1)] = l;
+            byte c0 = INTERN_ALPHABET[i0];
+
+            tmp[pos] = '"'; tmp[pos+1] = c0; tmp[pos+2] = '"';
+            var term = new FinalTerm(FinalSegmentRope.EMPTY,
+                                     new FinalSegmentRope(tmp, pos, 3), true);
+            PLAIN[0][internIdx(term.local(), 1, 1)] = term;
+            pos += 3;
+
+            tmp[pos] = c0; tmp[pos+1] = '>';
+            var local = new FinalSegmentRope(tmp, pos, 2);
+            IRI_LOCALS[0][internIdx(local, 0, 1)] = local;
+            pos += 2;
+
             for (int i1 = 0; i1 < INTERN_W; i1++) {
-                char c1 = (char) INTERN_ALPHABET[i1];
-                t = new Term(EMPTY, Rope.of('"',c0,c1,'"'), true);
-                l = Rope.of(c0, c1, '>');
-                PLAIN[1][internIdx(t.local(), 1, 2)] = t;
-                IRI_LOCALS[1][internIdx(l, 0, 2)] = l;
+                byte c1 = INTERN_ALPHABET[i1];
+
+                tmp[pos] = '"'; tmp[pos+1] = c0; tmp[pos+2] = c1; tmp[pos+3] = '"';
+                term = new FinalTerm(FinalSegmentRope.EMPTY,
+                                     new FinalSegmentRope(tmp, pos, 4), true);
+                PLAIN[1][internIdx(term.local(), 1, 2)] = term;
+                pos += 4;
+
+                tmp[pos] = c0; tmp[pos+1] = c1; tmp[pos+2] = '>';
+                local = new FinalSegmentRope(tmp, pos, 3);
+                IRI_LOCALS[1][internIdx(local, 0, 2)] = local;
+                pos += 3;
             }
         }
     }
@@ -250,11 +274,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             else if (i >=  0) return IRI_LOCALS[len-2][i];
         }
         if (copy)
-            return new ByteRope(src.toArray(begin, begin+len));
+            return asFinal(src, begin, begin+len);
         return src;
     }
 
-    private static Term internPlain(SegmentRope src, int begin, int len, boolean copy) {
+    private static FinalTerm internPlain(SegmentRope src, int begin, int len, boolean copy) {
         int n = len-2;
         if (n <= 2) {
             int i = internIdx(src, begin+1, n);
@@ -263,12 +287,18 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         }
         var w = forLit(src, begin, begin+len);
         if (!copy && (w != NONE || begin != 0 || len != src.len)) copy = true;
-        var local = copy ? new ByteRope(w.toArray(src, begin, begin + len)) : src;
-        return new Term(EMPTY, local, true);
+        SegmentRope local;
+        if (copy) {
+            local = w.append(make(len+w.extraBytes()), src, begin,
+                             begin+len).take();
+        } else {
+            local = src;
+        }
+        return new FinalTerm(FinalSegmentRope.EMPTY, local, true);
     }
 
-    private static Term internRdf(SegmentRope local, int begin, int end) {
-        Term candidate = switch (local.get(begin)) {
+    private static FinalTerm internRdf(SegmentRope local, int begin, int end) {
+        FinalTerm candidate = switch (local.get(begin)) {
             case '>' -> RDF;
             case 'A' -> RDF_ALT;
             case 'B' -> RDF_BAG;
@@ -294,14 +324,14 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             case 'v' -> RDF_VALUE;
             default -> null;
         };
-        if (candidate != null && candidate.second.compareTo(local, begin, end) == 0)
+        if (candidate != null && candidate.second().compareTo(local, begin, end) == 0)
             return candidate;
-        return new Term(P_RDF, new ByteRope(local.toArray(begin, end)), false);
+        return new FinalTerm(P_RDF, asFinal(local, begin, end), false);
     }
 
-    private static Term internXsd(SegmentRope local, int begin, int end) {
+    private static FinalTerm internXsd(SegmentRope local, int begin, int end) {
         byte c1 = begin+1 < end ? local.get(begin+1) : (byte)'\0';
-        Term candidate = switch (local.get(begin)) {
+        FinalTerm candidate = switch (local.get(begin)) {
             case '>' -> XSD;
             case 'a' -> XSD_ANYURI;
             case 'b' -> switch (c1) {
@@ -360,9 +390,9 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             };
             default -> null;
         };
-        if (candidate != null && candidate.second.compareTo(local, begin, end) == 0)
+        if (candidate != null && candidate.second().compareTo(local, begin, end) == 0)
             return candidate;
-        return new Term(P_XSD, new ByteRope(local.sub(begin, end)), false);
+        return new FinalTerm(P_XSD, asFinal(local, begin, end), false);
     }
 
 
@@ -371,89 +401,29 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
     private @Nullable Number number;
     private int hash;
 
-
-    /** Construct an interned {@link Term} */
-    private Term(@NonNull SegmentRope shared, @NonNull String local, boolean suffixShared) {
-        this(shared, new ByteRope(local), suffixShared);
-    }
-    /**
-     * Build a term for {@code shared+local} or {@code local+shared},
-     * if {@code suffixShared == true}.
-     *
-     * <p> Both {@link SegmentRope}s are held by reference, thus changes to them will be
-     * reflected on the {@link Term}.</p>
-     *
-     * <p>The new {@link Term} instance will be read-only, disallowing
-     * {@link #set(SegmentRope, SegmentRope, boolean)} calls. To create a mutable {@link Term},
-     * see {@link Term#Term()}.</p>
-     *
-     * @param shared a shared segment, ideally this should  be interned and shared among multiple
-     *               Term instances. This may be null
-     * @param local a segment that comes after or before (if {@code suffixShared}) {@code shared}
-     *              This must not be {@code null} nor empty.
-     * @param suffixShared whether {@code shared} is a suffix to {@code local}
-     */
-    public Term(@Nullable SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
+    public Term(@Nullable FinalSegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
         super((shared == null ? 0 : shared.len) + local.len);
-        if (shared == null) shared = EMPTY;
+        if (shared == null) shared = FinalSegmentRope.EMPTY;
         if (suffixShared) {
             first  = local;
             second = shared;
-            flags  = (byte)(IS_READONLY|IS_SUFFIX|TYPE_LIT);
+            flags  = (byte)(IS_SUFFIX|TYPE_LIT);
         } else {
             first  = shared;
             second = local;
-            flags = (byte) (IS_READONLY | typeFlags(shared, local));
+            flags = typeFlags(shared, local);
         }
         assert validate();
     }
 
-    /**
-     * Create a term to be later {@link #set(SegmentRope, SegmentRope, boolean)}.
-     *
-     * <p>Since it is impossible to construct an invalid {@link Term}, This will produce a
-     * {@link Term} instance equals to {@link #EMPTY_STRING} (but with {@code set()} enabled).</p>
-     */
-    private Term() {
+    protected Term() {
         super(2);
-        SegmentRope f = EMPTY_STRING.first;
-        first  = SegmentRope.pooledWrap(f.segment, f.utf8, f.offset, f.len);
-        second = EMPTY;
+        first  = new SegmentRopeView().wrap(EMPTY_STRING.first());
+        second = FinalSegmentRope.EMPTY;
         flags  = (byte)(IS_SUFFIX|TYPE_LIT);
     }
 
-    public static Term mutable() { return new Term(); }
-
-    public static Term pooledMutable() {
-        Term t = GlobalAffinityShallowPool.get(POOL_COL);
-        return t == null ? new Term() : t;
-    }
-
-    public boolean isMutable() { return (flags & IS_READONLY) == 0; }
-
-    public Term asImmutable() {
-        return isMutable() ? new Term(shared(), new ByteRope(local()), sharedSuffixed()) : this;
-    }
-
-    public void recycle() {
-        if ((flags & IS_READONLY) != 0)
-            throw new UnsupportedOperationException("This term instance is read-only.");
-        var myLocal = local();
-        myLocal.wrap(EMPTY_STRING.first);
-        set0(EMPTY, myLocal, true);
-        GlobalAffinityShallowPool.offer(POOL_COL, this);
-    }
-
-    public void set(@NonNull SegmentRope shared, @NonNull MemorySegment localSeg,
-                    byte @Nullable[] localU8, long localOff, int localLen, boolean suffixShared) {
-        if ((flags & IS_READONLY) != 0)
-            throw new UnsupportedOperationException("This term instance is read-only.");
-        var myLocal = local();
-        myLocal.wrapSegment(localSeg, localU8, localOff, localLen);
-        set0(shared, myLocal, suffixShared);
-    }
-
-    private void set0(SegmentRope shared, SegmentRope myLocal, boolean suffixShared) {
+    protected void updateShared(SegmentRope shared, SegmentRope myLocal, boolean suffixShared) {
         this.len = shared.len + myLocal.len;
         if (suffixShared) {
             this.first = myLocal;
@@ -466,7 +436,6 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         this.number = null;
         this.flags = suffixShared ? (byte)(IS_SUFFIX|TYPE_LIT) : typeFlags(shared, myLocal);
         this.cachedEndLex = 0;
-        assert validate();
     }
 
     private byte typeFlags(SegmentRope prefix, SegmentRope local) {
@@ -479,16 +448,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         };
     }
 
-    public void set(@NonNull SegmentRope shared, @NonNull SegmentRope local, boolean suffixShared) {
-        if ((flags & IS_READONLY) != 0)
-            throw new UnsupportedOperationException("This term instance is read-only.");
-        this.len = shared.len + local.len;
-        var myLocal = local();
-        myLocal.wrap(local);
-        set0(shared, myLocal, suffixShared);
-    }
-
-    @SuppressWarnings({"ConstantValue", "SameReturnValue"}) private boolean validate() {
+    @SuppressWarnings({"ConstantValue", "SameReturnValue"}) protected boolean validate() {
         if (first == null) throw new AssertionError("first is null");
         if (second == null) throw new AssertionError("second is null");
         if (first.len + second.len < 2)
@@ -584,15 +544,15 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
      * @return A possibly interned {@link Term} instance representing the N-Triples term or
      *         SPARQL var denoted by {@code prefix+suffix}.
      */
-    public static Term wrap(@Nullable SegmentRope prefix, @Nullable SegmentRope suffix) {
-        if (prefix == null) prefix = EMPTY;
-        if (suffix == null) suffix = EMPTY;
+    public static FinalTerm wrap(@Nullable SegmentRope prefix, @Nullable SegmentRope suffix) {
+        if (prefix == null) prefix = FinalSegmentRope.EMPTY;
+        if (suffix == null) suffix = FinalSegmentRope.EMPTY;
         return switch (prefix.len > 0 ? prefix.get(0) : suffix.len > 0 ? suffix.get(0) : 0) {
-            case 0 -> throw new InvalidTermException(ByteRope.EMPTY, 0, "empty input");
+            case 0 -> throw new InvalidTermException(FinalSegmentRope.EMPTY, 0, "empty input");
             case '"' -> {
                 if (prefix.len == 0) {
                     prefix = suffix;
-                    suffix = EMPTY;
+                    suffix = FinalSegmentRope.EMPTY;
                 }
                 if (suffix.len > 0) {
                     if (suffix.get(0) != '"')
@@ -607,7 +567,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                 }
                 if (suffix == DT_string) {
                     suffix = null;
-                    prefix = new ByteRope(prefix.len+1).append(prefix).append('"');
+                    prefix = RopeFactory.make(prefix.len+1).add(prefix).add('"').take();
                 } else if (suffix == DT_langString) {
                     throw new IllegalArgumentException("got ^^rdf:langString suffix instead of lang tag");
                 } else if (suffix == DT_BOOLEAN) {
@@ -617,12 +577,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                         default -> throw new InvalidTermException(prefix, 1, "boolean must be true or false");
                     };
                 }
-                yield new Term(suffix, prefix, true);
+                yield new FinalTerm(suffix, prefix, true);
             }
             case '<' -> {
                 if (suffix.len == 0) {
                     suffix = prefix;
-                    prefix = EMPTY;
+                    prefix = FinalSegmentRope.EMPTY;
                 } else if (prefix == P_RDF) {
                     yield internRdf(suffix, 0, suffix.len);
                 } else if (prefix == P_XSD) {
@@ -633,16 +593,16 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                 } else if (suffix.get(suffix.len-1) != '>') {
                     throw new InvalidTermException(suffix, suffix.len - 1, "No closing >");
                 }
-                yield new Term(prefix, suffix, false);
+                yield new FinalTerm(prefix, suffix, false);
             }
             case '?', '$', '_' -> {
                 if (suffix.len == 0)
                     suffix = prefix;
                 else if (prefix.len > 0)
-                    suffix = new ByteRope(prefix.len + suffix.len).append(prefix).append(suffix);
-                yield new Term(EMPTY, suffix, false);
+                    suffix = make(prefix.len+suffix.len).add(prefix).add(suffix).take();
+                yield new FinalTerm(FinalSegmentRope.EMPTY, suffix, false);
             }
-            default -> throw new InvalidTermException(Rope.of(prefix, suffix), 0, "Not a NT start");
+            default -> throw new InvalidTermException(String.valueOf(prefix)+suffix, 0, "Not a NT start");
         };
     }
 
@@ -658,7 +618,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
      *                              only cheap checks are executed, since this method is not a
      *                              parser and should be called with already valid data.
      */
-    public static Term valueOf(SegmentRope r, int begin, int end) {
+    public static FinalTerm valueOf(SegmentRope r, int begin, int end) {
         if (r == null || end <= begin)  return null;
         int len = end - begin;
         if (len < 2) throw new InvalidTermException(r, 1, "input is too short");
@@ -674,7 +634,8 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                 } else if (suffix.len == 0 && end-begin <=4) {
                     yield internPlain(r, begin, end - suffix.len - begin, true);
                 }
-                yield wrap(new ByteRope(r.toArray(begin, end-suffix.len)), suffix);
+                var prefix = asFinal(r, begin, end-suffix.len);
+                yield wrap(prefix, suffix);
             }
             case '<' -> {
                 SegmentRope prefix = SHARED_ROPES.internPrefixOf(r, begin, end);
@@ -687,11 +648,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                 if (prefix.len > 0 && suffixLen <=3)
                     suffix = internIriLocal(r, begin+prefix.len, suffixLen, true);
                 else
-                    suffix = new ByteRope(r.toArray(begin+prefix.len, end));
-                yield new Term(prefix, suffix, false);
+                    suffix = asFinal(r, begin+prefix.len, end);
+                yield new FinalTerm(prefix, suffix, false);
             }
-            case '?', '$', '_' -> wrap(null, new ByteRope(r.toArray(begin, end)));
-            default -> throw new InvalidTermException(r.sub(begin, end).toString(), 0,
+            case '?', '$', '_' -> wrap(null, asFinal(r, begin, end));
+            default -> throw new InvalidTermException(r.toString(begin, end), 0,
                                                       "Does not start with <, \", ?, $ or _");
         };
     }
@@ -706,7 +667,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
      *                              only cheap checks are executed, since this method is not a
      *                              parser and should be called with already valid data.
      */
-    public static Term splitAndWrap(SegmentRope rope) {
+    public static FinalTerm splitAndWrap(SegmentRope rope) {
         if (rope.len == 0) return null;
         else if (rope.len < 2) throw new InvalidTermException(rope, 0, "input too short");
         return switch (rope.get(0)) {
@@ -728,51 +689,101 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
     }
 
     /** Equivalent to {@link #valueOf(SegmentRope, int, int)} from {@code 0} to {@code r.len()}. */
-    public static Term valueOf(CharSequence cs) {
-        if (cs == null) return null;
+    public static FinalTerm valueOf(CharSequence cs) {
+        if (cs == null || cs.isEmpty()) return null;
         if (cs instanceof SegmentRope s) return valueOf(s, 0, s.len);
-        else return splitAndWrap(new ByteRope(cs));
+        else return splitAndWrap(asFinal(cs));
+    }
+    public static FinalTerm valueOf(SegmentRope r) {
+        return r == null ? null : valueOf(r, 0, r.len);
     }
 
-
-    public static Term prefixed(SegmentRope prefix, String local) {
-        return Term.wrap(prefix, new ByteRope(local));
+    public static FinalTerm prefixed(SegmentRope prefix, String local) {
+        return Term.wrap(prefix, asFinal(local));
     }
-    public static Term typed(Object lex, SegmentRope datatype) {
+    public static FinalTerm typed(Object lex, SegmentRope datatype) {
         if (lex instanceof byte[] b)
             lex = new String(b, UTF_8);
         String lexS = lex.toString();
-        return Term.wrap(RopeWrapper.forOpenLit(lexS).toRope(lexS), datatype);
+        RopeWrapper w = forOpenLit(lexS);
+        var fac = make(w.extraBytes() + RopeFactory.requiredBytes(lexS));
+        return Term.wrap(w.append(fac, lexS).take(), datatype);
     }
-    public static Term iri(Object iri) {
-        return Term.splitAndWrap(RopeWrapper.forIri(iri).toRope(iri));
+    public static FinalTerm iri(Object iri) {
+        RopeWrapper w = forIri(iri);
+        var iriCS = switch (iri) {
+            case CharSequence cs -> cs;
+            case byte[] u8 -> new String(u8, UTF_8);
+            default -> iri.toString();
+        };
+        RopeFactory fac = make(w.extraBytes() + requiredBytes(iriCS));
+        return Term.splitAndWrap(w.append(fac, iriCS).take());
     }
-    public static Term plainString(String lex) {
-        return Term.wrap(RopeWrapper.forLit(lex).toRope(lex), null);
+    public static FinalTerm plainString(String lex) {
+        RopeWrapper w = forLit(lex);
+        var fac = make(w.extraBytes() + requiredBytes(lex));
+        var local = w.append(fac, lex).take();
+        return Term.wrap(local, null);
     }
-    public static Term lang(String lex, String lang) {
-        ByteRope tmp = new ByteRope();
-        RopeWrapper.forLit(lex).append(tmp, lex).append('@').append(lang);
-        return Term.wrap(tmp, null);
+    public static FinalTerm lang(String lex, String lang) {
+        RopeWrapper wrapper = forLit(lex);
+        var fac = make(wrapper.extraBytes()+requiredBytes(lex)+1+requiredBytes(lang));
+        wrapper.append(fac, lex);
+        return Term.wrap(fac.add('@').add(lang).take(), null);
     }
 
     /** Get an array of terms where the i-th element is the result of {@code valueOf(terms[i])} */
-    public static @Nullable Term[] array(Object... terms) {
+    @SuppressWarnings("resource") public static @Nullable Term[] array(Object... terms) {
+        // unwrap singleton array of array or collection
         if (terms.length == 1 && terms[0] instanceof Collection<?> coll)
-            terms = coll.stream().map(i -> i == null ? null : i.toString()).toArray(String[]::new);
+            terms = coll.toArray(Object[]::new);
         if (terms.length == 1 && terms[0] instanceof Object[] arr)
             terms = arr;
-        Term[] a = new Term[terms.length];
-        try (TermParser termParser = new TermParser().eager()) {
-            termParser.prefixMap.add(Rope.of("owl"), Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
-            termParser.prefixMap.add(Rope.of("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
-            termParser.prefixMap.add(Rope.of(""), Term.valueOf("<http://example.org/>"));
-            termParser.prefixMap.add(Rope.of("ex"), Term.valueOf("<http://example.org/>"));
-            termParser.prefixMap.add(Rope.of("exns"), Term.valueOf("<http://www.example.org/ns#>"));
-            for (int i = 0; i < terms.length; i++)
-                a[i] = terms[i] == null ? null : termParser.parseTerm(SegmentRope.of(terms[i]));
+        // convert each Object in terms[i] into a Term in a[i]
+        Term[] a = new FinalTerm[terms.length];
+        PooledMutableRope tmp = null;
+        try (var termParserGuard = new Guard<TermParser>(ARRAY);
+             var view = PooledSegmentRopeView.ofEmpty()) {
+            var termParser = termParserGuard.set(TermParser.create()).eager();
+            if (ARRAY_PREFIX_MAP == null)
+                initArrayPrefixMap();
+            termParser.prefixMap().resetToCopy(ARRAY_PREFIX_MAP);
+            for (int i = 0; i < terms.length; i++) {
+                Object obj = terms[i];
+                SegmentRope in = switch (obj) {
+                    case FinalSegmentRope s -> s;
+                    case byte[] u8          -> view.wrap(u8);
+                    case CharSequence cs    -> asFinal(cs);
+                    case null -> null;
+                    default -> {
+                        if (obj instanceof Integer || obj instanceof Long) {
+                            if (tmp == null) tmp = PooledMutableRope.get();
+                            else             tmp.clear();
+                            tmp.append('"').append(((Number)obj).longValue()).append(DT_integer);
+                            yield asFinal(tmp);
+                        } else {
+                            throw new IllegalArgumentException("Unexpected " + obj.getClass());
+                        }
+                    }
+                };
+                a[i] = in == null ? null : termParser.parseTerm(in);
+            }
+        } finally {
+            if (tmp != null) tmp.close();
         }
         return a;
+    }
+    private static final StaticMethodOwner ARRAY = new StaticMethodOwner("Term.array");
+    private static PrefixMap ARRAY_PREFIX_MAP;
+    private static void initArrayPrefixMap() {
+        PrefixMap map = PrefixMap.create().takeOwnership(ARRAY);
+        map.resetToBuiltin();
+        map.add(asFinal("owl"),  Term.valueOf("<http://www.w3.org/2002/07/owl#>"));
+        map.add(asFinal("foaf"), Term.valueOf("<http://xmlns.com/foaf/0.1/>"));
+        map.add(asFinal(""),     Term.valueOf("<http://example.org/>"));
+        map.add(asFinal("ex"),   Term.valueOf("<http://example.org/>"));
+        map.add(asFinal("exns"), Term.valueOf("<http://www.example.org/ns#>"));
+        ARRAY_PREFIX_MAP = map;
     }
 
     /** Equivalent to {@link #array(Object...)} but yields a {@link List} instead of an array. */
@@ -999,23 +1010,24 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
 
     /* --- --- --- ExprEvaluator implementation --- --- --- */
 
+    @Override public void close() {}
+
     @Override public Term evaluate(Batch<?> batch, int row) {
         return this;
     }
 
     private static final class UnboundEvalautor implements ExprEvaluator {
         private static final UnboundEvalautor INSTANCE = new UnboundEvalautor();
-
+        @Override public void close() {}
         @Override public @Nullable Term evaluate(Batch<?> batch, int row) {
             return null;
         }
     }
     private static final class VarEvalautor implements ExprEvaluator {
-        private final Term tmp = Term.mutable();
+        private final TermView tmp = PooledTermView.ofEmptyString();
         private final int col;
-
         private VarEvalautor(int col) { this.col = col; }
-
+        @Override public void close() {}
         @Override public @Nullable Term evaluate(Batch<?> batch, int row) {
             return batch.getView(row, col, tmp) ? tmp : null;
         }
@@ -1044,7 +1056,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         return singleton;
     }
 
-    @Override public String journalName() {return toSparql().toString();}
+    @Override public String journalName() {
+        try (var tmp = PooledMutableRope.get()) {
+            toSparql(tmp, PrefixAssigner.CANON);
+            return tmp.toString();
+        }
+    }
 
     /**
      * Get the SPARQL preferred representation of this {@link Term}. {@link #RDF_TYPE}
@@ -1053,11 +1070,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
      */
     @Override public int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner) {
         SegmentRope local = local();
-        return toSparql(dest, assigner, shared(),
+        return toSparql(dest, assigner, finalShared(),
                  local.segment, local.utf8, local.offset, local.len, (flags & IS_SUFFIX) != 0);
     }
 
-    public static int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner, SegmentRope shared,
+    public static int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner,
+                               SegmentRope shared,
                                MemorySegment local, byte @Nullable [] localU8,
                                long localOff, int localLen, boolean isLit) {
         if (shared == null || shared.len == 0) {
@@ -1068,8 +1086,8 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         if (isLit) {
             if (shared == DT_DOUBLE) {
                 boolean exp = false;
-                for (long i = localOff+1; i < localLen; i++) {
-                    byte c = local.get(JAVA_BYTE, i);
+                for (long i = 1; i < localLen; i++) {
+                    byte c = local.get(JAVA_BYTE, localOff+i);
                     if (c == 'e' || c == 'E') { exp = true; break; }
                 }
                 if (exp) {
@@ -1082,7 +1100,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             }
             dest.append(local, localU8, localOff, localLen); // write "\"LEXICAL_FORM"
             if (shared.get(1) == '^') {
-                SegmentRope prefix = SHARED_ROPES.internPrefixOf(shared, 3/*"^^<*/, shared.len);
+                var prefix = SHARED_ROPES.internPrefixOf(shared, 3/*"^^<*/, shared.len);
                 Rope name = prefix == null ? null : assigner.nameFor(prefix);
                 if (name == null) {
                     dest.append(shared);
@@ -1094,8 +1112,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                 dest.append(shared);
             }
         } else {
-            if (shared == P_RDF && localLen == 5 /*type>*/
-                    && SegmentRope.has(local, localOff, RDF_TYPE.local().segment, 0, 5)) {
+            if (shared == P_RDF && localLen == 5 /*type>*/ && isRdfType(local, localOff)) {
                 dest.append('a');
             } else {
                 Rope name = assigner.nameFor(shared);
@@ -1107,10 +1124,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                     byte last = localLen == 0 ? (byte)'a'
                                   : local.get(JAVA_BYTE, localOff+localLen-1);
                     if (!Rope.contains(PN_LOCAL_LAST, last)) {
-                        if (!new SegmentRope(local, localOff, localLen).isEscaped(localLen-1)) {
-                            dest.append(local, localU8, localOff, localLen - 1)
-                                    .append('\\').append(last);
-                            localLen = 0;
+                        try (var tmp = PooledSegmentRopeView.of(local, localOff, localLen)) {
+                            if (!tmp.isEscaped(localLen-1)) {
+                                dest.append(local, localU8, localOff, localLen - 1)
+                                        .append('\\').append(last);
+                                localLen = 0;
+                            }
                         }
                     }
                 }
@@ -1120,30 +1139,32 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         return dest.len()-oldLen;
     }
 
+    private static boolean isRdfType(MemorySegment local, long localOff) {
+        return local.get(JAVA_BYTE, localOff) == 't'
+                && local.get(JAVA_BYTE, localOff+1) == 'y'
+                && local.get(JAVA_BYTE, localOff+2) == 'p'
+                && local.get(JAVA_BYTE, localOff+3) == 'e'
+                && local.get(JAVA_BYTE, localOff+4) == '>';
+    }
+
     /* --- --- --- term methods --- --- --- */
 
-    public enum Type {
-        BLANK,
-        VAR,
-        LIT,
-        IRI
-    }
-    private static final Type[] TYPES  = Type.values();
 
     public boolean isIri() { return       (flags & TYPE_MASK) == TYPE_IRI; }
     public boolean isVar() { return       (flags & TYPE_MASK) == TYPE_VAR; }
     public Type    type()  { return TYPES[(flags & TYPE_MASK) >>> TYPE_BIT]; }
 
-    public SegmentRope          first() { return first; }
-    public SegmentRope         second() { return second; }
-    public SegmentRope         shared() { return (flags & IS_SUFFIX) != 0 ? second : first; }
-    public SegmentRope          local() { return (flags & IS_SUFFIX) != 0 ? first  : second; }
-    public boolean     sharedSuffixed()  { return (flags & IS_SUFFIX) != 0; }
+    public SegmentRope            first() { return first; }
+    public SegmentRope           second() { return second; }
+    public SegmentRope           shared() { return (flags & IS_SUFFIX) != 0 ? second : first; }
+    public FinalSegmentRope finalShared() { return (FinalSegmentRope)shared(); }
+    public SegmentRope            local() { return (flags & IS_SUFFIX) != 0 ? first  : second; }
+    public boolean       sharedSuffixed() { return (flags & IS_SUFFIX) != 0; }
 
 
     /** If this is a var, gets its name (without leading '?'/'$'). Else, return {@code null}. */
-    public @Nullable SegmentRope name() {
-        return type() == Type.VAR ? second.sub(1, len) : null;
+    public @Nullable FinalSegmentRope name() {
+        return type() == Type.VAR ? FinalSegmentRope.asFinal(second, 1, len) : null;
     }
 
     /** {@code lang} if this is a literal tagged with {@code @lang}, else {@code null}. */
@@ -1189,7 +1210,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
      * If this is an IRI of an XML schema or RDF datatype, get a {@code DT_} suffix from
      * {@link SharedRopes} such that it equals {@code Rope.of("\"^^", this)}.
      */
-    public @Nullable SegmentRope asKnownDatatypeSuff() {
+    public @Nullable FinalSegmentRope asKnownDatatypeSuff() {
         if (first == SharedRopes.P_XSD) {
             for (int i = 0; i < FREQ_XSD_DT.length; ++i) {
                 if (FREQ_XSD_DT[i] == this) return FREQ_XSD_DT_SUFF[i];
@@ -1203,14 +1224,16 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         return null;
     }
 
-    public @Nullable SegmentRope asDatatypeSuff() {
+    public @Nullable FinalSegmentRope asDatatypeSuff() {
         var suff = asKnownDatatypeSuff();
         return suff == null && type() == Type.IRI ? asDatatypeSuffCold() : suff;
     }
 
-    private @Nullable SegmentRope asDatatypeSuffCold() {
-        var r = new ByteRope(3 + len()).append("\"^^").append(this);
-        return SHARED_ROPES.internDatatype(r, 0, r.len);
+    private @Nullable FinalSegmentRope asDatatypeSuffCold() {
+        try (var tmp = PooledMutableRope.getWithCapacity(3+len)) {
+            tmp.append("\"^^").append(this);
+            return SHARED_ROPES.internDatatype(tmp, 0, tmp.len);
+        }
     }
 
     /**
@@ -1229,7 +1252,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         int endLex = endLex();
         if (endLex > 0) {
             dst.wrapFirst(first.segment, first.utf8, first.offset+1, endLex-1);
-            dst.wrapSecond(EMPTY.segment, EMPTY.utf8, 0, 0);
+            dst.wrapSecond(FinalSegmentRope.EMPTY.segment, FinalSegmentRope.EMPTY.utf8, 0, 0);
         } else {
             short left = 1, right = 0;
             switch (type()) {
@@ -1241,7 +1264,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         }
     }
 
-    /** The number of UTF-8 bytes that would be output by {@link #unescapedLexical(ByteRope)}. */
+    /** The number of UTF-8 bytes that would be output by {@link #unescapedLexical(MutableRope)}. */
     public int unescapedLexicalSize() {
         int endLex = endLex(), required = 0;
         if (endLex == 0) return 0;
@@ -1270,12 +1293,12 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
     /**
      * Write the lexical form (the literal value without surrounding quotes and without the
      * language tag or datatype.) of this term into {@code dest} replacing {@code \}-escape
-     * sequences with the represented characters (e.g., {@code \n} becomes a line feed.
+     * sequences with the represented characters (e.g., {@code \n} becomes a line feed).
      *
      * @param dest where the unescaped lexical form shall be appended to
      * @return total number of UTF-8 bytes written.
      */
-    public int unescapedLexical(ByteRope dest) {
+    public int unescapedLexical(MutableRope dest) {
         int endLex = endLex();
         int before = dest.len;
         SegmentRope local = first;
@@ -1295,7 +1318,7 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
                     //                                   ++++@@  ++++++++@@
                     j += c == 'U' ? 8 : 4; // @@'s incremented on the loop
                 }
-                default            -> dest.appendCodePoint('\\');
+                default            -> dest.append('\\');
             }
         }
         return dest.len-before;
@@ -1326,17 +1349,18 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             if (tail == 0) {
                 throw new InvalidTermException(this, 0, "not a literal");
             } else if (tail == len-1) {
-                nLocal = w.toRope(lex);
+                nLocal = w.append(make(w.extraBytes()+lex.len), lex).take();
             } else {
-                var tmp = new ByteRope(w.extraBytes() + lex.len + (len - tail));
-                nLocal = w.append(tmp, lex).append(first, tail, len);
+                var fac = make(w.extraBytes() + lex.len + (len-tail));
+                nLocal = w.append(fac, lex).add(first, tail, len).take();
             }
         } else if (type() == Type.LIT) {
-            nLocal = forOpenLit(lex).toRope(lex);
+            RopeWrapper w = forOpenLit(lex);
+            nLocal = w.append(make(w.extraBytes()+lex.len), lex).take();
         } else {
             throw new InvalidExprTypeException(this, this, "literal");
         }
-        return new Term(second, nLocal, true);
+        return new FinalTerm(second, nLocal, true);
     }
 
     public boolean isNumeric() {
@@ -1477,7 +1501,9 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             suffix = DT_DOUBLE;
         }
         if (result.equals(l)) return this;
-        return new Term(suffix, new ByteRope().append('"').append(result), true);
+        String str = result.toString();
+        var local = make(1+str.length()).add('"').add(str).take();
+        return new FinalTerm(suffix, local, true);
     }
 
     public Term subtract(Term rhs) {
@@ -1513,19 +1539,17 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             datatype = DT_DOUBLE;
         }
         if (result.equals(l)) return this;
-        return new Term(datatype, new ByteRope().append('"').append(result), true);
+        String str = result.toString();
+        var local = make(1+str.length()).add('"').add(str).take();
+        return new FinalTerm(datatype, local, true);
     }
 
     public Term negate() {
         if (isNumeric()) {
             if (first.get(1) == '-')
-                return new Term(second, first.sub(1, first.len-1), true);
-            ByteRope tmp = new ByteRope(first.len + 1);
-            byte[] u8 = tmp.u8();
-            u8[0] = '"';
-            u8[1] = '-';
-            tmp.append(first, 1, first.len);
-            return new Term(second, tmp, true);
+                return new FinalTerm(second, first.sub(1, first.len-1), true);
+            var local = make(first.len+1).add('"').add('-').add(first, 1, first.len).take();
+            return new FinalTerm(second, local, true);
         }
         return asBool() ? FALSE : TRUE;
     }
@@ -1562,8 +1586,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             result = l.doubleValue() * r.doubleValue();
             datatype = DT_DOUBLE;
         }
-        if (result.equals(l)) return this;
-        return new Term(datatype, new ByteRope().append('"').append(result), true);
+        if (result.equals(l))
+            return this;
+        String str = result.toString();
+        var local = make(1+str.length()).add('"').add(str).take();
+        return new FinalTerm(datatype, local, true);
     }
 
     public Term divide(Term rhs) {
@@ -1598,8 +1625,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             result = l.doubleValue() / r.doubleValue();
             datatype = DT_DOUBLE;
         }
-        if (result.equals(l)) return this;
-        return new Term(datatype, new ByteRope().append('"').append(result), true);
+        if (result.equals(l))
+            return this;
+        String str = result.toString();
+        var local = make(1+str.length()).add('"').add(str).take();
+        return new FinalTerm(datatype, local, true);
     }
 
     public Term abs() {
@@ -1615,8 +1645,11 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             case Float d      -> Math.ceil(d);
             default           -> n;
         });
-        if (result.equals(n)) return this;
-        return new Term(second, new ByteRope().append('"').append(result), true);
+        if (result.equals(n))
+            return this;
+        String str = result.toString();
+        var local = make(1+str.length()).add('"').add(str).take();
+        return new FinalTerm(second, local, true);
     }
 
     public Term floor() {
@@ -1627,20 +1660,26 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             case Float d      -> Math.floor(d);
             default           -> n;
         });
-        if (result.equals(n)) return this;
-        return new Term(second, new ByteRope().append('"').append(result), true);
+        if (result.equals(n))
+            return this;
+        String str = result.toString();
+        var local = make(1+str.length()).add('"').add(str).take();
+        return new FinalTerm(second, local, true);
     }
 
     public Term round() {
-        Number n = requireNumeric("floor");
+        Number n = requireNumeric("round");
         Number result = (switch (n) {
             case BigDecimal b -> b.setScale(0, RoundingMode.HALF_DOWN);
-            case Double d     -> Math.floor(d);
-            case Float d      -> Math.floor(d);
+            case Double d     -> Math.round(d);
+            case Float d      -> Math.round(d);
             default           -> n;
         });
-        if (result.equals(n)) return this;
-        return new Term(second, new ByteRope().append('"').append(result), true);
+        if (result.equals(n))
+            return this;
+        String str = result.toString();
+        var local = make(str.length()+1).add('"').add(str).take();
+        return new FinalTerm(second, local, true);
     }
 
     /** Evaluate this term as a Boolean, per the SPARQL boolean value rules. */
@@ -1697,6 +1736,10 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
         return h;
     }
 
+    public static int hashCode(@Nullable Term term) {
+        return term == null ? FNV_BASIS : term.hashCode();
+    }
+
     @Override public int hashCode() {
         int hash = this.hash;
         if (hash == 0)  {
@@ -1721,6 +1764,18 @@ public final class Term extends Rope implements Expr, ExprEvaluator, JournalName
             this.hash = hash;
         }
         return hash;
+    }
+
+    @Override public void appendTo(StringBuilder sb, int begin, int end) {
+        try (var d = RopeDecoder.create()) {
+            SegmentRope fst = first(), snd = second();
+            int n = Math.min(fst.len, end)-begin;
+            if (n > 0)
+                d.write(sb, fst.segment, fst.offset+begin, n);
+            n = end-begin-n;
+            if (n > 0)
+                d.write(sb, snd.segment, snd.offset+end-n, n);
+        }
     }
 
     static {

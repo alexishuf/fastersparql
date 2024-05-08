@@ -155,28 +155,14 @@ public enum RopeWrapper {
         return u8;
     }
 
-    @SuppressWarnings("unused")
-    public SegmentRope toRope(Object o, int begin, int end) {
-        if (o instanceof SegmentRope  r && end-begin == r.len) return r;
-        return new ByteRope(toArray(o, begin, end));
-    }
-
-    public SegmentRope toRope(Object o) {
-        if (this == NONE && o instanceof SegmentRope r) return r;
-        return new ByteRope(toArray(o, 0, naturalLen(o)));
-    }
-
-    public ByteRope append(ByteRope dest, Object o, int begin, int end) {
+    public MutableRope append(MutableRope dest, Object o, int begin, int end) {
         dest.ensureFreeCapacity(extraBytes()+end-begin);
         switch (this) {
             case IRI, OPEN_IRI -> dest.append('<');
             case LIT, OPEN_LIT -> dest.append('"');
         }
-        switch (o) {
-            case byte[] a -> dest.append(a, begin, end-begin);
-            case Rope r -> dest.append(r, begin, end);
-            default -> dest.append(o.toString().substring(begin, end).getBytes(UTF_8));
-        }
+        if (o instanceof byte[] u8) dest.append(u8, begin, end-begin);
+        else                        dest.append((CharSequence)o, begin, end);
         switch (this) {
             case IRI, CLOSE_IRI -> dest.append('>');
             case LIT, CLOSE_LIT -> dest.append('"');
@@ -184,20 +170,71 @@ public enum RopeWrapper {
         return dest;
     }
 
-    public ByteRope append(ByteRope dest, Object o) {
-        if (this == NONE)
-            return dest.append(o);
-        if (!(o instanceof byte[]) && !(o instanceof Rope))
-            o = o.toString().getBytes(UTF_8);
+    public MutableRope append(MutableRope dest, Object o) {
         dest.ensureFreeCapacity(extraBytes()+naturalLen(o));
         switch (this) {
             case IRI, OPEN_IRI -> dest.append('<');
             case LIT, OPEN_LIT -> dest.append('"');
         }
-        dest.append(o);
+        if (o instanceof byte[] u8) dest.append(u8);
+        else                        dest.append((CharSequence)o);
         switch (this) {
             case IRI, CLOSE_IRI -> dest.append('>');
             case LIT, CLOSE_LIT -> dest.append('"');
+        }
+        return dest;
+    }
+
+    public RopeFactory append(RopeFactory dest, Rope o, int begin, int end) {
+        switch (this) {
+            case IRI, OPEN_IRI -> dest.add('<');
+            case LIT, OPEN_LIT -> dest.add('"');
+        }
+        dest.add(o, begin, end);
+        switch (this) {
+            case IRI, CLOSE_IRI -> dest.add('>');
+            case LIT, CLOSE_LIT -> dest.add('"');
+        }
+        return dest;
+    }
+
+    public RopeFactory append(RopeFactory dest, Object o, int begin, int end) {
+        switch (this) {
+            case IRI, OPEN_IRI -> dest.add('<');
+            case LIT, OPEN_LIT -> dest.add('"');
+        }
+        if (o instanceof byte[] u8) dest.add(u8, begin, end);
+        else                        dest.add((CharSequence)o, begin, end);
+        switch (this) {
+            case IRI, CLOSE_IRI -> dest.add('>');
+            case LIT, CLOSE_LIT -> dest.add('"');
+        }
+        return dest;
+    }
+
+    public RopeFactory append(RopeFactory dest, CharSequence o) {
+        switch (this) {
+            case IRI, OPEN_IRI -> dest.add('<');
+            case LIT, OPEN_LIT -> dest.add('"');
+        }
+        dest.add(o);
+        switch (this) {
+            case IRI, CLOSE_IRI -> dest.add('>');
+            case LIT, CLOSE_LIT -> dest.add('"');
+        }
+        return dest;
+    }
+
+    public RopeFactory append(RopeFactory dest, Object o) {
+        switch (this) {
+            case IRI, OPEN_IRI -> dest.add('<');
+            case LIT, OPEN_LIT -> dest.add('"');
+        }
+        if (o instanceof byte[] u8) dest.add(u8);
+        else                        dest.add((CharSequence)o);
+        switch (this) {
+            case IRI, CLOSE_IRI -> dest.add('>');
+            case LIT, CLOSE_LIT -> dest.add('"');
         }
         return dest;
     }

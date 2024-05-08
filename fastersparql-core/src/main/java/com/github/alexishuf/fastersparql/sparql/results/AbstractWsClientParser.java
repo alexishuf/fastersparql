@@ -10,7 +10,8 @@ import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -29,7 +30,7 @@ public abstract class AbstractWsClientParser<B extends Batch<B>> extends Abstrac
         super(dst);
         this.bindQuery = bindQuery;
         if (bindQuery == null) {
-            bindingCol2OutCol = ArrayPool.EMPTY_INT;
+            bindingCol2OutCol = ArrayAlloc.EMPTY_INT;
             metrics = null;
         } else {
             Vars bindingsVars = bindQuery.bindingsVars(), outVars = dst.vars();
@@ -49,22 +50,23 @@ public abstract class AbstractWsClientParser<B extends Batch<B>> extends Abstrac
 
     private void dropSentBindings() {
         if (sentBindings != null)
-            sentBindings = batchType().recycle(sentBindings);
+            sentBindings.recycle(this);
         currBindingRow = -1;
         currBinding = -1;
         bindingNotified = true;
     }
 
-    public void addSentBatch(B b) { sentBindings = Batch.quickAppend(sentBindings, b); }
+    @Override public void onSerializedNode(Orphan<B> node) {
+        sentBindings = Batch.quickAppend(sentBindings, this, node);
+    }
 
-    @Override public void onSerializedNode(B node) { addSentBatch(node); }
-
-    @Override public void onNotSerializedNode(B node, int serializedUntilRow) {
+    @Override public void onNotSerializedNode(Orphan<B> node, int serializedUntilRow) {
         if (serializedUntilRow > 0) {
-            node.rows = (short)Math.min(node.rows, serializedUntilRow);
-            addSentBatch(node);
+            B b = node.takeOwnership(this);
+            b.rows = (short)Math.min(b.rows, serializedUntilRow);
+            sentBindings = Batch.quickAppend(sentBindings, this, b.releaseOwnership(this));
         } else {
-            node.recycle();
+            Orphan.recycle(node);
         }
     }
 
@@ -148,7 +150,7 @@ public abstract class AbstractWsClientParser<B extends Batch<B>> extends Abstrac
         while (currBinding < seq) {
             if (metrics != null) metrics.beginBinding();
             while (sentBindings != null && ++currBindingRow >= sentBindings.rows) {
-                sentBindings = sentBindings.dropHead();
+                sentBindings = sentBindings.dropHead(this);
                 currBindingRow = -1;
             }
             long prev = currBinding++;

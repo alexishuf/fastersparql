@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.client.util;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -12,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.alphabet;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,9 +19,9 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 class SkipTest {
     private List<Rope> inputs(String string) {
         byte[] u8 = string.getBytes(UTF_8);
-        return List.of(new ByteRope(string),
-                       new ByteRope("."+string).sub(1, u8.length+1),
-                       new SegmentRope(ByteBuffer.wrap(u8)));
+        return List.of(asFinal(string),
+                       asFinal("."+string).sub(1, u8.length+1),
+                       asFinal(ByteBuffer.wrap(u8)));
     }
 
     @Test

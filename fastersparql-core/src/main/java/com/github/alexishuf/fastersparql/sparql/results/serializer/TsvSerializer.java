@@ -3,24 +3,28 @@ package com.github.alexishuf.fastersparql.sparql.results.serializer;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 import java.util.Map;
 
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 
-public class TsvSerializer extends ResultsSerializer {
+public abstract sealed class TsvSerializer extends ResultsSerializer<TsvSerializer> {
 
     public static class TsvFactory implements Factory {
-        @Override public ResultsSerializer create(Map<String, String>params) {
+        @Override public Orphan<TsvSerializer> create(Map<String, String>params) {
             if (!params.getOrDefault("charset", "utf-8").equalsIgnoreCase("utf-8"))
                 throw new NoSerializerException("Cannot generate TSV in a format other than UTF-8");
-            return new TsvSerializer();
+            return new Concrete();
         }
         @Override public SparqlResultFormat name() { return TSV;}
     }
 
-    public TsvSerializer() {
-        super(TSV.asMediaType());
+    public static Orphan<TsvSerializer> create() { return new Concrete(); }
+    private TsvSerializer() {super(TSV.asMediaType());}
+
+    private static final class Concrete extends TsvSerializer implements Orphan<TsvSerializer> {
+        @Override public TsvSerializer takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     @Override public void serializeHeader(ByteSink<?, ?> dest) {
@@ -32,11 +36,12 @@ public class TsvSerializer extends ResultsSerializer {
     }
 
     @Override
-    public <B extends Batch<B>, S extends ByteSink<S, T>, T>
-    void serialize(Batch<B> batch0, ByteSink<S, T> sink, int hardMax,
+    public <B extends Batch<B>, T>
+    void serialize(Orphan<B> orphan, ByteSink<?, T> sink, int hardMax,
                    NodeConsumer<B> nodeConsumer, ChunkConsumer<T> chunkConsumer) {
-        if (batch0 == null) return;
-        @SuppressWarnings("unchecked") B batch = (B) batch0;
+        if (orphan == null)
+            return;
+        B batch = orphan.takeOwnership(this);
         if (batch.rows == 0) {
             detachAndDeliverNode(batch, nodeConsumer);
             return;
@@ -88,7 +93,8 @@ public class TsvSerializer extends ResultsSerializer {
     void serializePositiveAsk(B batch, ByteSink<S, T> sink, NodeConsumer<B> nodeConsumer,
                               ChunkConsumer<T> chunkConsumer) {
         sink.append('\n');
-        deliver(sink, chunkConsumer, 1, 0, Integer.MAX_VALUE);
+        if (!chunkConsumer.isNoOp())
+            deliver(sink, chunkConsumer, 1, 0, Integer.MAX_VALUE);
         while (batch != null)
             batch = detachAndDeliverNode(batch, nodeConsumer);
     }

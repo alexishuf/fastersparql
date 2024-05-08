@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.store.index.dict.CompositeDictBuilder;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IdTranslatorTest {
 
-    private static final List<ByteRope> TERMS = Stream.of(
+    private static final List<FinalSegmentRope> TERMS = Stream.of(
             "<http://example.org/1>",
             "<http://example.org/2>",
             "<http://example.org/3>",
@@ -30,7 +30,7 @@ class IdTranslatorTest {
             "\"23\"^^<http://www.w3.org/2001/XMLSchema#>",
             "\"alice\"@en",
             "\"bob\""
-    ).map(ByteRope::new).toList();
+    ).map(FinalSegmentRope::asFinal).toList();
 
     private static Path testDict;
 
@@ -39,10 +39,10 @@ class IdTranslatorTest {
         Path tempDir = Files.createTempDirectory("fastersparql");
         tempDir.toFile().deleteOnExit();
         try (var b = new CompositeDictBuilder(tempDir, tempDir, LAST, true)) {
-            for (ByteRope t : TERMS)
+            for (var t : TERMS)
                 b.visit(t);
             var secondPass = b.nextPass();
-            for (ByteRope t : TERMS)
+            for (var t : TERMS)
                 secondPass.visit(t);
             secondPass.write();
         }
@@ -62,17 +62,21 @@ class IdTranslatorTest {
         int dictId = IdTranslator.register(dict);
         try {
             for (int i = 0; i < 8; ++i) {
-                var lookup = IdTranslator.lookup(dictId);
-                for (ByteRope t : TERMS) {
-                    long id = lookup.find(t);
-                    assertTrue(id >= Dict.MIN_ID);
-                    //noinspection AssertBetweenInconvertibleTypes
-                    assertEquals(t, lookup.get(id));
+                var lookup = dict.lookup().takeOwnership(this);
+                try {
+                    for (var t : TERMS) {
+                        long id = lookup.find(t);
+                        assertTrue(id >= Dict.MIN_ID);
+                        //noinspection AssertBetweenInconvertibleTypes
+                        assertEquals(t, lookup.get(id));
 
-                    long sourced = IdTranslator.source(id, dictId);
-                    assertEquals(id, IdTranslator.unsource(sourced));
-                    assertEquals(dictId, IdTranslator.dictId(sourced));
-                    assertSame(dict, IdTranslator.dict(dictId));
+                        long sourced = IdTranslator.source(id, dictId);
+                        assertEquals(id, IdTranslator.unsource(sourced));
+                        assertEquals(dictId, IdTranslator.dictId(sourced));
+                        assertSame(dict, IdTranslator.dict(dictId));
+                    }
+                } finally {
+                    lookup.recycle(this);
                 }
             }
         } finally {

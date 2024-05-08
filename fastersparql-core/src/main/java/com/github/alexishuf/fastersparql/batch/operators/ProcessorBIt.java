@@ -5,19 +5,22 @@ import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 
 public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> {
-    protected final BatchProcessor<B> processor;
+    protected final BatchProcessor<B, ?> processor;
 
-    public ProcessorBIt(BIt<B> delegate, BatchProcessor<B> processor,
+    public ProcessorBIt(BIt<B> delegate, Orphan<? extends BatchProcessor<B, ?>> processor,
                         @Nullable MetricsFeeder metrics) {
-        super(delegate, delegate.batchType(), processor.vars);
-        this.processor = processor;
+        super(delegate, delegate.batchType(), Emitter.peekVars(processor));
+        this.processor = processor.takeOwnership(this);
         this.metrics = metrics;
     }
 
@@ -29,35 +32,39 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
     }
 
     protected StringBuilder selfLabel(StreamNodeDOT.Label type) {
+        var sb = new StringBuilder(32);
+        if (processor == null)
+            return sb.append(getClass().getSimpleName());
         var pt = type == StreamNodeDOT.Label.MINIMAL ? type : StreamNodeDOT.Label.SIMPLE;
-        return new StringBuilder().append(processor.label(pt));
+        return sb.append(processor.label(pt));
     }
 
     protected void cleanup(@Nullable Throwable error) {
-        processor.release();
+        processor.recycle(this);
         if (error != null && !(error instanceof BItCancelledException))
             delegate.close();
     }
 
-    @Override public @Nullable B nextBatch(B b) {
-        try {
-            while ((b = delegate.nextBatch(b)) != null) {
+    @Override public @Nullable Orphan<B> nextBatch(Orphan<B> orphan) {
+        try (var g = new Guard.BatchGuard<>(orphan, this)) {
+            while (g.nextBatch(delegate) != null) {
                 lock();
                 try {
                     if (isTerminated()) {
-                        b = batchType.recycle(b);
+                        g.close();
                         break;
-                    } else if ((b = processor.processInPlace(b)) == null) {
+                    } else if (g.set(processor.processInPlace(g.poll())) == null) {
                         delegate.close(); // premature end, likely due to LIMIT clause
                         break;
-                    } else if (b.rows > 0) {
+                    } else if (g.rows() > 0) {
                         break;
                     }
                 } finally { unlock(); }
             }
-            if   (b == null) onTermination(null); //exhausted
-            else             onNextBatch(b);
-            return b;
+            orphan = g.poll();
+            if   (orphan == null) onTermination(null); //exhausted
+            else                  onNextBatch(orphan);
+            return orphan;
         } catch (Throwable t) {
             onTermination(t); //error
             throw t;

@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -17,18 +18,29 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
-        implements Stage<I, O> {
-    protected @MonotonicNonNull Emitter<I> upstream;
+public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>,
+                                    S extends AbstractStage<I, O, S>>
+        extends Stateful<S>
+        implements Stage<I, O, S> {
+    protected @MonotonicNonNull Emitter<I, ?> upstream;
     protected @MonotonicNonNull Receiver<O> downstream;
     public final BatchType<O> batchType;
     public final Vars vars;
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
-    private int state;
 
     public AbstractStage(BatchType<O> batchType, Vars vars) {
+        super(CREATED, Flags.DEFAULT);
         this.batchType = batchType;
         this.vars = vars;
+    }
+
+    @Override protected void doRelease() {
+        if (upstream != null) upstream.recycle(this);
+        super.doRelease();
+    }
+
+    @Override protected void onPendingRelease() {
+        cancel();
     }
 
     @Override public String toString() { return label(StreamNodeDOT.Label.MINIMAL)+"<-"+upstream; }
@@ -36,7 +48,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     @Override public String label(StreamNodeDOT.Label type) {
         var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
         if (type.showState())
-            sb.append('[').append(Stateful.Flags.DEFAULT.render(state)).append(']');
+            sb.append('[').append(flags.render(statePlain())).append(']');
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
         return sb.toString();
@@ -59,10 +71,10 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
             ThreadJournal.journal("subscribed", receiver, "to", this);
     }
 
-    @Override public boolean   isComplete() { return Stateful.isCompleted(state); }
-    @Override public boolean  isCancelled() { return Stateful.isCancelled(state); }
-    @Override public boolean     isFailed() { return Stateful.isFailed(state); }
-    @Override public boolean isTerminated() { return (state& Stateful.IS_TERM) != 0; }
+    @Override public boolean   isComplete() { return isCompleted(statePlain()); }
+    @Override public boolean  isCancelled() { return isCancelled(statePlain()); }
+    @Override public boolean     isFailed() { return isFailed(statePlain()); }
+    @Override public boolean isTerminated() { return (statePlain()&IS_TERM) != 0; }
 
     @Override public boolean cancel() {
         return upstream != null && upstream.cancel();
@@ -71,9 +83,6 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
         if (upstream == null) throw new NoEmitterException();
         upstream.request(rows);
     }
-
-    @Override public void rebindAcquire() { upstream.rebindAcquire(); }
-    @Override public void rebindRelease() { upstream.rebindRelease(); }
 
     @Override public void rebindPrefetch(BatchBinding binding) {
         if (upstream != null) upstream.rebindPrefetch(binding);
@@ -84,13 +93,12 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
-        if (ThreadJournal.ENABLED)
-            ThreadJournal.journal("rebind", this);
+        ThreadJournal.journal("rebind", this);
+        resetForRebind(0, 0);
         if (EmitterStats.ENABLED && stats != null)
             stats.onRebind(binding);
         if (upstream == null)
             throw new NoEmitterException();
-        state = Stateful.CREATED;
         upstream.rebind(binding);
     }
 
@@ -98,30 +106,35 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>>
 
     /* --- --- --- Receiver methods --- --- --- */
 
-    @Override public @This AbstractStage<I, O> subscribeTo(Emitter<I> emitter) {
+    @Override public @This S subscribeTo(Orphan<? extends Emitter<I, ?>> emitter) {
         if (emitter != upstream) {
             if (upstream != null) throw new MultipleRegistrationUnsupportedException(this);
-            (upstream = emitter).subscribe(this);
+            upstream = emitter.takeOwnership(this);
+            upstream.subscribe(this);
         }
-        return this;
+        //noinspection unchecked
+        return (S)this;
     }
-    @Override public @MonotonicNonNull Emitter<I> upstream() { return upstream; }
+    @Override public @MonotonicNonNull Emitter<I, ?> upstream() { return upstream; }
     @Override public void onComplete() {
         if (downstream == null) throw new NoReceiverException();
-        state = Stateful.COMPLETED;
+        boolean ok = moveStateRelease(statePlain(), COMPLETED);
+        assert ok : "unexpected onComplete";
         downstream.onComplete();
-        if (state == Stateful.COMPLETED) state = Stateful.COMPLETED_DELIVERED;
+        markDelivered(COMPLETED);
     }
     @Override public void onCancelled() {
         if (downstream == null) throw new NoReceiverException();
-        state = Stateful.CANCELLED;
+        boolean ok = moveStateRelease(statePlain(), CANCELLED);
+        assert ok : "unexpected onCancelled";
         downstream.onCancelled();
-        if (state == Stateful.CANCELLED) state = Stateful.CANCELLED_DELIVERED;
+        markDelivered(CANCELLED);
     }
     @Override public void onError(Throwable cause) {
         if (downstream == null) throw new NoReceiverException();
-        state = Stateful.FAILED;
+        boolean ok = moveStateRelease(statePlain(), FAILED);
+        assert ok : "unexpected onError";
         downstream.onError(cause);
-        if (state == Stateful.FAILED) state = Stateful.FAILED_DELIVERED;
+        markDelivered(FAILED);
     }
 }

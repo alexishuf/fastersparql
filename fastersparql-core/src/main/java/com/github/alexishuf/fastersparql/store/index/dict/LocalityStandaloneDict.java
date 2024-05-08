@@ -2,15 +2,22 @@ package com.github.alexishuf.fastersparql.store.index.dict;
 
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_1;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 
 public class LocalityStandaloneDict extends Dict {
     final long emptyId;
@@ -51,27 +58,72 @@ public class LocalityStandaloneDict extends Dict {
         quickValidateOffsets(-1);
     }
 
-    @Override public AbstractLookup polymorphicLookup() { return lookup(); }
+    @Override public Orphan<Lookup> polymorphicLookup() { return lookup(); }
 
-    public Lookup lookup() { return new Lookup(); }
+    public Orphan<Lookup> lookup() {
+        Lookup l = LOOKUP.create();
+        l.thaw(this);
+        return l.releaseOwnership(RECYCLED);
+    }
 
-    public final class Lookup extends AbstractLookup {
-        private final SegmentRope tmp = new SegmentRope(seg, 0, 1);
-        private final SegmentRope out = new SegmentRope(seg, 0, 1);
+    private static final Supplier<Lookup> LOOKUP_FAC = new Supplier<>() {
+        @Override public Lookup get() {
+            return new Lookup.Concrete(null).takeOwnership(RECYCLED);
+        }
+        @Override public String toString() {return "LocalityStandaloneDict.LOOKUP_FAC";}
+    };
+    private static final Alloc<Lookup> LOOKUP = new Alloc<>(Lookup.class,
+            "LocalityStandaloneDict.Lookup", LOOKUP_POOL_CAPACITY,
+            LOOKUP_FAC, Lookup.BYTES);
+    static { Primer.INSTANCE.sched(LOOKUP::prime); }
 
-        @Override public LocalityStandaloneDict dict() { return LocalityStandaloneDict.this; }
+    public static abstract sealed class Lookup extends AbstractLookup<Lookup> {
+        protected static final int BYTES = 16 /*headers*/ + 2*SegmentRopeView.BYTES;
+        private LocalityStandaloneDict dict;
+        private final SegmentRopeView tmp = new SegmentRopeView();
+        private final SegmentRopeView out = new SegmentRopeView();
+
+        private Lookup(LocalityStandaloneDict parent) {
+            thaw(parent);
+        }
+
+        private void thaw(LocalityStandaloneDict dict) {
+            if (this.dict == dict)
+                return;
+            this.dict = dict;
+            tmp.wrap(dict.seg, 0, 1);
+            out.wrap(dict.seg, 0, 1);
+        }
+
+        @Override public @Nullable Lookup recycle(Object currentOwner) {
+            internalMarkRecycled(currentOwner);
+            if (LOOKUP.offer(this) != null)
+                internalMarkGarbage(RECYCLED);
+            return null;
+        }
+
+        private static final class Concrete extends Lookup implements Orphan<Lookup> {
+            private Concrete(LocalityStandaloneDict parent) {super(parent);}
+            @Override public Lookup takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        @Override public LocalityStandaloneDict dict() { return dict; }
 
         @Override public long find(PlainRope rope) {
-            if (rope.len == 0) return emptyId;
+            var dict = this.dict;
+            if (rope.len == 0)
+                return dict.emptyId;
             if (U == null) return coldFind(rope);
+            long nStrings = dict.nStrings;
             long id = 1;
             if (rope instanceof SegmentRope s) {
                 byte[] rBase = s.utf8;
                 long rOff = s.segment.address() + s.offset;
                 int rLen = s.len;
                 while (id <= nStrings) {
-                    long off = readOffUnsafe(id - 1);
-                    int diff = compare1_1(null, valBase + off, (int) (readOffUnsafe(id) - off),
+                    long off = dict.readOffUnsafe(id - 1);
+                    int diff = compare1_1(null, dict.valBase + off,
+                            (int)(dict.readOffUnsafe(id) - off),
                             rBase, rOff, rLen);
                     if (diff == 0) return id;
                     id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
@@ -83,9 +135,9 @@ public class LocalityStandaloneDict extends Dict {
                 long rOff2 = tsr.snd.address() + tsr.sndOff;
                 int rLen1 = tsr.fstLen, rLen2 = tsr.sndLen;
                 while (id <= nStrings) {
-                    long off = readOffUnsafe(id - 1);
-                    int diff = (int) (readOffUnsafe(id) - off);
-                    diff = compare1_2(null, valBase + off, diff,
+                    long off = dict.readOffUnsafe(id - 1);
+                    int diff = (int)(dict.readOffUnsafe(id) - off);
+                    diff = compare1_2(null, dict.valBase + off, diff,
                                       rBase1, rOff1, rLen1, rBase2, rOff2, rLen2);
                     if (diff == 0) return id;
                     id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
@@ -96,9 +148,10 @@ public class LocalityStandaloneDict extends Dict {
 
         private long coldFind(PlainRope rope) {
             long id = 1;
-            while (id <= nStrings) {
-                long off = readOffUnsafe(id - 1);
-                tmp.slice(off, (int) (readOffUnsafe(id) - off));
+            var dict = this.dict;
+            while (id <= dict.nStrings) {
+                long off = dict.readOffUnsafe(id - 1);
+                tmp.slice(off, (int) (dict.readOffUnsafe(id) - off));
                 int diff = tmp.compareTo(rope);
                 if (diff == 0) return id;
                 id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
@@ -110,15 +163,16 @@ public class LocalityStandaloneDict extends Dict {
             if (term == null)
                 return NOT_FOUND;
             if (U != null) {
+                LocalityStandaloneDict dict = this.dict;
                 long id = 1;
                 SegmentRope termFst = term.first(), termSnd = term.second();
                 long termFstOff = termFst.segment.address() + termFst.offset;
                 long termSndOff = termSnd.segment.address() + termSnd.offset;
                 int termFstLen = termFst.len, termSndLen = termSnd.len;
-                while (id <= nStrings) {
-                    long off = readOffUnsafe(id - 1);
-                    int len = (int) (readOffUnsafe(id) - off);
-                    int diff = compare1_2(null, valBase + off, len,
+                while (id <= dict.nStrings) {
+                    long off = dict.readOffUnsafe(id - 1);
+                    int len = (int) (dict.readOffUnsafe(id) - off);
+                    int diff = compare1_2(null, dict.valBase + off, len,
                                           termFst.utf8, termFstOff, termFstLen,
                                           termSnd.utf8, termSndOff, termSndLen);
                     if (diff == 0) return id;
@@ -132,21 +186,23 @@ public class LocalityStandaloneDict extends Dict {
 
         private long safeFindTerm(Term term) {
             long id = 1;
-            while (id <= nStrings) {
-                long off = readOffUnsafe(id - 1);
-                int len = (int) (readOffUnsafe(id) - off);
+            var dict = this.dict;
+            while (id <= dict.nStrings) {
+                long off = dict.readOffUnsafe(id - 1);
+                int len = (int) (dict.readOffUnsafe(id) - off);
                 tmp.slice(off, len);
-                int diff = term.compareTo(seg, off, len);
+                int diff = term.compareTo(dict.seg, off, len);
                 if (diff == 0) return id;
                 id = (id << 1) + (~diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
             }
             return NOT_FOUND;
         }
 
-        @Override public SegmentRope get(long id) {
-            if (id < MIN_ID || id > nStrings) return null;
-            long off = readOffUnsafe(id - 1);
-            out.slice(off, (int)(readOffUnsafe(id)-off));
+        @Override public SegmentRopeView get(long id) {
+            var dict = this.dict;
+            if (id < MIN_ID || id > dict.nStrings) return null;
+            long off = dict.readOffUnsafe(id - 1);
+            out.slice(off, (int)(dict.readOffUnsafe(id)-off));
             return out;
         }
     }

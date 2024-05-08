@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.batch.impl;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -72,7 +73,7 @@ public class BatchReadyTest {
         public ReadyHelper() { super(TermBatchType.TERM, Vars.of("x")); }
         @Override public long readyInNanos(int r, long start) { return super.readyInNanos(r, start); }
         @Override public @This BIt<TermBatch> tempEager() { return this; }
-        @Override public TermBatch nextBatch(@Nullable TermBatch b) { throw new UnsupportedOperationException(); }
+        @Override public Orphan<TermBatch> nextBatch(@Nullable Orphan<TermBatch> b) { throw new UnsupportedOperationException(); }
         @Override public String toString() { return "test"; }
     }
 }

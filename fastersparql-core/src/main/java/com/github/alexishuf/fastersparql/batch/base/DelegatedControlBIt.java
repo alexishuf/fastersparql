@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
@@ -159,9 +160,9 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         return new StringBuilder().append(cls2name(getClass()));
     }
 
-    protected void onNextBatch(B b) {
+    protected void onNextBatch(Orphan<B> b) {
         var m = metrics;
-        int batchRows = STATS_ENABLED || m != null ? b.totalRows() : 0;
+        int batchRows = STATS_ENABLED || m != null ? Batch.peekTotalRows(b) : 0;
         if (STATS_ENABLED) {
             ++batches;
             rows += batchRows;

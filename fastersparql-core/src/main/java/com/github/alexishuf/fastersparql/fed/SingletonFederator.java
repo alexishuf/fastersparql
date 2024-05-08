@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class SingletonFederator extends Optimizer {
@@ -44,20 +45,23 @@ public class SingletonFederator extends Optimizer {
         return type.convert(plan.execute(preferred));
     }
 
-    public <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Plan plan, Vars rebindHint) {
+    public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(BatchType<B> type, Plan plan, Vars rebindHint) {
         Vars pubVars = plan.publicVars();
         plan = Federation.copySanitize(plan);
         plan = optimize(plan, rebindHint);
         plan = bind2client(plan, QueryMode.EMIT);
         plan = FS.project(plan, pubVars);
         BatchType<?> preferred = preferredBatchType == null ? type : preferredBatchType;
-        var emitter = plan.emit(preferred, rebindHint);
+        var em = plan.emit(preferred, rebindHint);
         //noinspection unchecked
-        return preferred == type ? (Emitter<B>) emitter : convert(type, emitter);
+        return preferred == type ? (Orphan<? extends Emitter<B,?>>)em : convert(type, em);
     }
 
-    protected <B extends Batch<B>> Emitter<B> convert(BatchType<B> dest, Emitter<?> in) {
-        return dest.convert(in);
+    @SuppressWarnings("unchecked")
+    protected <I extends Batch<I>, B extends Batch<B>>
+    Orphan<? extends Emitter<B, ?>> convert(BatchType<B> dst, Orphan<? extends Emitter<?, ?>> in) {
+        return dst.convert((Orphan<? extends Emitter<I,?>>) in);
     }
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {

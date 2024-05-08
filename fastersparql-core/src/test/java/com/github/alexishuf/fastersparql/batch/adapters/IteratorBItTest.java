@@ -1,8 +1,10 @@
 package com.github.alexishuf.fastersparql.batch.adapters;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,7 @@ import java.util.concurrent.Semaphore;
 import java.util.stream.IntStream;
 
 import static com.github.alexishuf.fastersparql.batch.IntsBatch.intsBatch;
+import static com.github.alexishuf.fastersparql.util.owned.Orphan.takeOwnership;
 import static org.junit.jupiter.api.Assertions.*;
 
 class IteratorBItTest extends AbstractBItTest {
@@ -46,36 +49,41 @@ class IteratorBItTest extends AbstractBItTest {
             @Override public Integer next() { return next++; }
         }, TermBatchType.TERM, X);
         bit.minBatch(2).maxWait(Duration.ofMillis(50));
+        try (var g = new Guard.ItGuard<>(this, bit);
+             var ex1 = new Guard.BatchGuard<>(intsBatch(1), this);
+             var ex23 = new Guard.BatchGuard<>(intsBatch(2, 3), this)
+        ) {
+            Semaphore started = new Semaphore(0);
+            var batchFuture = new CompletableFuture<TermBatch>();
+            Thread.ofVirtual().start(() -> {
+                long start = System.nanoTime();
+                started.release();
+                var batch = g.nextBatch();
+                if (System.nanoTime()-start < 40_000_000L)
+                    batchFuture.completeExceptionally(new AssertionFailedError("did not honor maxWait"));
+                else
+                    batchFuture.complete(batch);
+            });
+            // release hasNext() at least 50ms after nextBatch() started
+            started.acquireUninterruptibly();
+            busySleepMillis(60);
+            semaphore.release(1);
 
-        Semaphore started = new Semaphore(0);
-        var batchFuture = new CompletableFuture<TermBatch>();
-        Thread.ofVirtual().start(() -> {
-            long start = System.nanoTime();
-            started.release();
-            TermBatch batch = bit.nextBatch(null);
-            if (System.nanoTime()-start < 40_000_000L)
-                batchFuture.completeExceptionally(new AssertionFailedError("did not honor maxWait"));
-            else
-                batchFuture.complete(batch);
-        });
-        // release hasNext() at least 50ms after nextBatch() started
-        started.acquireUninterruptibly();
-        busySleepMillis(60);
-        semaphore.release(1);
+            // nextBatch must complete with a single item.
+            // Although the second hasNext() call would return without blocking, there should be
+            // no second call since maxWait has been elapsed
+            assertEquals(ex1.get(), batchFuture.get());
 
-        // nextBatch must complete with a single item.
-        // Although the second hasNext() call would return without blocking, there should be
-        // no second call since maxWait has been elapsed
-        assertEquals(intsBatch(1), batchFuture.get());
+            // from now on test we can consume the remainder
+            assertTimeout(Duration.ofMillis(50), () -> {
+                assertEquals(ex23.get(), bit.nextBatch(null));
+                assertNull(bit.nextBatch(null));
+            });
+        }
 
-        // from now on test we can consume the remainder
-        assertTimeout(Duration.ofMillis(50), () -> {
-            assertEquals(intsBatch(2, 3), bit.nextBatch(null));
-            assertNull(bit.nextBatch(null));
-        });
     }
 
-    public static void main(String[] args) throws IOException, ParseException {
+    public static void main(String[] ignored) throws IOException, ParseException {
         IteratorBItTest t = new IteratorBItTest();
 //        try {
 //            t.testMinWait();
@@ -90,7 +98,6 @@ class IteratorBItTest extends AbstractBItTest {
     }
 
     @Test void testMinWait() {
-        TermBatchType.TERM.create(3).recycle();
         int delay = 100;
         long before = Timestamp.nanoTime();
         busySleepMillis(delay);
@@ -108,11 +115,21 @@ class IteratorBItTest extends AbstractBItTest {
         bit.minBatch(2).minWait(Duration.ofMillis(2*delay + delay/2));
 
         List<TermBatch> batches = new ArrayList<>();
-        assertTimeout(Duration.ofMillis(delay*(3+1)), () -> batches.add(bit.nextBatch(null)));
-        assertTimeout(Duration.ofMillis(delay*(1+1)), () -> batches.add(bit.nextBatch(null)));
-        assertTimeout(Duration.ofMillis(delay), () -> batches.add(bit.nextBatch(null)));
-        assertTimeout(Duration.ofMillis(delay), () -> batches.add(bit.nextBatch(null)));
-        assertEquals(Arrays.asList(intsBatch(1, 2, 3), intsBatch(4), null, null),
-                     batches);
+        try (var ex123 = new Guard.BatchGuard<>(intsBatch(1, 2, 3), this);
+             var ex4   = new Guard.BatchGuard<>(intsBatch(4),       this)) {
+            assertTimeout(Duration.ofMillis(delay*(3+1)),
+                    () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
+            assertTimeout(Duration.ofMillis(delay*(1+1)),
+                    () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
+            assertTimeout(Duration.ofMillis(delay),
+                    () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
+            assertTimeout(Duration.ofMillis(delay),
+                    () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
+            assertEquals(Arrays.asList(ex123.get(), ex4.get(), null, null),
+                    batches);
+        } finally {
+            for (TermBatch b : batches)
+                Batch.safeRecycle(b, this);
+        }
     }
 }

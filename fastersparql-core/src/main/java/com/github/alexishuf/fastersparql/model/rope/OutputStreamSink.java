@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.IOException;
@@ -7,7 +8,6 @@ import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStreamSink> {
     public OutputStream os;
@@ -64,16 +64,30 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStream
     }
 
     @Override public @This OutputStreamSink append(Rope rope, int begin, int end) {
-        if (rope instanceof ByteRope b)
-            return write(b.u8(), (int)b.offset+begin, end-begin);
-        byte[] a = rope.toArray(begin, end);
-        return write(a, 0, a.length);
+        int len = end - begin;
+        byte[] arr = rope.backingArray();
+        if (arr != null)
+            write(arr, rope.backingArrayOffset()+begin, len);
+        else
+            appendChunked(rope, begin, end);
+        return this;
     }
 
-    @Override public @This OutputStreamSink append(CharSequence cs, int begin, int end) {
-        if (cs instanceof Rope r)
-            return append(r, begin, end);
-        return append(cs.subSequence(begin, end).toString().getBytes(UTF_8));
+    private void appendChunked(Rope rope, int begin, int end) {
+        Bytes b = Bytes.atLeastElse(Math.min(end-begin, 2048), 128).takeOwnership(this);
+        try {
+            byte[] arr = b.arr;
+            for (int i = begin; i < end; i += arr.length) {
+                rope.copy(i, Math.min(end, i+arr.length), arr, 0);
+                write(arr, 0, arr.length);
+            }
+        } finally {
+            b.releaseOwnership(this);
+        }
+    }
+
+    @Override public @This OutputStreamSink append(SegmentRope rope, int begin, int end) {
+        return append((Rope)rope, begin, end);
     }
 
     @Override public @This OutputStreamSink ensureFreeCapacity(int increment) {

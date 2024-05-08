@@ -1,25 +1,29 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import static com.github.alexishuf.fastersparql.batch.Timestamp.nanoTime;
+import static com.github.alexishuf.fastersparql.batch.type.Batch.detachDistinctTail;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 
 /**
  * A {@link Emitter} that implements {@link CompletableBatchQueue}.
  *
  * <p>Events to {@link Receiver} are delivered from within a {@link EmitterService} thread. Events
  * from the producer can arrive concurrently, (including among themselves) from any thread.
- * However the implementation is optimized for better performance when {@link #offer(Batch)}
+ * However the implementation is optimized for better performance when {@link #offer(Orphan)}
  * arrives from a single thread.</p>
  *
  * <p>Events to the underlying producer are delivered via the
@@ -35,7 +39,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
  *     <li>Repeatedly:
  *         <ol>
  *             <li>{@link #resumeProducer(long)} is called from the emitter thread</li>
- *             <li>{@link #offer(Batch)} gets called from an unknown thread</li>
+ *             <li>{@link #offer(Orphan)} gets called from an unknown thread</li>
  *             <li>One or both concurrently happen:
  *                 <ol>
  *                     <li>{@link #pauseProducer()} is called from the emitter thread because
@@ -47,8 +51,10 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
  *             </li>
  *         </ol>
  *     </li>
- *     <li>If there is no outstanding {@link #rebindAcquire()}, the emitter will be
- *         released and {@link #releaseProducer()} will be called from the emitter thread.</li>
+ *     <li>Once the {@link CallbackEmitter} reaches a {@code _DELIVERED} state (termination has
+ *         been signaled downstream) and the downstream {@link Receiver} has called
+ *         {@link #recycle(Object)} on the {@link CallbackEmitter}, then {@link #releaseProducer()}
+ *         will be called from the emitter thread.</li>
  * </ol>
  *
  *  <p>With the presence of {@link #cancel()}, which can arrive at any moment from any thread,
@@ -63,7 +69,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
  *  </ul>
  *
  *  <p>Although {@link #cancel(boolean)} does not transition the emitter state, if
- *  {@link #cancel()} <i>happens before</i> a {@link #offer(Batch)} call, the offer will throw a
+ *  {@link #cancel()} <i>happens before</i> a {@link #offer(Orphan)} call, the offer will throw a
  *  {@link CancelledException}. Batches queued before the {@link #cancel()} will still be
  *  delivered before the termination of the emitter. To change this behavior, call
  *  {@link #dropAllQueued()} from an override of {@link #cancel()}</p>
@@ -76,7 +82,8 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
  *
  * @param <B>
  */
-public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
+public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmitter<B, E>>
+        extends TaskEmitter<B, E>
         implements CompletableBatchQueue<B> {
     private   static final int PROD_LIVE      = 0x40000000;
     /** This flag is on if {@link #cancel()} was called and this emitter had no
@@ -94,7 +101,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             .flag(DO_RESUME,         "DO_RESUME")
             .build();
 
-    private @Nullable B ready, filling;
+    private @Nullable B queue;
     private int avgRows;
 
     public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner, int worker,
@@ -106,8 +113,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     @Override protected void doRelease() {
         try {
             assert (statePlain()&RELEASED_MASK) != 0 : "not released";
-            ready   = bt.recycle(ready);
-            filling = bt.recycle(filling);
+            queue = Owned.safeRecycle(queue, this);
         } finally {
             try {
                 super.doRelease();
@@ -118,7 +124,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     }
 
     /**
-     * Start the producer so it can start calling {@link #offer(Batch)} and eventually
+     * Start the producer so it can start calling {@link #offer(Orphan)} and eventually
      * {@link #complete(Throwable)}.
      *
      * <p>See the lifecycle described at {@link CallbackEmitter} documentation.
@@ -128,7 +134,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     protected abstract void startProducer();
 
     /**
-     * Causes calls to {@link #offer(Batch)} to stop sometime after entry into this
+     * Causes calls to {@link #offer(Orphan)} to stop sometime after entry into this
      * method. This method undoes and is undone by {@link #resumeProducer(long)}.
      *
      * <p>See the lifecycle described at {@link CallbackEmitter} documentation.
@@ -138,7 +144,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     protected abstract void pauseProducer();
 
     /**
-     * Causes calls to {@link #offer(Batch)} and to resume at some point after the entry
+     * Causes calls to {@link #offer(Orphan)} and to resume at some point after the entry
      * into this method. This method undoes and is undone by {@link #pauseProducer()}
      *
      * <p>See the lifecycle described at {@link CallbackEmitter} documentation.
@@ -180,7 +186,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
      *
      * <p><strong>Attention:</strong> this method may be called from the {@link EmitterService}
      * worker thread that just delivered a termination to the downstream receiver or from an
-     * unknown thread that called {@link #rebindRelease()}. Nevertheless:</p>
+     * unknown thread that called {@link #recycle(Object)}. Nevertheless:</p>
      *
      * <ul>
      *     <li>This method will be called only once per {@link CallbackEmitter}</li>
@@ -190,20 +196,17 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     protected abstract void releaseProducer();
 
     /**
-     * Drop all batches queued in this {@link CallbackEmitter} by an {@link #offer(Batch)} that
+     * Drop all batches queued in this {@link CallbackEmitter} by an {@link #offer(Orphan)} that
      * <i>happened before</i> this call.
      */
     @SuppressWarnings("unused") protected void dropAllQueued() {
-        B b0, b1;
+        B q;
         int st = lock(statePlain());
         try {
-            b0      = ready;
-            b1      = filling;
-            ready   = null;
-            filling = null;
+            q     = queue;
+            queue = null;
         } finally { unlock(st); }
-        bt.recycle(b0);
-        bt.recycle(b1);
+        Batch.recycle(q, this);
     }
 
     @Override public @Nullable Throwable error() {
@@ -228,7 +231,7 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
     }
 
     @Override protected final void resume() {
-        setFlagsRelease(statePlain(), DO_RESUME);
+        setFlagsRelease(DO_RESUME);
         awake();
     }
 
@@ -253,37 +256,49 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
         }
     }
 
-    @Override public B fillingBatch() {
+    @Override public @Nullable Orphan<B> pollFillingBatch() {
+        Orphan<B> tail;
         int st = lock(statePlain());
         try {
-            B f = filling;
-            if (f == null) f = bt.createForThread(threadId, outCols);
-            else           filling = null;
-            return f;
+            if ((tail=detachDistinctTail(queue)) != null && EmitterStats.ENABLED && stats != null)
+                stats.revertOnBatchReceived(tail);
         } finally { unlock(st); }
+        return tail;
     }
 
-    public @Nullable B offer(B b) throws TerminatedException, CancelledException {
-        if (b == null || b.rows == 0)
-            return b;
-        b.requireUnpooled();
+    @Override public Orphan<B> fillingBatch() {
+        var orphan = pollFillingBatch();
+        return orphan == null ? bt.createForThread(threadId, outCols) : orphan;
+    }
+
+    @Override public void offer(Orphan<B> offer) throws TerminatedException, CancelledException {
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onBatchReceived(offer);
+        int rows = Batch.peekRows(offer);
+        if (rows == 0) {
+            Orphan.recycle(offer);
+            return;
+        }
         int st = lock(statePlain());
         try {
             if ((st&(IS_TERM|IS_CANCEL_REQ|GOT_CANCEL_REQ)) == 0) {
-                if (ready == null) ready = b;
-                else               filling = Batch.quickAppend(filling, b);
+                B tail = detachDistinctTail(queue, this);
+                if (tail != null) {
+                    st = unlock(st);
+                    tail.append(offer);
+                    offer = tail.releaseOwnership(this);
+                    st = lock(st);
+                }
+                queue = Batch.quickAppend(queue, this, offer);
             } else {
-                bt.recycle(b);
+                Orphan.recycle(offer); // recycle before throwing
                 if (isCancelled(st) || (st&(IS_CANCEL_REQ|GOT_CANCEL_REQ))!=0)
                     throw CancelledException.INSTANCE;
                 else
                     throw TerminatedException.INSTANCE;
             }
-        } finally {
-            unlock(st);
-        }
+        } finally { unlock(st); }
         awake();
-        return null;
     }
 
     @Override protected void task(int threadId) {
@@ -299,22 +314,25 @@ public abstract class CallbackEmitter<B extends Batch<B>> extends TaskEmitter<B>
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)
                 return; // no work to do
             long deadline = Timestamp.nextTick(1);
-            for (boolean quick = true; quick && ready != null; quick = nanoTime() <= deadline) {
-                B b     = ready;
-                ready   = filling;
-                filling = null;
+            for (boolean quick = true; quick; quick = nanoTime() <= deadline) {
+                B b   = queue;
+                queue = null;
+                if (b == null)
+                    break;
                 st = unlock(st);
-                avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
-                if (b.rows > 0 && (b = deliver(b)) != null)
-                    b.recycle();
+                if (b.rows == 0) {
+                    b.recycle(this);
+                } else {
+                    avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
+                    deliver(b.releaseOwnership(this));
+                }
                 st = lock(st);
             }
-            if (ready != null)
+            if (queue != null)
                 awake();
             if (requested() <= 0 && (st&(GOT_CANCEL_REQ)) != 0)
                 pauseProducer();
-            if (ready == null) {
-                assert filling == null : "ready == null but filling != null";
+            if (queue == null) {
                 termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
                               : ((st&IS_PENDING_TERM) != 0 ? (st&~IS_PENDING_TERM)|IS_TERM : 0);
                 if (termState != 0) {

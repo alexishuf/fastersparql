@@ -6,6 +6,8 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -13,29 +15,6 @@ import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
-    /**
-     * Preferred {@link BIt#minBatch(int)} value if values above 1 (the default) are possible.
-     *
-     * <p>This default is based on two typical properties of x86 CPUs:</p>
-     *
-     * <ol>
-     *     <li>Cache lines have 64 bytes</li>
-     *     <li>Cache lines are fetched/evicted/invalidated in pairs</li>
-     * </ol>
-     *
-     * <p>On the software side, the following is assumed:</p>
-     * <ol>
-     *     <li>Consumers of BIt will be bottlenecked by RAM (i.e., they are not doing expensive
-     *         processing on each {@link Batch} item</li>
-     *     <li>The JVM will be using compressed pointers</li>
-     *     <li>The JVM overhead for an array (including the {@code length}) is 16 bytes</li>
-     * </ol>
-     *
-     * Between {@code TERM} and {@code COMPRESSED} {@code Term} has the smallest bytes/term ratio
-     * of 4 bytes. Thus, we try to fill 2 cache lines with 1-column rows using a {@code TERM} batch.
-     */
-    int PREFERRED_MIN_BATCH = (2*64-16)/4;
-
     /**
      * Value to use with {@link BIt#minWait(long, TimeUnit)} when one desires the lowest possible
      * wait time without introducing wasteful overhead.
@@ -68,7 +47,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      * <p>If this {@link BIt} is already terminated,
      * {@link MetricsFeeder#completeAndDeliver(Throwable, boolean)} shall be immediately called.
      * For queue-based {@link BIt}, {@link MetricsFeeder#batch(int)} may be called either from
-     * {@link BIt#nextBatch(Batch)} or from {@link CallbackBIt#offer(Batch)}, but there must be
+     * {@link BIt#nextBatch(Orphan)} or from {@link CallbackBIt#offer(Orphan)}, but there must be
      * exactly one call per batch that passeed through the queue.
      *
      * <p>A call to this method replaces any listener set by a previous call.
@@ -184,7 +163,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
 
     /**
      * Sets min/max batch size and batch wait to preferred values. This will introduce a
-     * delay per {@link BIt#nextBatch(B)} call of at least
+     * delay per {@link BIt#nextBatch(Orphan)} call of at least
      * {@link FSProperties#batchMinWait(TimeUnit)} and at most
      * {@link FSProperties#batchMaxWait(TimeUnit)}.
      *
@@ -205,7 +184,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
     @SuppressWarnings("UnusedReturnValue") BIt<B> quickWait();
 
     /**
-     * Sets min/max batch size and wait time so that {@link BIt#nextBatch(B)} delay is minimal.
+     * Sets min/max batch size and wait time so that {@link BIt#nextBatch(Orphan)} delay is minimal.
      *
      * <p>Equivalent to:</p>
      *
@@ -231,8 +210,22 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      * @return {@code null} if the iterator is exhausted or a non-empty batch whose
      *          ownership is transferred to the caller.
      */
-    @Nullable B nextBatch(@Nullable B offer);
+    @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer);
 
+    /**
+     * Null-safe equivalent to {@link #nextBatch(Orphan)} with
+     * {@code offer.releaseOwnership(offerOwner)} followed by {@code takeOwnership(offerOwner)}
+     * on the {@link Orphan} returned by {@link #nextBatch(Orphan)}.
+     *
+     * @param offer {@code null} or a batch, owned by {@code offerOwner}, to be offered
+     *                          to {@link #nextBatch(Orphan)}
+     * @param offerOwner the current owner of {@code offer} and future owner of the batch
+     *                   returned by this method
+     * @return the result of {@link #nextBatch(Orphan)}, owned by {@code offerOwner}, if not null.
+     */
+    default @Nullable B nextBatch(@Nullable B offer, Object offerOwner) {
+        return Orphan.takeOwnership(nextBatch(Owned.releaseOwnership(offer, offerOwner)), offerOwner);
+    }
 
     /**
      * Signals the iterator will not be used anymore and background processing (if any) as
@@ -254,7 +247,7 @@ public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
      * already in a {@link State#isTerminated()} state ({@code false})
      *
      * <p>Note that after this method returns another thread might still be calling
-     * {@link #nextBatch(Batch)} and such calls might return non-null and non-empty batches
+     * {@link #nextBatch(Orphan)} and such calls might return non-null and non-empty batches
      * for an arbitrary window after this method or {@link #close()} were called, depending on
      * how the {@link BIt} implementation</p>
      *

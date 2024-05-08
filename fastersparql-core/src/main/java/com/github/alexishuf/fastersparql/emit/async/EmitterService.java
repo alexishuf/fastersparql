@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.Runtime.getRuntime;
 import static java.lang.Thread.MIN_PRIORITY;
@@ -36,7 +38,7 @@ public class EmitterService {
     /**
      * An arbitrary task ({@link #task(int)}) that can be repeatedly re-scheduled via {@link #awake()}.
      */
-    public abstract static class Task extends Stateful {
+    public abstract static class Task<S extends Stateful<S>> extends Stateful<S> {
         private static final VarHandle SCHEDULED;
         static {
             try {
@@ -99,7 +101,7 @@ public class EmitterService {
          *
          * @param task A Task for which this task should not be scheduled to a nearby worker
          */
-        protected final void avoidWorker(Task task) {
+        protected final void avoidWorker(Task<?> task) {
             short other = task.preferredWorker;
             if (preferredWorker == other) {
                 short mask = runner.threadsMask;
@@ -157,7 +159,7 @@ public class EmitterService {
          * @return whether the task was enqueued for execution by this method call.
          */
         public boolean allowRun(short scheduledBeforeDisallowRun) {
-            clearFlagsRelease(statePlain(), IS_RUNNING);
+            clearFlagsRelease(IS_RUNNING);
             short ac;
             ac = (short)SCHEDULED.compareAndExchange(this, scheduledBeforeDisallowRun, (short)0);
             if (ac != scheduledBeforeDisallowRun) {
@@ -184,7 +186,7 @@ public class EmitterService {
         }
 
         @Async.Execute private boolean run(int threadId) {
-            if (!compareAndSetFlagRelease(IS_RUNNING)) {
+            if (!compareAndSetFlagAcquire(IS_RUNNING)) {
                 // runNow() active on another thread. do runNow() will re-add() into
                 // preferredWorker if an awake arrived since runNow() acquired IS_RUNNING, which
                 // includes awake() calls from within task()
@@ -192,11 +194,14 @@ public class EmitterService {
             }
             short old = (short)SCHEDULED.getAcquire(this);
             try {
-                task(threadId);
+                if ((statePlain()&RELEASED_MASK) == 0)
+                    task(threadId);
+                else
+                    journal("skip run of released", this);
             } catch (Throwable t) {
                 handleTaskException(t);
             } finally {
-                clearFlagsRelease(statePlain(), IS_RUNNING);
+                clearFlagsRelease(IS_RUNNING);
             }
             if ((short)SCHEDULED.compareAndExchange(this, old, (short)0) != old) {
                 SCHEDULED.setRelease(this, (short)1);
@@ -281,12 +286,13 @@ public class EmitterService {
         }
 
         @Override public void run() {
+            Affinity.setAffinity(id);
             var md = parent.md;
             int id = this.id, threadId = this.threadId;
             int mdParkedIdx = (id << MD_BITS) + MD_PARKED;
             //noinspection InfiniteLoopStatement
             while (true) {
-                Task task = parent.pollOrSteal(id);
+                Task<?> task = parent.pollOrSteal(id);
                 if (task == null) {
                     if (id < 32) {
                         parkedBitset |= 1<<id;
@@ -367,7 +373,7 @@ public class EmitterService {
 //                locked = true;
 //                if ((size = md[mdb+MD_SIZE]) > 0) {
 //                    queueIdx = md[mdb+MD_TAKE];
-//                    Task task = queues[md[mdb+MD_QUEUE_BASE]+queueIdx];
+//                    Task<? task = queues[md[mdb+MD_QUEUE_BASE]+queueIdx];
 //                    if (task.compareAndSetFlagRelease(Task.IS_RUNNING)) { // blocked task.runNow()
 //                        try {
 //                            md[mdb+MD_SIZE] = size - 1;                 // remove from queue
@@ -441,8 +447,8 @@ public class EmitterService {
     private int stealer;
     private final int[] runnerMd;
     private final Worker[] workers;
-    private final ArrayDeque<Task> sharedQueue;
-    private final Task[] queues;
+    private final ArrayDeque<Task<?>> sharedQueue;
+    private final Task<?>[] queues;
     private final int id;
     private final Thread sharedScheduler;
 
@@ -577,7 +583,7 @@ public class EmitterService {
      * @param mdb {@code i << MD_BITS}  where i is the queue index in {@code [0, threadsMask]}
      * @return the first task of the queue, or {@code null} if the queue was empty.
      */
-    private @Nullable Task localPollLocked(int mdb) {
+    private @Nullable Task<?> localPollLocked(int mdb) {
         int size = md[mdb + MD_SIZE];
         if (size > 0) {
             md[mdb+MD_SIZE] = size-1;
@@ -595,11 +601,11 @@ public class EmitterService {
      * @return A {@link Task} removed from the head of some queue or {@code null} if all quueues
      *         were empty or with their spinlocks locked.
      */
-    private @Nullable Task localSteal(int emptyQueue) {
+    private @Nullable Task<?> localSteal(int emptyQueue) {
         for (int i = (emptyQueue+1)&threadsMask; i != emptyQueue; i = (i+1)&threadsMask) {
             int b = i<<MD_BITS;
             if (md[b+MD_SIZE] > 0 && (int)MD.compareAndExchangeAcquire(md, b+MD_LOCK, 0, 1) == 0) {
-                Task task = localPollLocked(b);
+                Task<?> task = localPollLocked(b);
                 MD.setRelease(md, b+MD_LOCK, 0);
                 if (task != null)
                     return task;
@@ -620,11 +626,11 @@ public class EmitterService {
      * @return A {@link Task} removed from one of the queues or {@code null} if all queues were
      * empty or with too much contention to allow stealing
      */
-    private @Nullable Task pollOrSteal(int queue) {
+    private @Nullable Task<?> pollOrSteal(int queue) {
         int mdb = queue << MD_BITS;
         while ((int)MD.compareAndExchangeAcquire(md, mdb+MD_LOCK, 0, 1) != 0)
             onSpinWait();
-        Task task = localPollLocked(mdb);
+        Task<?> task = localPollLocked(mdb);
         MD.setRelease(md, mdb+MD_LOCK, 0);
         if (task == null) {
             if (!sharedQueue.isEmpty())
@@ -650,7 +656,7 @@ public class EmitterService {
      * @return Whether {@code task} was added to the queue. Will return {@code false} if the
      *         queue was full or if there was too much contention on the spinlock.
      */
-    private boolean tryAdd(Task task) {
+    private boolean tryAdd(Task<?> task) {
         int mdb = task.preferredWorker <<MD_BITS, lockIdx = mdb+MD_LOCK, size;
         boolean got = false;
         byte unpark = -1;
@@ -712,7 +718,7 @@ public class EmitterService {
      *
      * @param task the nonnull {@link Task} to add.
      */
-    private void add(@Async.Schedule Task task) {
+    private void add(@Async.Schedule Task<?> task) {
         int size = md[(task.preferredWorker << MD_BITS) + MD_SIZE];
         int overloaded = size < QUEUE_IMBALANCE_CHECK ? QUEUE_IMBALANCE_CHECK
                                                       : 2+(runnerMd[RMD_TASKS]>>threadMaskBits);
@@ -731,14 +737,14 @@ public class EmitterService {
         }
     }
 
-    private @Nullable Task sharedPoll() {
+    private @Nullable Task<?> sharedPoll() {
         while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
         try {
             return sharedQueue.poll();
         } finally { MD.setRelease(runnerMd, RMD_SHR_LOCK, 0); }
     }
 
-    private @Nullable Task sharedSteal() {
+    private @Nullable Task<?> sharedSteal() {
         while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
         try {
             var task = sharedQueue.poll();
@@ -748,7 +754,7 @@ public class EmitterService {
         } finally { MD.setRelease(runnerMd, RMD_SHR_LOCK, 0); }
     }
 
-    private void sharedAdd(Task task) {
+    private void sharedAdd(Task<?> task) {
         while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
         try {
             boolean unpark = sharedQueue.isEmpty();
@@ -760,7 +766,7 @@ public class EmitterService {
         }
     }
 
-    private void sharedPrepend(Task task) {
+    private void sharedPrepend(Task<?> task) {
         while ((int)MD.compareAndExchangeAcquire(runnerMd, RMD_SHR_LOCK, 0, 1) != 0) onSpinWait();
         try {
             sharedQueue.addFirst(task);
@@ -771,7 +777,7 @@ public class EmitterService {
         int w = 0;
         //noinspection InfiniteLoopStatement
         while (true) {
-            Task task = null;
+            Task<?> task = null;
             try {
                 task = sharedPoll();
             } catch (Throwable t) {

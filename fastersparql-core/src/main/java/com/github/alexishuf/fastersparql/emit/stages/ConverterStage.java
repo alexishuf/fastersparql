@@ -6,13 +6,15 @@ import com.github.alexishuf.fastersparql.emit.AbstractStage;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
-public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends AbstractStage<I, O> {
+public class ConverterStage<I extends Batch<I>, O extends  Batch<O>,
+                            S extends ConverterStage<I, O, S>>
+        extends AbstractStage<I, O, S> {
     @SuppressWarnings("FieldMayBeFinal") private static int nextSurrogateThreadId = 1;
     private static final VarHandle SURR_THREAD_ID;
     static {
@@ -23,17 +25,35 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
         }
     }
 
-
     protected final short cols, threadId;
+    protected final BatchType<I> upstreamBT;
 
-    public ConverterStage(BatchType<O> type, Emitter<I> upstream) {
-        super(type, upstream.vars());
+    protected ConverterStage(BatchType<O> type,
+                          Orphan<? extends Emitter<I, ?>> upstream) {
+        super(type, Emitter.peekVars(upstream));
         int cols = vars.size(), threadId = (int)SURR_THREAD_ID.getAndAdd(1);
         if (cols > Short.MAX_VALUE)
-            throw new IllegalArgumentException("Too amny columns");
+            throw new IllegalArgumentException("Too many columns");
         this.cols     = (short)cols;
         this.threadId = (short)threadId;
         subscribeTo(upstream);
+        this.upstreamBT = this.upstream.batchType();
+    }
+
+
+    public static <I extends Batch<I>, O extends Batch<O>>
+    Orphan<? extends ConverterStage<I, O, ?>>
+    create(BatchType<O> type, Orphan<? extends Emitter<I, ?>> upstream) {
+        return new Concrete<>(type, upstream);
+    }
+
+    private static class Concrete<I extends Batch<I>, O extends Batch<O>>
+            extends ConverterStage<I, O, Concrete<I, O>>
+            implements Orphan<Concrete<I, O>> {
+        public Concrete(BatchType<O> type, Orphan<? extends Emitter<I, ?>> upstream) {
+            super(type, upstream);
+        }
+        @Override public Concrete<I, O> takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     @Override public String toString() {
@@ -51,21 +71,23 @@ public class ConverterStage<I extends Batch<I>, O extends  Batch<O>> extends Abs
         return sb.toString();
     }
 
-    @Override public @This ConverterStage<I, O> subscribeTo(Emitter<I> emitter) {
-        if (!emitter.vars().equals(vars))
+    @Override public @This S subscribeTo(Orphan<? extends Emitter<I, ?>> emitter) {
+        if (!Emitter.peekVars(emitter).equals(vars))
             throw new IllegalArgumentException("Mismatching vars");
-        super.subscribeTo(emitter);
-        return this;
+        return super.subscribeTo(emitter);
     }
 
-
-    @Override public @Nullable I onBatch(I b) {
+    @Override public final void onBatch(Orphan<I> orphan) {
+        I b = orphan.takeOwnership(this);
+        onBatchByCopy(b);
+        b.recycle(this);
+    }
+    @Override public void onBatchByCopy(I b) {
         if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(b);
         if (b != null) {
-            O dst = batchType.createForThread(threadId, cols);
+            O dst = batchType.createForThread(threadId, cols).takeOwnership(this);
             dst.putConverting(b);
-            batchType.recycleForThread(threadId, downstream.onBatch(dst));
+            downstream.onBatch(dst.releaseOwnership(this));
         }
-        return b;
     }
 }

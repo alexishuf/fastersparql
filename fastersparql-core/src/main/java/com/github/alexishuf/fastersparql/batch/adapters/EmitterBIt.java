@@ -4,29 +4,44 @@ import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class EmitterBIt<B extends Batch<B>> extends SPSCBIt<B> implements Receiver<B>  {
-    private final Emitter<B> upstream;
+    private final Emitter<B, ?> upstream;
     private Throwable cancelCause = CancelledException.INSTANCE;
 
-    public EmitterBIt(Emitter<B> emitter) {
-        super(emitter.batchType(), emitter.vars());
-        this.upstream = emitter;
-        emitter.subscribe(this);
-        emitter.request(maxItems);
+    protected EmitterBIt(Orphan<? extends Emitter<B, ?>> orphan) {
+        super(Emitter.peekBatchType(orphan), Emitter.peekVars(orphan));
+        upstream = orphan.takeOwnership(this);
+        upstream.subscribe(this);
+        upstream.request(maxItems);
     }
 
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        upstream.recycle(this);
+    }
 
-    @Override public @Nullable B onBatch(B batch) {
+    @Override public void onBatch(Orphan<B> orphan) {
         try {
-            int n = maxItems - batch.totalRows();
+            int n = maxItems - Batch.peekTotalRows(orphan);
             if (n > 0) upstream.request(n);
-            return offer(batch);
+            offer(orphan);
         } catch (Throwable t) {
             if (cancelCause == CancelledException.INSTANCE) cancelCause = t;
             upstream.cancel();
-            return null;
+        }
+    }
+
+    @Override public void onBatchByCopy(B batch) {
+        try {
+            int n = maxItems - batch.totalRows();
+            if (n > 0) upstream.request(n);
+            copy(batch);
+        } catch (Throwable t) {
+            if (cancelCause == CancelledException.INSTANCE) cancelCause = t;
+            upstream.cancel();
         }
     }
 

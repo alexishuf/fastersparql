@@ -16,17 +16,14 @@ import com.github.alexishuf.fastersparql.lrb.query.QueryRunner;
 import com.github.alexishuf.fastersparql.lrb.query.QueryRunner.BatchConsumer;
 import com.github.alexishuf.fastersparql.lrb.sources.FederationHandle;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.OutputStreamSink;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.Async;
-import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordingFile;
@@ -38,7 +35,10 @@ import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.ParseException;
@@ -47,7 +47,9 @@ import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.SAVE;
+import static com.github.alexishuf.fastersparql.lrb.query.QueryRunner.drainWild;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
+import static com.github.alexishuf.fastersparql.model.Vars.EMPTY;
 import static java.lang.System.nanoTime;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.util.Objects.requireNonNull;
@@ -110,6 +112,16 @@ public class Measure implements Callable<Void>{
                     jfr.close();
                     postProcessJFR(jfrDest);
                 }
+                for (var it = checkerConsumers.entrySet().iterator(); it.hasNext(); ) {
+                    Checker<?> c = it.next().getValue();
+                    c.recycle(this);
+                    it.remove();
+                    if (consumer == c)
+                        consumer = null;
+                }
+                if (consumer != null)
+                    consumer = consumer.recycle(this);
+                BackgroundTasks.sync();
             }
         }
         return null;
@@ -185,7 +197,7 @@ public class Measure implements Callable<Void>{
     private static final String NATIVE_SAMPLE = "jdk.NativeMethodSample";
     private static final String INTELLIJ = "com.intellij.rt";
 
-    private void postProcessJFR(Path dest) {
+    static void postProcessJFR(Path dest) {
         try (var f = new RecordingFile(dest)) {
             var filtered = dest.resolveSibling(dest.getFileName()+".tmp");
             f.write(filtered, e -> {
@@ -255,13 +267,15 @@ public class Measure implements Callable<Void>{
     private int run(Federation fed, MeasureTask task, int rep, int timeoutMs) {
         QueryName query = task.query();
         msrOp.updateWeakenDistinct(query);
-        BatchConsumer consumer = consumer(task, rep);
+        BatchConsumer<?, ?> consumer = consumer(task, rep);
         NettyChannelDebugger.reset();
         ResultJournal.clear();
         ThreadJournal.resetJournals();
         try {
             Files.deleteIfExists(Path.of("/tmp/"+ query +".journal"));
         } catch (IOException ignored) { }
+        BIt<?> it = null;
+        Orphan<? extends Emitter<?, ?>> emOrphan = null;
         StreamNode results = null;
         resumeAsyncProfilerIfAllowed();
         long startNs = nanoTime(), stopNs;
@@ -272,34 +286,34 @@ public class Measure implements Callable<Void>{
                 fedMetrics      = new FedMetrics(fed, task.parsed());
                 fedMetrics.plan = plan;
                 plan.attach(planListener);
-                results = switch (msrOp.flowModel) {
-                    case ITERATE -> plan.execute(msrOp.batchType);
-                    case EMIT    -> plan.emit(msrOp.batchType, Vars.EMPTY);
+                results = (StreamNode)switch (msrOp.flowModel) {
+                    case ITERATE -> it       = plan.execute(msrOp.batchType);
+                    case EMIT    -> emOrphan = plan.    emit(msrOp.batchType, EMPTY);
                 };
             } else {
-                results = switch (msrOp.flowModel) {
-                    case ITERATE -> fed.query(msrOp.batchType, task.parsed());
-                    case EMIT    -> fed.emit(msrOp.batchType, task.parsed(), Vars.EMPTY);
+                results = (StreamNode) switch (msrOp.flowModel) {
+                    case ITERATE -> it       = fed.query(msrOp.batchType, task.parsed());
+                    case EMIT    -> emOrphan = fed. emit(msrOp.batchType, task.parsed(), EMPTY);
                 };
             }
 //            if (debugPlan != null)
 //                System.out.println(debugPlan);
             try (var w = spec(query, rep, ".30s", currentPlan, results).startSecs(30)) {
                 switch (msrOp.flowModel) {
-                    case ITERATE -> QueryRunner.drain(    (BIt<?>)results, consumer, timeoutMs);
-                    case EMIT    -> QueryRunner.drain((Emitter<?>)results, consumer, timeoutMs);
+                    case ITERATE -> drainWild(requireNonNull(it), consumer, timeoutMs);
+                    case EMIT -> drainWild(requireNonNull(emOrphan), consumer, timeoutMs);
                 }
                 w.stop();
             }
             stopNs = nanoTime();
         } catch (Throwable t) {
             stopNs = nanoTime();
-            consumer.finish(t);
+            consumer.onError(t);
             log.error("Error during rep {} of task={}:", rep, task, t);
         } finally {
             stopAsyncProfilerIfActive();
         }
-        if (results instanceof Stateful s && s.stateName().contains("FAILED"))
+        if (results instanceof Stateful<?> s && s.stateName().contains("FAILED"))
             spec(query, rep, "", currentPlan, results).run();
         if (consumer instanceof Checker<?> c && !c.isValid())
             spec(query, rep, "", currentPlan, results).run();
@@ -318,7 +332,7 @@ public class Measure implements Callable<Void>{
     private @Nullable Plan currentPlan;
     private @Nullable FedMetrics fedMetrics;
     private @Nullable Metrics planMetrics;
-    private @MonotonicNonNull BatchConsumer consumer;
+    private @MonotonicNonNull BatchConsumer<?, ?> consumer;
     private @MonotonicNonNull Recording jfr;
     private @MonotonicNonNull Path jfrDest;
     private @MonotonicNonNull AsyncProfiler asyncProfiler;
@@ -351,7 +365,7 @@ public class Measure implements Callable<Void>{
         return new File(destDir, name);
     }
 
-    private BatchConsumer consumer(MeasureTask task, int rep) {
+    private BatchConsumer<?, ?> consumer(MeasureTask task, int rep) {
         if (currTask != null) throw new IllegalStateException("Concurrent measure()");
         currTask = task;
         currentPlan = null;
@@ -360,18 +374,17 @@ public class Measure implements Callable<Void>{
         fedMetrics = null;
         BatchType<?> bt = msrOp.batchType;
         return consumer = switch (msrOp.consumer) {
-            case COUNT -> consumer == null ? new Counter(bt) : consumer;
+            case COUNT -> consumer == null ? new Counter<>(bt) : (Counter<?>)consumer;
             case SAVE,SAVE_FIRST -> {
-                Serializer s = consumer instanceof Serializer se ? se : null;
-                if (s == null)
-                    consumer = s =new Serializer(bt, null, TSV, true);
+                var s = consumer == null ? new Serializer<>(bt, null, TSV, true)
+                                         : (Serializer<?>) consumer;
                 File f = taskFile(".tsv");
                 if (msrOp.consumer == SAVE || rep == -1 || rep == 0) {
                     try {
                         s.output(new FileOutputStream(f), true);
                     } catch (Throwable t) {
                         log.error("Could not write to {}. Reverting to COUNT consumer", f, t);
-                        yield new Counter(bt);
+                        yield new Counter<>(bt);
                     }
                 } else {
                     s.output(new NullOutputStream(), true);
@@ -388,29 +401,43 @@ public class Measure implements Callable<Void>{
         @Override public void write(int b) { }
     }
 
-    private class Serializer extends QueryRunner.Serializer {
-        public Serializer(BatchType<?> batchType, OutputStream os, SparqlResultFormat fmt,
+    private class Serializer<B extends Batch<B>>
+            extends QueryRunner.Serializer<B, Serializer<B>>
+            implements Orphan<Serializer<B>>  {
+        public Serializer(BatchType<B> batchType, OutputStream os, SparqlResultFormat fmt,
                           boolean close) {
             super(batchType, os, fmt, close);
+            takeOwnership(Measure.this);
         }
 
-        @Override public void finish(@Nullable Throwable error) {
+        @Override public Serializer<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override protected void finish(@Nullable Throwable error) {
             saveMeasurement(error);
             super.finish(error);
         }
     }
 
-    private class Counter extends QueryRunner.BoundCounter {
-        public Counter(BatchType<?> batchType) {
+    private class Counter<B extends Batch<B>>
+            extends QueryRunner.BoundCounter<B, Counter<B>>
+            implements Orphan<Counter<B>> {
+        public Counter(BatchType<B> batchType) {
             super(batchType);
+            takeOwnership(Measure.this);
         }
+        @Override public Counter<B> takeOwnership(Object newOwner) {return takeOwnership0(newOwner);}
         @Override public void finish(@Nullable Throwable error) { saveMeasurement(error); }
     }
 
-    private class Checker<B extends Batch<B>> extends QueryChecker<B> {
-
+    private class Checker<B extends Batch<B>> extends QueryChecker<B>
+            implements Orphan<QueryChecker<B>> {
         public Checker(BatchType<B> batchType, QueryName queryName) {
             super(batchType, queryName);
+            takeOwnership(Measure.this);
+        }
+
+        @Override public QueryChecker<B> takeOwnership(Object newOwner) {
+            return takeOwnership0(newOwner);
         }
 
         private void delete(String suffix) {
@@ -435,9 +462,9 @@ public class Measure implements Callable<Void>{
                         log.error("Bad results for rep {} of {}:\n{}",
                                   currRep, currTask, explanation());
                         error = new Exception("bad results: "+explanation().replace("\n", "\\n"));
-                        var ser = ResultsSerializer.create(TSV);
                         var sink = new OutputStreamSink(null);
                         File file = taskFile(".missing.tsv");
+                        var ser = ResultsSerializer.create(TSV).takeOwnership(this);
                         try (var os = new FileOutputStream(file)) {
                             sink.os = os;
                             ser.init(vars, vars, false);
@@ -449,6 +476,8 @@ public class Measure implements Callable<Void>{
                             ser.serializeTrailer(sink);
                         } catch (Throwable t) {
                             log.error("Failed to write {}", file, t);
+                        } finally {
+                            ser.recycle(this);
                         }
                         if (unexpected != null) {
                             file = taskFile(".unexpected.tsv");
@@ -456,7 +485,7 @@ public class Measure implements Callable<Void>{
                                 sink.os = os;
                                 ser.init(vars, vars, false);
                                 ser.serializeHeader(sink);
-                                ser.serialize(unexpected, sink);
+                                ser.serialize(unexpected, this, sink);
                                 ser.serializeTrailer(sink);
                             } catch (Throwable t) {
                                 log.error("Failed to write {}", file, t);

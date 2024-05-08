@@ -1,18 +1,18 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
-import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
-import com.github.alexishuf.fastersparql.sparql.expr.Term;
-import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import com.github.alexishuf.fastersparql.sparql.expr.*;
+import com.github.alexishuf.fastersparql.util.owned.*;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.common.returnsreceiver.qual.This;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -21,25 +21,11 @@ import java.util.Objects;
 import static com.github.alexishuf.fastersparql.FSProperties.batchSelfValidate;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.Validation.EXPENSIVE;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.Validation.NONE;
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
-import static java.lang.invoke.MethodHandles.lookup;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.HANGMAN;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-public abstract class Batch<B extends Batch<B>> {
-    protected static final VarHandle P;
-    protected static final byte P_UNPOOLED  =  0;
-    protected static final byte P_POOLED    =  1;
-    protected static final byte P_GARBAGE   =  2;
-    protected static final byte P_UNTRACKED = -1;
-
-    static {
-        try {
-            P = lookup().findVarHandle(Batch.class, "plainPooled", byte.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
+public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
+    private static final Logger log = LoggerFactory.getLogger(Batch.class);
     protected static final boolean SELF_VALIDATE           = batchSelfValidate().ordinal() >  NONE.ordinal();
     protected static       boolean SELF_VALIDATE_EXPENSIVE = batchSelfValidate().ordinal() >= EXPENSIVE.ordinal();
 
@@ -61,22 +47,16 @@ public abstract class Batch<B extends Batch<B>> {
         SELF_VALIDATE_EXPENSIVE = batchSelfValidate().ordinal() >= EXPENSIVE.ordinal();
     }
 
-    protected static final boolean MARK_POOLED = FSProperties.batchPooledMark();
-    protected static final boolean TRACE_POOLED = FSProperties.batchPooledTrace();
 
     public @NonNegative short rows, cols;
     public @Nullable B next;
-    protected @Nullable B tail;
-    @SuppressWarnings("unused") private byte plainPooled;
-    private PoolEvent[] poolTraces;
+    protected B tail;
 
     protected Batch(short rows, short cols) {
         this.rows = rows;
         this.cols = cols;
         //noinspection unchecked
         this.tail = (B)this;
-        if (TRACE_POOLED)
-            poolTraces = new PoolEvent[] {null, new UnpooledEvent(null)};
     }
 
     public enum Validation {
@@ -87,125 +67,69 @@ public abstract class Batch<B extends Batch<B>> {
 
     /* --- --- --- lifecycle --- --- ---  */
 
-    protected static sealed class PoolEvent extends Exception {
-        public PoolEvent(String message, PoolEvent cause) {super(message, cause);}
-    }
-    protected static final class PooledEvent extends PoolEvent {
-        public PooledEvent(PoolEvent cause) {super("pooled here", cause);}
-    }
-    protected static final class UnpooledEvent extends PoolEvent {
-        public UnpooledEvent(PoolEvent cause) {super("unpooled here", cause);}
-    }
-
-    /**
-     * Marks the batch as pooled. After this, any interaction that is not
-     * {@link #markUnpooled()}  or {@code markGarbage()} is an error.
-     * @return {@code this}
-     * @throws IllegalStateException if this batch is pooled or marked as garbage
-     */
-    public final @This B markPooled() {
-        if (MARK_POOLED) {
-            if ((byte)P.compareAndExchangeRelease(this, P_UNPOOLED, P_POOLED) != P_UNPOOLED) {
-                throw new IllegalStateException("pooling batch that is not unpooled",
-                                                poolTraces == null ? null : poolTraces[0]);
-            }
-            if (TRACE_POOLED) {
-                if (poolTraces == null) poolTraces = new PoolEvent[2];
-                PoolEvent cause = poolTraces[1];
-                if (cause != null) {
-                    var acyclic = new UnpooledEvent(null);
-                    acyclic.setStackTrace(cause.getStackTrace());
-                    cause = acyclic;
-                }
-                poolTraces[0] = new PooledEvent(cause);
-            }
+    /** Equivalent to {@link Owned#recycle(Owned, Object)}. */
+    public static <B extends Batch<B>> B recycle(@Nullable Batch<?> b, Object currentOwner) {
+        try {
+            if (b != null)
+                b.recycle(currentOwner);
+        } catch (Throwable t) {
+            log.error("Error recycling {}", b, t);
         }
-        //noinspection unchecked
-        return (B)this;
-    }
-
-    abstract void markGarbage();
-
-    public void markUntracked() {
-        if (!MARK_POOLED) return;
-        if ((byte) P.compareAndExchangeRelease(this, P_UNPOOLED, P_UNTRACKED) != P_UNPOOLED) {
-            throw new IllegalStateException("un-tracking batch that is not unpooled",
-                    poolTraces == null ? null : poolTraces[0]);
-        }
-    }
-
-    /**
-     * Marks the batch as not pooled.
-     * @return {@code this}
-     * @throws IllegalStateException if this batch is not marked as pooled
-     */
-    public final @This B markUnpooled() {
-        if (MARK_POOLED) {
-            if ((byte)P.compareAndExchangeRelease(this, P_POOLED, P_UNPOOLED) != P_POOLED)
-                throw new IllegalStateException("un-pooling batch that is not pooled",
-                        poolTraces == null ? null : poolTraces[1]);
-            if (TRACE_POOLED) {
-                if (poolTraces == null) poolTraces = new PoolEvent[2];
-                PoolEvent cause = poolTraces[0];
-                if (cause != null) {
-                    var acyclic = new PooledEvent(null);
-                    acyclic.setStackTrace(cause.getStackTrace());
-                    cause = acyclic;
-                }
-                poolTraces[1] = new UnpooledEvent(cause);
-            }
-        }
-        //noinspection unchecked
-        return (B)this;
-    }
-
-    public static <B extends Batch<B>> @Nullable B recycle(@Nullable B b) {
-        if (b != null) b.recycle();
         return null;
     }
 
-    /** Throws {@link IllegalStateException} if this batch is not pooled. */
-    @SuppressWarnings("unused") public void requirePooled() {
-        if (MARK_POOLED &&  (byte)P.getOpaque(this) != P_POOLED) {
-            Throwable cause = poolTraces == null ? null : poolTraces[1];
-            throw new IllegalStateException("batch is not pooled", cause);
+    /** Equivalent to {@link Owned#safeRecycle(Owned, Object)}. */
+    public static <B extends Batch<B>> B safeRecycle(@Nullable Batch<?> b, Object currentOwner) {
+        try {
+            if (b != null)
+                b.recycle(currentOwner);
+        } catch (Throwable t) {
+            log.error("Error recycling {}", b, t);
         }
+        return null;
     }
 
-    /** Throws {@link IllegalStateException} if this batch is pooled or marked garbage. */
-    public void requireUnpooled() {
-        if (MARK_POOLED) {
-            for (var b = this; b != null; b = b.next) {
-                if ((byte)P.getOpaque(b) > P_UNPOOLED) {
-                    Throwable cause = poolTraces == null ? null : poolTraces[0];
-                    throw new IllegalStateException("batch is pooled", cause);
-                }
-                if (b.next == b)
-                    throw new IllegalArgumentException("cycle in linked list");
-            }
-        }
+    @Override protected @Nullable B internalMarkGarbage(Object currentOwner) {
+        super.internalMarkGarbage(currentOwner);
+        rows = 0;
+        cols = 0;
+        BatchEvent.Garbage.record(this);
+        return null;
     }
 
-//    @SuppressWarnings("removal") @Override protected void finalize() throws Throwable {
-//        if (MARK_POOLED) {
-//            if ((byte)P.getOpaque(this) == P_UNPOOLED) {
-//                BatchEvent.Leaked.record(this);
-//                PoolEvent e;
-//                if (poolTraces != null && (e = poolTraces[1]) != null)
-//                    //noinspection CallToPrintStackTrace
-//                    new Exception("Leaked &batch="+System.identityHashCode(this), e).printStackTrace();
-//            }
-//        }
-//    }
+    @Override protected BatchLeakState makeLeakState(@Nullable OwnershipHistory history) {
+        return new BatchLeakState(this, history);
+    }
 
-    /**
-     * Equivalent to {@link BatchType#recycle(Batch)} for the {@link BatchType} that created
-     * this instance. MAy be a no-op for some implementations.
-     *
-     * @return {@code null}, for conveniently clearing references:
-     *         {@code b = b.recycle();}
-     */
-    public abstract @Nullable B recycle();
+    protected final void updateLeakDetectorRefCapacity() {
+        BatchLeakState leakState = (BatchLeakState)this.leakState;
+        if (leakState != null)
+            leakState.updateCapacity(this);
+    }
+
+    protected static final class BatchLeakState extends LeakDetector.LeakState {
+        private int termsCapacity;
+        private int bytesCapacity;
+
+        private BatchLeakState(Batch<?> referent, @Nullable OwnershipHistory history) {
+            super(referent, history);
+        }
+
+        public void updateCapacity(Batch<?> batch) {
+            this.termsCapacity = batch.termsCapacity();
+            this.bytesCapacity = batch.totalBytesCapacity();
+        }
+
+        @Override protected void singleThreadFillAndCommitJFR() {
+            LEAKED.fillAndCommit(termsCapacity, bytesCapacity);
+        }
+        private static final BatchEvent.Leaked LEAKED = new BatchEvent.Leaked();
+
+        @Override protected void appendShortProperties(StringBuilder out) {
+            out.append(" termsCap=").append(termsCapacity);
+            out.append(" bytesCap=").append(bytesCapacity);
+        }
+    }
 
     /**
      * Perform self-test to verify if implementation-specific invariants are valid for
@@ -230,23 +154,19 @@ public abstract class Batch<B extends Batch<B>> {
             if (b.next == b || b.next == prev || b.next == this)
                 return false; // cycle
         }
-        requireUnpooled();
+        requireAlive();
         if (rows == 0 && next != null)
             return false; // empty batch cannot have successor node
         var actualTail = this;
         for (B b = next; b != null; b = b.next) {
-            b.requireUnpooled();
+            b.requireAlive();
             actualTail = b;
             if (b.cols != cols)
                 return false; // mismatching cols
             if (b.rows == 0 && b.next != null)
                 return false;  // intermediary nodes should not be empty
-            if (b.tail != null) {
-                if (b.next != null)
-                    return false; // intermediary node has tail set
-                else if (b.tail != b)
-                    return false; // actual tail has tail field not set to self
-            }
+            if (b.next == null && b.tail != b)
+                return false; // actual tail has tail field not set to self
         }
         if (actualTail != this.tail)
             return false; // tail field at head must be the actual tail node
@@ -277,7 +197,7 @@ public abstract class Batch<B extends Batch<B>> {
             return false;
         if (!hasCapacity(rows*cols, localBytesUsed()))
             return false;
-        if ((byte)P.getOpaque(this) > P_UNPOOLED)
+        if (!isAlive())
             return false; //pooled or garbage is not valid
         if (tail == this && next != null)
             return false; // tail has successors
@@ -287,9 +207,8 @@ public abstract class Batch<B extends Batch<B>> {
             return true;
         //noinspection unchecked
         B self = (B)this;
-        var ropeView = TwoSegmentRope.pooled();
-        var termView = Term.pooledMutable();
-        try {
+        try (var termView = PooledTermView.ofEmptyString();
+             var ropeView = PooledTwoSegmentRope.ofEmpty()) {
             for (int r = 0; r < rows; r++) {
                 for (int c = 0; c < cols; c++) {
                     boolean hasTerm = getView(r, c, termView);
@@ -313,9 +232,6 @@ public abstract class Batch<B extends Batch<B>> {
                 if (!equals(r, self, r))
                     return false; // reflexive equality failed for row
             }
-        } finally {
-            ropeView.recycle();
-            termView.recycle();
         }
         return true;
     }
@@ -337,18 +253,19 @@ public abstract class Batch<B extends Batch<B>> {
      *                                  batch in a linked list
      */
     public final B tail() {
-        if (tail == null) throw new UnsupportedOperationException("this is an intermediary batch");
-        tail.requireUnpooled();
-        assert tail.next == null;
+        requireAlive();
+        B tail = this.tail;
+        if (tail == this) {
+            if (next == null) return tail;
+            for (B next = this.next; next != null; next = next.next)
+                tail = next;
+        }
         return tail;
     }
 
-    protected @NonNull B tailUnchecked() { //noinspection DataFlowIssue
-        return tail;
-    }
-
-    protected B setTail(B newTail) {
-        B oldTail = this.tailUnchecked();
+    protected B setTail(Orphan<B> orphanNewTail) {
+        B oldTail    = this.tail;
+        B newTail    = orphanNewTail.takeOwnership(oldTail);
         oldTail.tail = null;
         oldTail.next = newTail;
         this.tail    = newTail;
@@ -356,34 +273,86 @@ public abstract class Batch<B extends Batch<B>> {
         return newTail;
     }
 
+    /**
+     * Null-safe equivalent to {@code before.append(after)}.
+     *
+     * @param before {@code null} or a batch to which {@code after} will be
+         *               {@link #append(Orphan)}'ed
+     * @param owner if {@code before != null}, the current owner of {@code before}.
+     *              Else, the new owner for {@code after}
+     * @param after a batch to append to {@code before}, the nodes in {@code after} will be
+     *              linked into {@code before} or will be recycled.
+     * @return a batch owned by {@code owner} with the contents of {@code before}
+     *         followed by the contents of {@code after}
+     */
+    public static <B extends Batch<B>>
+    B append(@Nullable B before, Object owner, Orphan<B> after) {
+        if (before == null)
+            return after.takeOwnership(owner);
+        before.append(after);
+        return before;
+    }
 
     /**
-     * Appends {@code b}, BY REFERENCE, to the linked list that starts at {@code a}.
+     * Appends {@code after}, BY REFERENCE, to the linked list that starts at {@code before}.
      *
-     * @param a a batch that will have {@code b} to its linked list.
-     *          If {@code null}, this method will return {@code b}.
-     * @param b a batch to be added as an (indirect) successor to {@code a}. The caller
-     *          looses ownership when this method is called.
-     * @return {@code a} if not null, else {@code b}.
+     * @param before a batch that will have {@code b} to its linked list.
+     *          If {@code null} or if empty and {@code b} is not null and not empty, this method
+     *          will return {@code b}.
+     * @param owner current owner of {@code before} and also the owner of the batch to be returned
+     *              by this method (if {@code before} is null or empty).
+     * @param after an orphan batch to be appended to the linked list that starts at
+     *              {@code before}, if {@code before} is not null and not empty.
+     * @return {@code before} if not null and not empty, else {@code after}.
      */
-    public static <B extends Batch<B>> B quickAppend(@Nullable B a, B b) {
-        if (a == null) return b;
-        if (a.cols != b.cols)
+    public static <B extends Batch<B>> B
+    quickAppend(@Nullable B before, Object owner, Orphan<B> after) {
+        if (before == null)
+            return after.takeOwnership(owner);
+        before.requireOwner(owner);
+        @SuppressWarnings("unchecked") B peek = (B)after;
+        if (before.cols != peek.cols) {
             throw new IllegalArgumentException("other.cols != cols");
-        if (MARK_POOLED) {
-            a.requireUnpooled();
-            b.requireUnpooled();
-        }
-        if (a.rows == 0) {
-            a.recycle();
-            return b;
-        } else if (b.rows == 0) {
-            b.recycle();
+        } else if (before.rows == 0) {
+            before.recycle(owner);
+            return after.takeOwnership(owner);
+        } else if (peek.tail == before.tail) {
+            throw new IllegalArgumentException("cyclic quickAppend()");
+        } else if (peek.rows == 0
+                || (peek.rows < 8 && peek.next == null && before.tail != before
+                                  && before.copySingleNodeIfFast(peek))) {
+            peek.recycle(null);
         } else {
-            a.quickAppendRemainder(b, null, b);
+            before.quickAppend0(after);
         }
-        return a;
+        assert before.validate();
+        return before;
     }
+
+    protected void quickAppend0(Orphan<B> nonEmpty) {
+        B oldTail = this.tail, head = nonEmpty.takeOwnership(oldTail), newTail = head.tail;
+        oldTail.next = head;
+        oldTail.tail = newTail;
+        this.tail = newTail;
+    }
+
+    protected @Nullable B quickAppend0(B nonEmpty) {
+        B oldTail = this.tail, newTail = nonEmpty.tail;
+        nonEmpty.requireOwner(oldTail);
+        oldTail.next = nonEmpty;
+        oldTail.tail = newTail;
+        this.tail = newTail;
+        return null;
+    }
+
+    /**
+     * Equivalent to {@code this.copy(nonEmpty)} if doing so is certain to be a fast operation.
+     * Else, do nothing and return {@code false}.
+     *
+     * @param nonEmpty A non-empty single-node batch ({@code rows > 0 && next == null})
+     * @return {@code true} iff rows of {@code nonEmpty} were copied into {@code this}
+     */
+    protected abstract boolean copySingleNodeIfFast(B nonEmpty);
 
     /**
      * Detaches the first node of {@code other} and copy its contents to {@code this},
@@ -396,48 +365,18 @@ public abstract class Batch<B extends Batch<B>> {
      *
      * <p>The first node of {@code other} will be detached from the remainder of its linked list,
      * with {@code other.next} becoming the new head of the linked list. The original {@code other}
-     * will be {@link #recycle()}d</p>
+     * will be {@link #recycle(Object)}d</p>
      *
-     * @param other the head of a linked list of batches, where the first node will be copied into
-     *        {@code this}, and the remainder of the linked list will be returned.
-     * @return {@code other.next}, with {@code .tail == other.tail}, if not null
+     * @param otherOrphan the head of a linked list of batches, whose head node will be detached,
+     *                    copied into this and recycled.
+     * @return the linked list that starts on {@code otherOrphan.}{@link #next()}, or {@code null}
      */
-    protected B copyFirstNodeToEmpty(B other) {
-        B next = other.next;
-        if (next != null) {
-            next.tail = other.tail;
-            other.next = null;
-            other.tail = other;
-        }
+    protected @Nullable Orphan<B> copyFirstNodeToEmpty(Orphan<B> otherOrphan) {
+        B other = otherOrphan.takeOwnership(this);
+        Orphan<B> remainder = other.detachHead();
         copy(other);
-        other.recycle();
-        return next;
-    }
-
-    /**
-     * Given a linked list {@code [other, ... nodePredecessor, node, ...]}, append
-     * {@code [node, ...]} to {@code this} linked list and detach {@code [node, ...]} from
-     * {@code [other, ..., nodePredecessor]}.
-     *
-     * @param other root of the linked list containing a segment to be appended to {@code this}
-     * @param nodePredecessor a node whose {@code .next == node} or null if {@code node == other}
-     * @param node the first node to be appended to {@code this}
-     * @return {@code other} if {@code nodePredecessor == null}, else {@code null}
-     */
-    protected @Nullable B quickAppendRemainder(B other, B nodePredecessor, B node) {
-        B tail = tailUnchecked(), newTail = other.tailUnchecked();
-        tail.next = node;     // connect to [node, ...]
-        tail.tail = null;     // our old tail is now an intermediary
-        this.tail = newTail;  // our new tail is the tail of [node, ...]
-        if (nodePredecessor != null) { // must detach [node, ...] from [other, ...]
-            nodePredecessor.next = null;
-            nodePredecessor.tail = nodePredecessor;
-        }
-        if (node == other)
-            other = null;     // our caller must not recycle other as it is now part of this
-        if (node != newTail)
-            node.tail = null; // node is now an intermediary
-        return other;
+        other.recycle(this);
+        return remainder;
     }
 
 
@@ -460,6 +399,23 @@ public abstract class Batch<B extends Batch<B>> {
         return sum;
     }
 
+    public static int peekRows(Orphan<? extends Batch<?>> orphan) {
+        return orphan == null ? 0 : ((Batch<?>)orphan).rows;
+    }
+
+    public static int peekTotalRows(Orphan<? extends Batch<?>> orphan) {
+        return orphan == null ? 0 : ((Batch<?>)orphan).totalRows();
+    }
+
+    public static short peekColumns(Orphan<? extends Batch<?>> orphan) {
+        return orphan == null ? 0 : ((Batch<?>)orphan).cols;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <B extends Batch<B>> BatchType<B> peekType(Orphan<? extends Batch<B>> orphan) {
+        return ((Batch<B>)orphan).type();
+    }
+
     /** Number of columns in rows of this batch */
     public final short cols() { return cols; }
 
@@ -468,11 +424,11 @@ public abstract class Batch<B extends Batch<B>> {
      * Get a new batch that contains a copy of the contents in {@code this} batch and all
      * successor nodes ({@link #next()}).
      */
-    public abstract B dup();
+    public abstract Orphan<B> dup();
 
     /** Equivalent to {@link #dup()} but uses {@code threadId} as a surrogate to
      * {@code Thread.currentThread().threadId()} */
-    public abstract B dup(int threadId);
+    public abstract Orphan<B> dup(int threadId);
 
     /**
      * The total number of bytes being actively used by this batch instance to store local
@@ -581,11 +537,15 @@ public abstract class Batch<B extends Batch<B>> {
         return true;
     }
 
-    private ByteRope appendRow(ByteRope sb, int r) {
+    private MutableRope appendRow(MutableRope sb, int r) {
         sb.append('[');
         for (int c = 0; c < cols; c++) {
             var t = get(r, c);
-            sb.append(t == null ? "null" : t.toSparql()).append(", ");
+            if (t == null)
+                sb.append("null");
+            else
+                t.toSparql(sb, PrefixAssigner.CANON);
+            sb.append(", ");
         }
         return sb.unAppend(2).append(']');
     }
@@ -596,8 +556,8 @@ public abstract class Batch<B extends Batch<B>> {
             return "[]";
         if (cols == 0)
             return rows == 1 ? "[[]]" : "[... "+rows+" zero-column rows ...]";
-        ByteRope sb = new ByteRope().append('[');
-        try {
+        try (var sb = PooledMutableRope.get()) {
+            sb.append('[');
             if (rows == 1 && next == null) {
                 appendRow(sb, 0);
             } else {
@@ -635,7 +595,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} not in {@code [0, rows)}.
      */
     public int hash(int row) {
-        requireUnpooled();
+        requireAlive();
         int acc = 0;
         for (int c = 0, cols = this.cols; c < cols; c++)
             acc ^= hash(row, c);
@@ -667,7 +627,8 @@ public abstract class Batch<B extends Batch<B>> {
      *  indexes into the whole linked lists that start at {@code this} and {@code other}. */
     public final boolean linkedEquals(int row, B other, int oRow) {
         int rel = row, oRel = oRow;
-        @SuppressWarnings("unchecked") B node = (B)this, oNode = other;
+        @SuppressWarnings("unchecked") B node = (B)this;
+        B oNode = other;
         for (;  node != null &&  rel >=  node.rows;  node =  node.next)  rel -=  node.rows;
         for (; oNode != null && oRel >= oNode.rows; oNode = oNode.next) oRel -= oNode.rows;
         if ( node == null) throw new IndexOutOfBoundsException( "row is out of bounds");
@@ -719,13 +680,18 @@ public abstract class Batch<B extends Batch<B>> {
     /** Get a string representation of the row at the given index. */
     public String toString(int row) {
         if (cols == 0) return "[]";
-        var sb = new ByteRope().append('[');
-        for (int i = 0, cols = this.cols; i < cols; i++) {
-            var t = get(row, i);
-            sb.append(t == null ? "null" : t.toSparql()).append(", ");
+        try (var sb = PooledMutableRope.get().append('[')) {
+            for (int i = 0, cols = this.cols; i < cols; i++) {
+                var t = get(row, i);
+                if (t == null)
+                    sb.append("null");
+                else
+                    t.toSparql(sb, PrefixAssigner.CANON);
+                sb.append(", ");
+            }
+            sb.unAppend(2);
+            return sb.append(']').toString();
         }
-        sb.unAppend(2);
-        return sb.append(']').toString();
     }
 
     /** Analogous to {@link #toString(int)} but {@code row} is relative to the whole
@@ -745,26 +711,25 @@ public abstract class Batch<B extends Batch<B>> {
      * @param row the row to copy into the new batch
      * @return a new batch containing only a copy of the row.
      */
-    public abstract B dupRow(int row);
+    public abstract Orphan<B> dupRow(int row);
 
     /** Analogous to {@link #dupRow(int)} but {@code row} is relative to the whole
      *  linked list that starts at {@code this} */
-    public final B linkedDupRow(int row) {
+    public final Orphan<B> linkedDupRow(int row) {
         @SuppressWarnings("unchecked") B node = (B)this;
         int rel = row;
         for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
         if (node == null) throw new IndexOutOfBoundsException(row);
-
         return node.dupRow(rel);
     }
 
     /** Equivalent to {@link #dupRow(int)} but uses {@code threadId} as a surrogate for
      *  {@code Thread.currentThread().threadId()}. */
-    public abstract B dupRow(int row, int threadId);
+    public abstract Orphan<B> dupRow(int row, int threadId);
 
     /** Analogous to {@link #dupRow(int, int)} but {@code row} is relative to the whole
      *  linked list that starts at {@code this} */
-    @SuppressWarnings("unused") public final B linkedDupRow(int row, int threadId){
+    @SuppressWarnings("unused") public final Orphan<B> linkedDupRow(int row, int threadId){
         @SuppressWarnings("unchecked") B node = (B)this;
         int rel = row;
         for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
@@ -787,11 +752,11 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} is not in {@code [0, rows)}
      *                                   or {@code col} is not in {@code [0, cols)}
      */
-    public abstract @Nullable Term get(@NonNegative int row, @NonNegative int col);
+    public abstract @Nullable FinalTerm get(@NonNegative int row, @NonNegative int col);
 
     /** Analogous to {@link #get(int, int)} but {@code row} is relative to the whole
      *  linked list that starts at {@code this} */
-    public final @Nullable Term linkedGet(@NonNegative int row, @NonNegative int col) {
+    public final @Nullable FinalTerm linkedGet(@NonNegative int row, @NonNegative int col) {
         @SuppressWarnings("unchecked") B node = (B)this;
         int rel = row;
         for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
@@ -800,28 +765,6 @@ public abstract class Batch<B extends Batch<B>> {
         return node.get(rel, col);
     }
 
-    /**
-     * Analogous to {@link #get(int, int)}, but gets a {@link SegmentRope} or
-     * {@link TwoSegmentRope} rope instance, which are cheaper to produce than {@link Term}.
-     *
-     * @param row the row index
-     * @param col the column index
-     * @return A {@link PlainRope} with the same bytes as a {@link Term}
-     * @throws IndexOutOfBoundsException if {@code row} is not in {@code [0, rows)} or
-     *                                   {@code col} is not  in {@code [0, cols)}
-     */
-    public abstract @Nullable PlainRope getRope(@NonNegative int row, @NonNegative int col);
-
-    /** Analogous to {@link #getRope(int, int)} but {@code row} is relative to the whole
-     *  linked list that starts at {@code this} */
-    public final @Nullable PlainRope linkedGetRope(@NonNegative int row, @NonNegative int col) {
-        @SuppressWarnings("unchecked") B node = (B)this;
-        int rel = row;
-        for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
-        if (node == null) throw new IndexOutOfBoundsException(row);
-
-        return node.getRope(rel, col);
-    }
 
     /**
      * Get the {@link Term} at column {@code col} of row {@code row} into {@code dest}.
@@ -842,11 +785,11 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IndexOutOfBoundsException if {@code row} or {@code col} are negative or above the
      *                                   number of rows (or columns) in this batch.
      */
-    public abstract boolean getView(@NonNegative int row, @NonNegative int col, Term dest);
+    public abstract boolean getView(@NonNegative int row, @NonNegative int col, TermView dest);
 
-    /** Analogous to {@link #getView(int, int, Term)} but {@code row} is relative to the whole
+    /** Analogous to {@link #getView(int, int, TermView)} but {@code row} is relative to the whole
      * linked list that starts at {@code this}. */
-    public final boolean linkedGetView(@NonNegative int row, @NonNegative int col, Term dest) {
+    public final boolean linkedGetView(@NonNegative int row, @NonNegative int col, TermView dest) {
         @SuppressWarnings("unchecked") B node = (B)this;
         int rel = row;
         for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
@@ -856,12 +799,11 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /**
-     * Analogous to {@link #getRope(int, int)}, but modifies {@code dest}
-     * instead of spawning a new {@link SegmentRope} or {@link TwoSegmentRope} instance.
+     * If there is a value at the given {@code row} and {@code col}, modify {@code dest} to wrap
+     * the NT representation of the value and return {@code true}.
      *
      * <p><strong>Warning:</strong>If the batch is mutated after this method returns, the contents
-     * of {@code dest.local()} MAY change. To avoid this behavior, use
-     * {@link #getRope(int, int)}.</p>
+     * of {@code dest.local()} MAY change.</p>
      *
      * @param row the row index
      * @param col the column index
@@ -897,7 +839,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @return {@code true} iff there is a term at {@code (row, col)}, otherwise {@code false} is
      *         returned and {@code dest} is unchanged.
      */
-    public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRope dest) {
+    public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRopeView dest) {
         Term t = get(row, col);
         if (t == null) return false;
         dest.wrap(t.local());
@@ -905,10 +847,11 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /**
-     * Analogous to  {@link #localView(int, int, SegmentRope)} but {@code row} is relative
+     * Analogous to  {@link #localView(int, int, SegmentRopeView)} but {@code row} is relative
      * to the whole linked list that starts at {@code this}
      */
-    public final boolean linkedLocalView(@NonNegative int row, @NonNegative int col, SegmentRope dest) {
+    public final boolean linkedLocalView(@NonNegative int row, @NonNegative int col,
+                                         SegmentRopeView dest) {
         @SuppressWarnings("unchecked") B node = (B)this;
         int rel = row;
         for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
@@ -918,16 +861,16 @@ public abstract class Batch<B extends Batch<B>> {
     }
 
     /** Null-safe equivalent to {@code get(row, col).shared()}. */
-    public @NonNull SegmentRope shared(@NonNegative int row, @NonNegative int col) {
-        Term term = get(row, col);
-        return term == null ? EMPTY : term.shared();
+    public @NonNull FinalSegmentRope shared(@NonNegative int row, @NonNegative int col) {
+        var term = get(row, col);
+        return term == null ? FinalSegmentRope.EMPTY : term.finalShared();
     }
 
     /**
      * Analogous to {@link #shared(int, int)} but {@code row} is relative to the whole
      * linked list that starts at {@code this}
      */
-    public final @NonNull SegmentRope linkedShared(@NonNegative int row, @NonNegative int col) {
+    public final @NonNull FinalSegmentRope linkedShared(@NonNegative int row, @NonNegative int col) {
         @SuppressWarnings("unchecked") B node = (B)this;
         int rel = row;
         for (; node != null && rel >= node.rows; node = node.next) rel -= node.rows;
@@ -1190,7 +1133,8 @@ public abstract class Batch<B extends Batch<B>> {
     public boolean linkedEquals(@NonNegative int row, @NonNegative int col,
                                 B other, int oRow, int oCol) {
         int rel = row, oRel = oRow;
-        @SuppressWarnings("unchecked") B node = (B)this, oNode = other;
+        @SuppressWarnings("unchecked") B node = (B)this;
+        B oNode = other;
         for (;  node != null &&  rel >=  node.rows;  node =  node.next)  rel -=  node.rows;
         for (; oNode != null && oRel >= oNode.rows; oNode = oNode.next) oRel -= oNode.rows;
         if ( node == null) throw new IndexOutOfBoundsException( "row is out of bounds");
@@ -1210,51 +1154,50 @@ public abstract class Batch<B extends Batch<B>> {
      * all batches (including {@code this}) that precede such batch. The returned batch will be
      * made the head of what remains of the linked list.
      *
+     * @param owner current owner of {@code this}
      * @return the aforementioned batch or {@code null} if there is no such batch. In any case
      *         {@code this} and any empty sucessors will be recycled.
      */
-    @SuppressWarnings("unchecked") public final @Nullable B dropHead() {
+    @SuppressWarnings("unchecked") public final @Nullable B dropHead(Object owner) {
+        requireOwner(owner);
         B next = this.next;
         if (next != null) {
             next.tail = this.tail;
+            next.transferOwnership(this, owner);
             this.next = null;
-            this.tail = (B) this;
-            if (next.rows == 0) // extremely cold branch
-                next = next.dropEmptyHeads();
+            this.tail = (B)this;
+            if (next.rows == 0) // branch should be dead
+                next = next.dropEmptyHeads(owner);
         }
-        recycle();
+        recycle(owner);
         return next;
     }
 
     /**
      * Detach {@code this} batch, which must be the root of a {@link #next()} linked-list,
-     * from the remainder of the list. Unlike {@link #dropHead()}, {@code this} will not
+     * from the remainder of the list. Unlike {@link #dropHead(Object)}, {@code this} will not
      * be recycled.
      *
      * @return the new head of the remainder of the list, a.k.a. {@link #next()}.
      */
-    public final @Nullable B detachHead() {
-        B root = next;
-        if (root != null) {
-            root.tail = this.tail;
+    public final @Nullable Orphan<B> detachHead() {
+        var next = this.next;
+        if (next != null) {
+            next.tail = this.tail;
             //noinspection unchecked
             this.tail = (B)this;
             this.next = null;
+            return next.releaseOwnership(this);
         }
-        return root;
+        return null;
     }
 
-    @SuppressWarnings("unchecked") protected @Nullable B dropEmptyHeads() {
-        B head = (B)this, next;
-        while (head.rows == 0) {
-            next = head.next;
-            if (next != null) {
-                next.tail = head.tail;
-                head.next = null;
-                head.tail = head;
-            }
-            head.recycle();
-            head = next;
+    @SuppressWarnings("unchecked") protected @Nullable B dropEmptyHeads(Object owner) {
+        B head = (B)this;
+        while (head != null && head.rows == 0) {
+            Orphan<B> remainder = detachHead();
+            head.recycle(owner);
+            head = remainder == null ? null : remainder.takeOwnership(owner);
         }
         return head;
     }
@@ -1267,31 +1210,68 @@ public abstract class Batch<B extends Batch<B>> {
      * tail is {@code this} and modify their behavior in order to not create references to
      * the same {@link Batch}.</p>
      *
+     * @param headOwner owner of the head of the Batch linked list, i.e.,
+     *                  {@code this.isOwner(headOwner) == true}
      * @return the original {@link #tail()} of {@code this}, which MAY be {@code this}.
      */
-    @SuppressWarnings("unchecked") public @NonNull B detachTail() {
-        if (this.tail == this) return (B)this;
-        //noinspection unchecked
-        B nTail = (B)this;
-        for (B n = next; n != null && n != tail; n = nTail.next)
-            nTail = n;
-        B tail = nTail.next;
-        this.tail = nTail.tail = nTail;
-        nTail.next = null;
-        return tail;
+    public @NonNull Orphan<B> detachTail(Object headOwner) {
+        if (this.tail == this)
+            return releaseOwnership(headOwner);
+        return detachDistinctTail0();
     }
 
-    /** Remove {@code this.tail} from {@code this} and recycle it. */
-    protected void dropTail() { detachTail().recycle(); }
+    /**
+     * Removes the last node in the linked-list that starts at {@code this}, <strong>if such
+     * node is NOT</strong> {@code this}.
+     *
+     * @return The tail node as an {@link Orphan} if it is not {@code this}, else {@code null}.
+     */
+    public @Nullable Orphan<B> detachDistinctTail() {
+        return this.tail == this ? null : detachDistinctTail0();
+    }
+
+    public static <B extends Batch<B>>
+    @Nullable B detachDistinctTail(@Nullable Batch<B> head, Object newOwner) {
+        if (head == null || head.tail == head)
+            return null;
+        return head.detachDistinctTail0().takeOwnership(newOwner);
+    }
+    public static <B extends Batch<B>>
+    @Nullable Orphan<B> detachDistinctTail(@Nullable Batch<B> head) {
+        return head == null || head.tail == head ? null : head.detachDistinctTail0();
+    }
+
+    @SuppressWarnings("unchecked") private Orphan<B> detachDistinctTail0() {
+        B oldTail = this.tail;
+        B nTail = (B)this;
+        for (B n = next; n != null && n != oldTail; n = nTail.next)
+            nTail = n;
+        oldTail    = nTail.next; // defense against corruption or concurrent append
+        this.tail  = nTail;
+        nTail.tail = nTail;
+        nTail.next = null;
+        return oldTail.releaseOwnership(nTail);
+    }
+
+    /** Remove if {@code this.tail} is not {@code this}, detach it and recycle it. */
+    protected void dropEmptyTail() {
+        B tail = this.tail;
+        if (tail != this && tail != null && tail.rows == 0)
+            dropEmptyTail0();
+    }
+
+    private void dropEmptyTail0() {
+        detachDistinctTail0().takeOwnership(HANGMAN).releaseOwnership(HANGMAN);
+    }
 
     void addRowsToZeroColumns(int rows) {
-        B tail = this.tailUnchecked();
+        B tail = this.tail;
         while (tail.rows+rows > Short.MAX_VALUE) {
             rows -= (Short.MAX_VALUE-tail.rows);
             tail.rows = Short.MAX_VALUE;
             beginPut();
             commitPut();
-            tail = tailUnchecked();
+            tail = this.tail;
         }
         tail.rows += (short)rows;
     }
@@ -1378,46 +1358,46 @@ public abstract class Batch<B extends Batch<B>> {
      * @param localLen number of bytes in {@code local} that constitute the local segment.
      * @param sharedSuffix Whether the shared segment is a suffix
      */
-    public void putTerm(int col, SegmentRope shared, MemorySegment local,
+    public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
                         long localOff, int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    /** Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)} */
-    public void putTerm(int col, SegmentRope shared, SegmentRope local, int localOff,
+    /** Analogous to {@link #putTerm(int, FinalSegmentRope, MemorySegment, long, int, boolean)} */
+    public void putTerm(int col, FinalSegmentRope shared, SegmentRope local, int localOff,
                         int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    /** Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)} */
-    public void putTerm(int col, SegmentRope shared, TwoSegmentRope local,
+    /** Analogous to {@link #putTerm(int, FinalSegmentRope, MemorySegment, long, int, boolean)} */
+    public void putTerm(int col, FinalSegmentRope shared, TwoSegmentRope local,
                         int localOff, int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    /** Analogous to {@link #putTerm(int, SegmentRope, MemorySegment, long, int, boolean)}. */
-    public void putTerm(int col, SegmentRope shared, byte[] local, int localOff, int localLen,
+    /** Analogous to {@link #putTerm(int, FinalSegmentRope, MemorySegment, long, int, boolean)}. */
+    public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff, int localLen,
                         boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    private Term makeTerm(SegmentRope shared, MemorySegment local, long localOff,
+    private Term makeTerm(FinalSegmentRope shared, MemorySegment local, long localOff,
                           int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
-        var localRope = new ByteRope(localLen);
-        localRope.append(local, (byte[]) local.heapBase().orElse(null), localOff, localLen);
+        var localRope = RopeFactory.make(localLen).add(local, localOff, localLen).take();
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }
         return Term.wrap(fst, snd);
     }
 
-    private Term makeTerm(SegmentRope shared, byte[] localU8, int localOff,
+    private Term makeTerm(FinalSegmentRope shared, byte[] localU8, int localOff,
                           int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
-        ByteRope localRope = new ByteRope(localLen).append(localU8, localOff, localLen);
+        var localRope = RopeFactory.make(localLen)
+                                   .add(localU8, localOff, localOff+localLen).take();
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }
@@ -1428,7 +1408,8 @@ public abstract class Batch<B extends Batch<B>> {
                           int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
-        ByteRope localRope = new ByteRope(localLen).append(local, localOff, localOff+localLen);
+        var localRope = RopeFactory.make(localLen)
+                                   .add(local, localOff, localOff+localLen).take();
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }
@@ -1478,10 +1459,20 @@ public abstract class Batch<B extends Batch<B>> {
      * @throws IllegalArgumentException if {@code row.length != this.cols}
      */
     public final B putRow(Term[] row) {
-        if (row.length != cols) throw new IllegalArgumentException();
+        if (row.length != cols)
+            throw new IllegalArgumentException("cols mismatch");
         beginPut();
         for (int c = 0; c < row.length; c++)
             putTerm(c, row[c]);
+        commitPut();
+        //noinspection unchecked
+        return (B)this;
+    }
+
+    public final B putRow(Term[] terms, int offset) {
+        beginPut();
+        for (short c = 0, cols = this.cols; c < cols; c++)
+            putTerm(c, terms[offset+c]);
         commitPut();
         //noinspection unchecked
         return (B)this;
@@ -1491,7 +1482,7 @@ public abstract class Batch<B extends Batch<B>> {
      * Equivalent to {@link #putRow(Term[])}, but with a {@link Collection}
      *
      * <p>If collection items are non-null and non-{@link Term}, they will be converted using
-     * {@link Rope#of(Object)} and {@link Term#valueOf(CharSequence)}.</p>
+     * {@link Term#valueOf(CharSequence)}.</p>
      *
      * @param row single row to be added
      * @throws IllegalArgumentException if {@code row.size() != this.cols}
@@ -1504,7 +1495,7 @@ public abstract class Batch<B extends Batch<B>> {
         beginPut();
         int c = 0;
         for (Object o : row)
-            putTerm(c++, o instanceof Term t ? t : Term.valueOf(Rope.of(o)));
+            putTerm(c++, o instanceof Term t ? t : Term.valueOf(FinalSegmentRope.asFinal(o)));
         commitPut();
         //noinspection unchecked
         return (B)this;
@@ -1532,7 +1523,7 @@ public abstract class Batch<B extends Batch<B>> {
      * @param other a batch whose contents may be copied or whose reference will be appended to
      *              {@code this}. Even in case of a copy, the caller looses ownership
      */
-    public abstract void append(B other);
+    public abstract void append(Orphan<B> other);
 
 
     /**

@@ -7,52 +7,43 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
-import com.github.alexishuf.fastersparql.util.concurrent.AffinityPool;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.regex.Pattern;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.BN_PREFIX_u8;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.UNTIL_LIT_ESCAPED;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     private static final Logger log = LoggerFactory.getLogger(SVParser.class);
-    private static final AffinityPool<TermParser> TERM_PARSER_POOL
-            = new AffinityPool<>(TermParser.class, 32);
 
     protected int nVars;
-    protected final ByteRope eol;
+    protected final FinalSegmentRope eol;
     protected TermParser termParser;
-    protected @Nullable ByteRope partialLine, fedPartialLine;
+    protected @Nullable MutableRope partialLine, fedPartialLine;
     protected int inputColumns = -1, column, line;
     protected int[] inVar2outVar;
 
-    private SVParser(ByteRope eol, CompletableBatchQueue<B> destination) {
+    private SVParser(FinalSegmentRope eol, CompletableBatchQueue<B> destination) {
         super(destination);
         this.nVars = destination.vars().size();
         this.eol = eol;
-        this.termParser = createTermParser();
-    }
-
-    private static TermParser createTermParser() {
-        TermParser pooled = TERM_PARSER_POOL.get();
-        return pooled == null ? new TermParser() : pooled;
+        this.termParser = TermParser.create().takeOwnership(this);
     }
 
     @Override public void reset(CompletableBatchQueue<B> downstream) {
         super.reset(downstream);
         if (termParser == null)
-            termParser = createTermParser();
+            termParser = TermParser.create().takeOwnership(this);
         inputColumns = -1;
         column       =  0;
         line         =  0;
@@ -63,15 +54,16 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        if ((termParser=TERM_PARSER_POOL.offer(termParser)) != null)
-            termParser.close();
+        termParser = termParser.recycle(this);
+        if (partialLine != null)
+            partialLine.close();
     }
 
     @Override protected @Nullable Throwable doFeedEnd() {
         try {
             if (partialLine != null && partialLine.len > 0) {
                 boolean hasEOL = findEOL(partialLine, 0, partialLine.len) < partialLine.len;
-                handlePartialLine(hasEOL ? ByteRope.EMPTY : eol);
+                handlePartialLine(hasEOL ? FinalSegmentRope.EMPTY : eol);
                 if (partialLine != null && partialLine.len > 0) //
                     return unclosedQuote();
             } else if (column > 0) {
@@ -104,7 +96,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     public static class Tsv<B extends Batch<B>> extends SVParser<B> {
-        private static final ByteRope EOL = new ByteRope("\n");
+        private static final FinalSegmentRope EOL = FinalSegmentRope.asFinal("\n");
 
         public Tsv(CompletableBatchQueue<B> destination) { super(EOL, destination); }
 
@@ -198,11 +190,19 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     public final static class Csv<B extends Batch<B>> extends SVParser<B> {
-        private static final ByteRope EOL = new ByteRope("\r\n");
+        private static final FinalSegmentRope EOL = FinalSegmentRope.asFinal("\r\n");
+        private final SegmentRopeView view = new SegmentRopeView();
+        private final MutableRope escaped = new MutableRope(64);
 
         public Csv(CompletableBatchQueue<B> destination) {
             super(EOL, destination);
             termParser.eager();
+        }
+
+        @Override protected void cleanup(@Nullable Throwable cause) {
+            super.cleanup(cause);
+            view.wrapEmpty();
+            escaped.close();
         }
 
         @Override public SparqlResultFormat format() {return SparqlResultFormat.CSV;}
@@ -280,32 +280,33 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
             int lexBegin = first == '"' ? begin+1 : begin;
             int lexEnd   = first == '"' ? skipUntilUnescapedQuote(rope, lexBegin, end)
                                         : skipUntilCsvSep(rope, begin, end);
+            int lexLen = lexEnd-lexBegin;
             if (lexEnd >= end)
                 return suspend(rope, begin, end);
             if (lexEnd > lexBegin) {
                 SegmentRope nt;
                 if (lexBegin+1 < lexEnd && rope.has(lexBegin, BN_PREFIX_u8)) {
-                    nt = rope.sub(lexBegin, lexEnd);
+                    nt = view.wrap(rope, lexBegin, lexLen);
                 } else {
-                    var esc = new ByteRope(lexEnd - lexBegin + 8).append('"');
+                    escaped.clear().append('"').ensureFreeCapacity(lexLen+8);
                     for (int i = lexBegin, j; i < lexEnd; i = j + 1) {
-                        esc.append(rope, i, j = rope.skip(i, lexEnd, UNTIL_LIT_ESCAPED));
+                        escaped.append(rope, i, j = rope.skip(i, lexEnd, UNTIL_LIT_ESCAPED));
                         switch (j == lexEnd ? 0 : rope.get(j)) {
                             case '"' -> {
-                                esc.append('\\').append('"');
+                                escaped.append('\\').append('"');
                                 ++j;
                             }
-                            case '\n' -> esc.append('\\').append('n');
-                            case '\r' -> esc.append('\\').append('r');
-                            case '\\' -> esc.append('\\').append('\\');
+                            case '\n' -> escaped.append('\\').append('n');
+                            case '\r' -> escaped.append('\\').append('r');
+                            case '\\' -> escaped.append('\\').append('\\');
                         }
                     }
                     boolean iri = false;
                     for (int i = 0; !iri && i < IRI_SCHEMES.length; i++)
-                        iri = esc.has(1, IRI_SCHEMES[i]);
-                    if (iri) esc.append('>').u8()[0] = '<';
-                    else esc.append('"');
-                    nt = esc;
+                        iri = escaped.has(1, IRI_SCHEMES[i]);
+                    if (iri) escaped.append('>').u8()[0] = '<';
+                    else escaped.append('"');
+                    nt = escaped;
                 }
                 switch (termParser.parse(nt, 0, nt.len)) {
                     case NT, TTL -> setTerm();
@@ -383,13 +384,13 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
             if ((c = rope.get(begin)) == '?' || c == '$')
                 ++begin; // do not include var marker into var name
-            var varName = new ByteRope(termEnd-begin).append(rope, begin, termEnd);
+            var varName = asFinal(rope, begin, termEnd);
             if (rope.skip(begin, termEnd, SparqlSkip.VARNAME) != termEnd)
                 throw new InvalidSparqlResultsException("Invalid var name: "+varName);
             offer.add(varName);
         }
         inputColumns = offer.size();
-        inVar2outVar = ArrayPool.intsAtLeast(inputColumns, inVar2outVar);
+        inVar2outVar = ArrayAlloc.intsAtLeast(inputColumns, inVar2outVar);
         if (nVars == 0 && offer.size() > (offer.contains(WsBindingSeq.VAR) ? 1 : 0))
             checkAskVars(offer);
         Vars vars = vars();
@@ -400,11 +401,13 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     protected void handlePartialLine(Rope rope) throws CancelledException, TerminatedException {
-        if (partialLine == null) partialLine = new ByteRope(rope);
-        else                     partialLine.append(rope);
+        if (partialLine == null)
+            partialLine = new MutableRope(rope.len).append(rope);
+        else
+            partialLine.append(rope);
 
         if (findEOL(partialLine, 0, partialLine.len) < partialLine.len) {
-            ByteRope tmp = partialLine;
+            MutableRope tmp = partialLine;
             if ((partialLine = fedPartialLine) != null)
                 partialLine.clear();
             doFeedShared(fedPartialLine = tmp);
@@ -425,7 +428,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     protected int suspend(Rope rope, int begin, int end) {
         if (end > begin) {
             if (partialLine == null)
-                partialLine = new ByteRope(0x10 | (end - begin));
+                partialLine = new MutableRope(32 + (end - begin));
             partialLine.append(rope, begin, end);
         }
         return end;
@@ -480,8 +483,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         String msg = null;
         if (actual.size() > 1) {
             msg = expected +  "Got " + actual;
-        } else if (actual.size() == 1 && !ASK_VAR.matcher(actual.get(0).toString()).matches()) {
-            msg = expected + actual.get(0) + " does not appear to be an ask query result var";
+        } else if (actual.size() == 1 && !ASK_VAR.matcher(actual.getFirst().toString()).matches()) {
+            msg = expected + actual.getFirst() + " does not appear to be an ask query result var";
         }
         if (msg != null)
             throw  new InvalidSparqlResultsException(msg);
@@ -489,7 +492,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     protected InvalidSparqlResultsException extraColumns() {
         var msg = String.format("More than %d columns at line %d. Expected %s", inputColumns, line,
-                         eol == Csv.EOL ? "\\r\\n (\\x0D\\x0A, CRLF)" : "\\n(\\x0A, LF)");
+                eol == Csv.EOL ? "\\r\\n (\\x0D\\x0A, CRLF)" : "\\n(\\x0A, LF)");
         return new InvalidSparqlResultsException(msg);
     }
 

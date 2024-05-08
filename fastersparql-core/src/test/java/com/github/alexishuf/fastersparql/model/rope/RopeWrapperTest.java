@@ -69,32 +69,33 @@ class RopeWrapperTest {
 
     @ParameterizedTest @MethodSource
     void test(String in, RopeWrapper w, String ex) {
-        var a = in.getBytes(UTF_8);
-        var sb = new StringBuilder(in);
-        var r = new ByteRope(in);
-        var br = new SegmentRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
+        try (var r = PooledMutableRope.getWithCapacity(in.length()).append(in)) {
+            var a = in.getBytes(UTF_8);
+            var sb = new StringBuilder(in);
+            var br = new FinalSegmentRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
 
-        assertEquals(ex, new String(w.toArray(in, 0, in.length()), UTF_8));
-        assertEquals(ex, new String(w.toArray(sb, 0, in.length()), UTF_8));
-        assertEquals(ex, new String(w.toArray(a,  0, r.len      ), UTF_8));
-        assertEquals(ex, new String(w.toArray(r,  0, r.len      ), UTF_8));
-        assertEquals(ex, new String(w.toArray(br, 0, r.len      ), UTF_8));
+            assertEquals(ex, new String(w.toArray(in, 0, in.length()), UTF_8));
+            assertEquals(ex, new String(w.toArray(sb, 0, in.length()), UTF_8));
+            assertEquals(ex, new String(w.toArray(a, 0, r.len), UTF_8));
+            assertEquals(ex, new String(w.toArray(r, 0, r.len), UTF_8));
+            assertEquals(ex, new String(w.toArray(br, 0, r.len), UTF_8));
 
-        if (w == NONE)
-            assertSame(a, w.toArray(a, 0, r.len));
+            if (w == NONE)
+                assertSame(a, w.toArray(a, 0, r.len));
 
-        for (String p : padded(in)) {
-            var pa = p.getBytes(UTF_8);
-            var psb = new StringBuilder(p);
-            var pr = new ByteRope(p);
-            var pbr = new SegmentRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
-            int begin = 1, end = 1+r.len, cEnd = 1+in.length();
+            for (String p : padded(in)) {
+                var pa = p.getBytes(UTF_8);
+                var psb = new StringBuilder(p);
+                var pr = FinalSegmentRope.asFinal(p);
+                var pbr = new FinalSegmentRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
+                int begin = 1, end = 1 + r.len, cEnd = 1 + in.length();
 
-            assertEquals(ex, new String(w.toArray(p,   begin, cEnd), UTF_8));
-            assertEquals(ex, new String(w.toArray(psb, begin, cEnd), UTF_8));
-            assertEquals(ex, new String(w.toArray(pa,  begin,  end), UTF_8));
-            assertEquals(ex, new String(w.toArray(pr,  begin,  end), UTF_8));
-            assertEquals(ex, new String(w.toArray(pbr, begin,  end), UTF_8));
+                assertEquals(ex, new String(w.toArray(p, begin, cEnd), UTF_8));
+                assertEquals(ex, new String(w.toArray(psb, begin, cEnd), UTF_8));
+                assertEquals(ex, new String(w.toArray(pa, begin, end), UTF_8));
+                assertEquals(ex, new String(w.toArray(pr, begin, end), UTF_8));
+                assertEquals(ex, new String(w.toArray(pbr, begin, end), UTF_8));
+            }
         }
     }
 
@@ -196,43 +197,45 @@ class RopeWrapperTest {
 
     @ParameterizedTest @MethodSource
     void testFor(String in, Factory fac, Converter conv, RopeWrapper ex) {
-        var sb = new StringBuilder(in);
-        var a  = in.getBytes(UTF_8);
-        var r  = new ByteRope(in);
-        var br = new SegmentRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
+        try (var r = PooledMutableRope.get().append(in)) {
+            var sb = new StringBuilder(in);
+            var a = in.getBytes(UTF_8);
+            var br = new FinalSegmentRope(ByteBuffer.wrap(in.getBytes(UTF_8)));
 
-        assertEquals(ex, fac.create(in, 0, in.length()));
-        assertEquals(ex, fac.create(sb, 0, in.length()));
-        assertEquals(ex, fac.create(a,  0, r.len));
-        assertEquals(ex, fac.create(r,  0, r.len));
-        assertEquals(ex, fac.create(br, 0, r.len));
+            assertEquals(ex, fac.create(in, 0, in.length()));
+            assertEquals(ex, fac.create(sb, 0, in.length()));
+            assertEquals(ex, fac.create(a, 0, r.len));
+            assertEquals(ex, fac.create(r, 0, r.len));
+            assertEquals(ex, fac.create(br, 0, r.len));
 
-        assertArrayEquals(ex.toArray(in, 0, in.length()), conv.convert(in, 0, in.length()));
-        assertArrayEquals(ex.toArray(sb, 0, in.length()), conv.convert(sb, 0, in.length()));
-        assertArrayEquals(ex.toArray(a,  0, r.len), conv.convert(a,  0, r.len));
-        assertArrayEquals(ex.toArray(r,  0, r.len), conv.convert(r,  0, r.len));
-        assertArrayEquals(ex.toArray(br, 0, r.len), conv.convert(br, 0, r.len));
+            assertArrayEquals(ex.toArray(in, 0, in.length()), conv.convert(in, 0, in.length()));
+            assertArrayEquals(ex.toArray(sb, 0, in.length()), conv.convert(sb, 0, in.length()));
+            assertArrayEquals(ex.toArray(a, 0, r.len), conv.convert(a, 0, r.len));
+            assertArrayEquals(ex.toArray(r, 0, r.len), conv.convert(r, 0, r.len));
+            assertArrayEquals(ex.toArray(br, 0, r.len), conv.convert(br, 0, r.len));
 
 
-        for (String p : padded(in)) {
-            var psb = new StringBuilder(p);
-            var pa  = p.getBytes(UTF_8);
-            var pr  = new ByteRope(p);
-            var pbr = new SegmentRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
+            for (String p : padded(in)) {
+                try (var pr = PooledMutableRope.get().append(p)) {
+                    var psb = new StringBuilder(p);
+                    var pa = p.getBytes(UTF_8);
+                    var pbr = new FinalSegmentRope(ByteBuffer.wrap(p.getBytes(UTF_8)));
 
-            int begin = 1, cEnd = 1+in.length(), end = 1+r.len;
+                    int begin = 1, cEnd = 1 + in.length(), end = 1 + r.len;
 
-            assertEquals(ex, fac.create(p,   begin, cEnd));
-            assertEquals(ex, fac.create(psb, begin, cEnd));
-            assertEquals(ex, fac.create(pa,  begin,  end));
-            assertEquals(ex, fac.create(pr,  begin,  end));
-            assertEquals(ex, fac.create(pbr, begin,  end));
+                    assertEquals(ex, fac.create(p, begin, cEnd));
+                    assertEquals(ex, fac.create(psb, begin, cEnd));
+                    assertEquals(ex, fac.create(pa, begin, end));
+                    assertEquals(ex, fac.create(pr, begin, end));
+                    assertEquals(ex, fac.create(pbr, begin, end));
 
-            assertArrayEquals(ex.toArray(p,   begin, cEnd), conv.convert(p,   begin, cEnd));
-            assertArrayEquals(ex.toArray(psb, begin, cEnd), conv.convert(psb, begin, cEnd));
-            assertArrayEquals(ex.toArray(pa,  begin,         end), conv.convert(pa,  begin,  end));
-            assertArrayEquals(ex.toArray(pr,  begin,         end), conv.convert(pr,  begin,  end));
-            assertArrayEquals(ex.toArray(pbr, begin,         end), conv.convert(pbr, begin,  end));
+                    assertArrayEquals(ex.toArray(p, begin, cEnd), conv.convert(p, begin, cEnd));
+                    assertArrayEquals(ex.toArray(psb, begin, cEnd), conv.convert(psb, begin, cEnd));
+                    assertArrayEquals(ex.toArray(pa, begin, end), conv.convert(pa, begin, end));
+                    assertArrayEquals(ex.toArray(pr, begin, end), conv.convert(pr, begin, end));
+                    assertArrayEquals(ex.toArray(pbr, begin, end), conv.convert(pbr, begin, end));
+                }
+            }
         }
     }
 
@@ -275,29 +278,32 @@ class RopeWrapperTest {
 
     @ParameterizedTest @MethodSource
     void testConverter(String in, Converter conv, String ex) {
-        var sb = new StringBuilder(in);
-        var r = new ByteRope(in);
-        var a = r.utf8;
-        var br = new SegmentRope(ByteBuffer.wrap(r.u8()));
+        try (var r = PooledMutableRope.getWithCapacity(in.length()).append(in)) {
+            var sb = new StringBuilder(in);
+            var a = r.utf8;
+            var br = new FinalSegmentRope(ByteBuffer.wrap(r.u8()));
 
-        assertEquals(ex, new String(conv.convert(in, 0, in.length()), UTF_8));
-        assertEquals(ex, new String(conv.convert(sb, 0, in.length()), UTF_8));
-        assertEquals(ex, new String(conv.convert(r,  0, r.len), UTF_8));
-        assertEquals(ex, new String(conv.convert(a,  0, r.len), UTF_8));
-        assertEquals(ex, new String(conv.convert(br, 0, r.len), UTF_8));
+            assertEquals(ex, new String(conv.convert(in, 0, in.length()), UTF_8));
+            assertEquals(ex, new String(conv.convert(sb, 0, in.length()), UTF_8));
+            assertEquals(ex, new String(conv.convert(r, 0, r.len), UTF_8));
+            assertEquals(ex, new String(conv.convert(a, 0, r.len), UTF_8));
+            assertEquals(ex, new String(conv.convert(br, 0, r.len), UTF_8));
 
-        for (String p : padded(in)) {
-            var psb = new StringBuilder(p);
-            var pr = new ByteRope(p);
-            var pa = pr.u8();
-            var pbr = new SegmentRope(ByteBuffer.wrap(pr.u8()));
-            int begin = 1, end = 1+r.len, cEnd = 1+in.length();
+            for (String p : padded(in)) {
+                try (var pr = PooledMutableRope.get()) {
+                    pr.append(p);
+                    var psb = new StringBuilder(p);
+                    var pa = pr.u8();
+                    var pbr = new FinalSegmentRope(ByteBuffer.wrap(pr.u8()));
+                    int begin = 1, end = 1 + r.len, cEnd = 1 + in.length();
 
-            assertEquals(ex, new String(conv.convert(p,   begin, cEnd), UTF_8));
-            assertEquals(ex, new String(conv.convert(psb, begin, cEnd), UTF_8));
-            assertEquals(ex, new String(conv.convert(pr,  begin,  end), UTF_8));
-            assertEquals(ex, new String(conv.convert(pa,  begin,  end), UTF_8));
-            assertEquals(ex, new String(conv.convert(pbr, begin,  end), UTF_8));
+                    assertEquals(ex, new String(conv.convert(p, begin, cEnd), UTF_8));
+                    assertEquals(ex, new String(conv.convert(psb, begin, cEnd), UTF_8));
+                    assertEquals(ex, new String(conv.convert(pr, begin, end), UTF_8));
+                    assertEquals(ex, new String(conv.convert(pa, begin, end), UTF_8));
+                    assertEquals(ex, new String(conv.convert(pbr, begin, end), UTF_8));
+                }
+            }
         }
     }
 
@@ -313,15 +319,22 @@ class RopeWrapperTest {
     @ParameterizedTest @MethodSource
     void testAppend(RopeWrapper w, String in, int begin, int end) {
         String ex = "!" + new String(w.toArray(in, begin, end), UTF_8);
-        assertEquals(ex, w.append(new ByteRope("!"), new StringBuilder(in), begin, end).toString());
-        assertEquals(ex, w.append(new ByteRope("!"), Rope.of(in), begin, end).toString());
-        assertEquals(ex, w.append(new ByteRope("!"), in.getBytes(UTF_8), begin, end).toString());
+        try (var tmp = PooledMutableRope.get()) {
+            assertEquals(ex, w.append(tmp.clear().append("!"), new StringBuilder(in), begin, end).toString());
+            assertEquals(ex, w.append(tmp.clear().append("!"), Rope.asRope(in), begin, end).toString());
+            assertEquals(ex, w.append(tmp.clear().append("!"), in.getBytes(UTF_8), begin, end).toString());
 
 
-        if (begin == 0 && end == in.length()) {
-            assertEquals(ex, w.append(new ByteRope("!"), new StringBuilder(in)).toString());
-            assertEquals(ex, w.append(new ByteRope("!"), Rope.of(in)).toString());
-            assertEquals(ex, w.append(new ByteRope("!"), in.getBytes(UTF_8)).toString());
+            if (begin == 0 && end == in.length()) {
+                assertEquals(ex, w.append(tmp.clear().append("!"), new StringBuilder(in)).toString());
+                assertEquals(ex, w.append(tmp.clear().append("!"), Rope.asRope(in)).toString());
+                assertEquals(ex, w.append(tmp.clear().append("!"), in.getBytes(UTF_8)).toString());
+
+                int bytesReq = ex.getBytes(UTF_8).length;
+                assertEquals(ex, w.append(RopeFactory.make(bytesReq).add("!"), new StringBuilder(in)).take().toString());
+                assertEquals(ex, w.append(RopeFactory.make(bytesReq).add("!"), Rope.asRope(in)).take().toString());
+                assertEquals(ex, w.append(RopeFactory.make(bytesReq).add("!"), in.getBytes(UTF_8)).take().toString());
+            }
         }
     }
 }

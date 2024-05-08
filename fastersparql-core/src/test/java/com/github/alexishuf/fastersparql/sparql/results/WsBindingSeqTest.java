@@ -1,9 +1,11 @@
 package com.github.alexishuf.fastersparql.sparql.results;
 
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static java.util.Objects.requireNonNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -18,13 +20,15 @@ class WsBindingSeqTest {
             0xffffffffffffL
     })
     void test(long seq) {
-        var batch = CompressedBatchType.COMPRESSED.create(2);
-        batch.beginPut();
-        encoder.write(seq, batch, 0);
-        encoder.write(seq, batch, 1);
-        batch.commitPut();
-        assertEquals(seq, WsBindingSeq.parse(requireNonNull(batch.get(0, 0)).local(), 0, batch.localLen(0, 0)));
-        assertEquals(seq, WsBindingSeq.parse(requireNonNull(batch.get(0, 0)).local(), 0, batch.localLen(0, 0)));
+        try (var batchGuard = new Guard.BatchGuard<CompressedBatch>(this)) {
+            var batch = batchGuard.set(COMPRESSED.create(2));
+            batch.beginPut();
+            encoder.write(seq, batch, 0);
+            encoder.write(seq, batch, 1);
+            batch.commitPut();
+            assertEquals(seq, WsBindingSeq.parse(requireNonNull(batch.get(0, 0)).local(), 0, batch.localLen(0, 0)));
+            assertEquals(seq, WsBindingSeq.parse(requireNonNull(batch.get(0, 0)).local(), 0, batch.localLen(0, 0)));
+        }
     }
 
 }

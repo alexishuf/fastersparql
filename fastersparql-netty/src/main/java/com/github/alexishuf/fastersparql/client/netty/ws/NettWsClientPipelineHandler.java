@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.client.netty.ws;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.buffer.ByteBuf;
@@ -39,7 +39,7 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     private @Nullable NettyWsClientHandler delegate;
     private @MonotonicNonNull ChannelHandlerContext ctx;
     private boolean handshakeStarted, handshakeComplete, attached, detached;
-    private byte @Nullable [] previewU8;
+    private @Nullable MutableRope preview;
     private final Runnable onDelegate = this::onDelegate;
     private Throwable earlyFailure;
     private @MonotonicNonNull Channel lastCh;
@@ -143,8 +143,10 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
     }
     @Override public void channelInactive(ChannelHandlerContext ctx) {
         detach(null);
-        if (previewU8 != null)
-            previewU8 = ArrayPool.BYTE.offer(previewU8, previewU8.length);
+        if (preview != null) {
+            preview.close();
+            preview = null;
+        }
     }
 
     private static final int PREVIEW_LEN = 60-12-1-24-4-1;
@@ -155,23 +157,26 @@ public class NettWsClientPipelineHandler extends SimpleChannelInboundHandler<Obj
             journal("Received close WS frame on", this);
         } else if (msg instanceof TextWebSocketFrame f) {
             ByteBuf bb = f.content();
-            byte[] previewU8 = this.previewU8;
-            if (previewU8 == null)
-                this.previewU8 = previewU8 = ArrayPool.bytesAtLeast(PREVIEW_LEN+3);
-            int frameLen = bb.readableBytes(), previewLen = Math.min(frameLen, PREVIEW_LEN);
-            bb.getBytes(bb.readerIndex(), this.previewU8, 0, previewLen);
-            while (previewLen > 0 && previewU8[previewLen-1] <= ' ')
-                --previewLen;
-            for (int i = 0; i < previewLen; i++) {
-                if (previewU8[i] <= ' ') previewU8[i] = ' ';
+            MutableRope preview = this.preview;
+            if (preview == null)
+                this.preview = preview = new MutableRope(PREVIEW_LEN+3);
+            preview.clear().ensureFreeCapacity(PREVIEW_LEN+3);
+            int frameLen = bb.readableBytes();
+            preview.len = Math.min(frameLen, PREVIEW_LEN);
+            byte[] u8 = preview.u8();
+            bb.getBytes(bb.readerIndex(), u8, 0, preview.len);
+            while (preview.len > 0 && u8[preview.len-1] <= ' ')
+                --preview.len;
+            for (int i = 0, len = preview.len; i < len; i++) {
+                if (u8[i] <= ' ') u8[i] = ' ';
             }
             if (frameLen > 16) {
-                previewU8[previewLen++] = '.';
-                previewU8[previewLen++] = '.';
-                previewU8[previewLen++] = '.';
+                u8[preview.len++] = '.';
+                u8[preview.len++] = '.';
+                u8[preview.len++] = '.';
             }
             journal("got WS frame bytes=", frameLen, "on", this,
-                    new String(previewU8, 0, previewLen, UTF_8));
+                    new String(u8, 0, preview.len, UTF_8));
         }
     }
 

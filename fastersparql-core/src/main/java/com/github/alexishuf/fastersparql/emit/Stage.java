@@ -2,10 +2,12 @@ package com.github.alexishuf.fastersparql.emit;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-public interface Stage<I extends Batch<I>, O extends Batch<O>> extends Emitter<O>, Receiver<I> {
+public interface Stage<I extends Batch<I>, O extends Batch<O>, S extends Stage<I, O, S>>
+        extends Emitter<O, S>, Receiver<I> {
 
     /**
      * Idempotently call {@link Emitter#subscribe(Receiver)} on {@code emitter}, while enforcing
@@ -16,10 +18,10 @@ public interface Stage<I extends Batch<I>, O extends Batch<O>> extends Emitter<O
      * @throws MultipleRegistrationUnsupportedException if this stage was previously subscribed to an
      *                                         {@link Emitter} other than {@code emitter}.
      */
-    @SuppressWarnings("unused") @This Stage<I, O> subscribeTo(Emitter<I> upstream);
+    @SuppressWarnings("unused") @This S subscribeTo(Orphan<? extends Emitter<I, ?>> upstream);
 
-    /** Get the {@code upstream} given in {@link #subscribeTo(Emitter)}. */
-    @MonotonicNonNull Emitter<I> upstream();
+    /** Get the {@code upstream} given in {@link #subscribeTo(Orphan)}. */
+    @MonotonicNonNull Emitter<I, ?> upstream();
 
     final class NoEmitterException extends IllegalStateException {
         public NoEmitterException() {

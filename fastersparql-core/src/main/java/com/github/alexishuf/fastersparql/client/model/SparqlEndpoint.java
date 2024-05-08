@@ -3,7 +3,7 @@ package com.github.alexishuf.fastersparql.client.model;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.util.UriUtils;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -24,7 +24,7 @@ public final class SparqlEndpoint {
     private final boolean hasQuery;
     private final Protocol protocol;
     private final String rawPathWithQuery;
-    private final Rope rawPathWithQueryRope;
+    private final FinalSegmentRope rawPathWithQueryRope;
     private final int port;
     private @MonotonicNonNull URI toURI;
 
@@ -173,11 +173,13 @@ public final class SparqlEndpoint {
         else
             path = plainUri.indexOf('/', schema+schemaSepLen);
         if (path == -1) {
-            this.rawPathWithQueryRope = new ByteRope(this.rawPathWithQuery = "/");
+            this.rawPathWithQueryRope = FinalSegmentRope.asFinal(this.rawPathWithQuery = "/");
         } else {
             int e = path;
-            while (e+1 < len && plainUri.charAt(e+1) == '/') ++e;
-            this.rawPathWithQueryRope = new ByteRope(this.rawPathWithQuery = plainUri.substring(e));
+            while (e+1 < len && plainUri.charAt(e+1) == '/')
+                ++e;
+            this.rawPathWithQuery = plainUri.substring(e);
+            this.rawPathWithQueryRope = FinalSegmentRope.asFinal(rawPathWithQuery);
         }
         this.hasQuery = this.rawPathWithQuery.indexOf('?') >= 0;
         if (protocol == Protocol.FILE) {

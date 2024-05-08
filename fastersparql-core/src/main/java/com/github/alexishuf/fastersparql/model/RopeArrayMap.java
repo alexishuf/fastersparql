@@ -1,24 +1,65 @@
 package com.github.alexishuf.fastersparql.model;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
+import com.github.alexishuf.fastersparql.util.concurrent.LevelAlloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static java.lang.System.arraycopy;
 import static java.util.Arrays.binarySearch;
 
-public class RopeArrayMap {
+public abstract sealed class RopeArrayMap extends AbstractOwned<RopeArrayMap> {
     private static final int SORT_THRESHOLD = 16;
+    private static final Rope[] EMPTY_DATA = new Rope[0];
+    private static final ArrayAlloc<Rope[]> DATA_ALLOC = new ArrayAlloc<>(Rope[].class,
+            "RopeArrayMap.DATA_ALLOC", 4,
+            new LevelAlloc.Capacities()
+                    .set(4, 4, Alloc.THREADS*64)
+                    .setSameBytesUsage(5, 10, Alloc.THREADS*64*(20+32*4),
+                                       20, 4)
+                    .set(11, 13, Alloc.THREADS)
+    );
+    static {
+        Primer.INSTANCE.sched(() -> {
+            for (int level = 0; level <= 8; level++)
+                DATA_ALLOC.primeLevel(level);
+        });
+    }
 
     private Rope[] data;
     private int keys = 0;
 
-    public RopeArrayMap()                 { data  = new Rope[16]; }
+    public static Orphan<RopeArrayMap> create() {
+        return new Concrete(DATA_ALLOC.createFromLevel(4));
+    }
+    public static Orphan<RopeArrayMap> create(Rope[] data) {
+        return new Concrete(data);
+    }
+
+    private RopeArrayMap(Rope[] data) {this.data = data;}
+
+    @Override public @Nullable RopeArrayMap recycle(Object currentOwner) {
+        internalMarkGarbage(currentOwner);
+        data = EMPTY_DATA;
+        keys = 0;
+        return null;
+    }
+
+    private static final class Concrete extends RopeArrayMap implements Orphan<RopeArrayMap> {
+        private Concrete(Rope[] data) {super(data);}
+        @Override public RopeArrayMap takeOwnership(Object o) {return takeOwnership0(o);}
+    }
 
     public int size() { return keys; }
 
-    public void put(SegmentRope key, @Nullable Rope value) {
+    public void put(FinalSegmentRope key, @Nullable Rope value) {
+        requireAlive();
         int size = this.keys;
         if (size > SORT_THRESHOLD) {
             putSorted(key, value);
@@ -63,7 +104,20 @@ public class RopeArrayMap {
     public void putAll(RopeArrayMap other) {
         Rope[] d = other.data;
         for (int i = 0, half = d.length>>1, n = other.keys; i < n; i++)
-            put((ByteRope)d[i], d[half+i]);
+            put((FinalSegmentRope)d[i], d[half+i]);
+    }
+
+    public void resetToCopy(RopeArrayMap other) {
+        requireAlive();
+        int keys = other.keys;
+        this.keys = keys;
+        if (data.length < keys<<1) {
+            DATA_ALLOC.offer(data, data.length);
+            data = DATA_ALLOC.createAtLeast(keys<<1);
+        }
+        Rope[] oData = other.data;
+        arraycopy(oData, 0,               data, 0,              keys);
+        arraycopy(oData, oData.length>>1, data, data.length>>1, keys);
     }
 
     public void clear() {
@@ -125,11 +179,13 @@ public class RopeArrayMap {
     }
 
     @Override public String toString() {
-        var sb = new ByteRope().append('{');
-        for (int i = 0; i < keys; i++)
-            sb.append(data[i]).append('=').append(data[(data.length>>1) + i]).append(", ");
-        if (keys > 0) sb.unAppend(2);
-        return sb.toString();
+        try (var sb = PooledMutableRope.get()) {
+            sb.append('{');
+            for (int i = 0; i < keys; i++)
+                sb.append(data[i]).append('=').append(data[(data.length >> 1) + i]).append(", ");
+            if (keys > 0) sb.unAppend(2);
+            return sb.append('}').toString();
+        }
     }
 
     /** Equivalent to {@code binarySearch(data, 0, keys, key.sub(keyBegin, keyEnd))} but

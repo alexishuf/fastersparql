@@ -7,10 +7,11 @@ import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.Results;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -185,15 +186,15 @@ public class JsonParserTest extends ResultsParserTest {
 
     @ParameterizedTest @MethodSource
     void test(String in, Results expected) throws Exception {
-        doTest(new JsonParser.JsonFactory(), expected, SegmentRope.of(in));
+        doTest(new JsonParser.JsonFactory(), expected, FinalSegmentRope.asFinal(in));
     }
 
     private void feedS8(ResultsParser<?> parser) {
         try {
             var is = getClass().getResourceAsStream("S8.json.chunked");
             assertNotNull(is, "resource file missing");
-            try (var reader = new BufferedReader(new InputStreamReader(is, UTF_8))) {
-                var chunk = new ByteRope();
+            try (var reader = new BufferedReader(new InputStreamReader(is, UTF_8));
+                 var chunk = PooledMutableRope.get()) {
                 int nSegments = 0;
                 for (String line; (line = reader.readLine()) != null; ) {
                     if (line.equals("BEGIN")) {
@@ -236,13 +237,15 @@ public class JsonParserTest extends ResultsParserTest {
     private static final Term S8_MELT__1 = Term.valueOf("\"126-127 oC [PhysProp]\"");
 
     @SuppressWarnings("SequencedCollectionMethodCanBeUsed")
-    private static void checkS8(SPSCBIt<CompressedBatch> queue) {
+    private void checkS8(SPSCBIt<CompressedBatch> queue) {
         List<Term> results = new ArrayList<>();
-        for (CompressedBatch batch = null; (batch= queue.nextBatch(batch)) != null; ) {
-            for (CompressedBatch n = batch; n != null; n = n.next) {
-                for (int r = 0, rows = n.rows; r < rows; r++) {
-                    results.add(n.get(r, 0));
-                    results.add(n.get(r, 1));
+        try (var g = new Guard.BatchGuard<CompressedBatch>(this)) {
+            for (CompressedBatch batch; (batch=g.nextBatch(queue)) != null; ) {
+                for (CompressedBatch n = batch; n != null; n = n.next) {
+                    for (int r = 0, rows = n.rows; r < rows; r++) {
+                        results.add(n.get(r, 0));
+                        results.add(n.get(r, 1));
+                    }
                 }
             }
         }

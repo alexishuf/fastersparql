@@ -18,6 +18,7 @@ import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpHandler;
 import com.github.alexishuf.fastersparql.client.netty.util.ByteBufRopeView;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelBound;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
+import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
@@ -27,13 +28,16 @@ import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.*;
@@ -46,6 +50,7 @@ import java.nio.charset.Charset;
 import java.util.Set;
 import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils.asByteBuf;
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.fromMediaType;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -78,7 +83,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
     }
 
     @Override
-    protected <B extends Batch<B>> Emitter<B>
+    protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         return new QueryEmitter<>(bt, sparql);
     }
@@ -97,9 +102,13 @@ public class NettySparqlClient extends AbstractSparqlClient {
         var cfg = endpoint.configuration();
         SegmentRope sparql = qry.sparql();
         var method = method(cfg, sparql.len());
-        Rope body = switch (method) {
-            case POST -> sparql;
-            case FORM -> formString(sparql, cfg.params());
+        ByteBuf body = switch (method) {
+            case POST -> asByteBuf(sparql);
+            case FORM -> {
+                try (var rope = formString(sparql, cfg.params())) {
+                    yield NettyRopeUtils.asByteBuf(rope);
+                }
+            }
             case GET  -> null;
             default   -> throw new FSInvalidArgument(method+" not supported by "+this);
         };
@@ -109,7 +118,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         if (body == null)
             return NettyHttpClient.makeGet(pathAndParams, accept);
         return NettyHttpClient.makeRequest(method2netty(method), pathAndParams, accept,
-                                           method.contentType(), body, UTF_8);
+                                           method.contentType(), body);
     }
 
     /* --- --- --- inner classes --- --- ---  */
@@ -225,8 +234,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
             return false;
         }
 
-        @Override public @Nullable B nextBatch(@Nullable B offer) {
-            B b = super.nextBatch(offer);
+        @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
+            Orphan<B> b = super.nextBatch(offer);
             var handler = this.handler;
             if (backPressured && handler != null) {
                 backPressured = false;
@@ -261,13 +270,14 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
     }
 
-    private final class QueryEmitter<B extends Batch<B>> extends CallbackEmitter<B>
-            implements ClientStreamNode<B> {
+    private final class QueryEmitter<B extends Batch<B>>
+            extends CallbackEmitter<B, QueryEmitter<B>>
+            implements ClientStreamNode<B>, Orphan<QueryEmitter<B>> {
         private final SparqlQuery originalQuery;
         private SparqlQuery boundQuery;
         private @Nullable FullHttpRequest boundRequest;
         private @Nullable B lb;
-        private @Nullable BatchMerger<B> merger;
+        private @Nullable BatchMerger<B, ?> merger;
         private @Nullable Vars mergerFreeVars;
         private @Nullable NettyHandler handler;
         private @MonotonicNonNull Channel lastCh;
@@ -281,6 +291,19 @@ public class NettySparqlClient extends AbstractSparqlClient {
             this.originalQuery = query;
             this.boundQuery    = query;
             acquireRef();
+        }
+
+        @Override public QueryEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        @Override protected void doRelease() {
+            var boundRequest = this.boundRequest;
+            if (boundRequest != null) {
+                boundRequest.release();
+                this.boundRequest = null;
+            }
+            lb = Batch.safeRecycle(lb, this);
+            merger = Owned.safeRecycle(merger, this);
+            releaseRef();
         }
 
         /* --- --- --- ChannelBound --- --- --- */
@@ -381,30 +404,27 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override protected void releaseProducer() {}
 
-        @Override protected void doRelease() {
-            var boundRequest = this.boundRequest;
-            if (boundRequest != null) {
-                boundRequest.release();
-                this.boundRequest = null;
-            }
-            lb = batchType().recycle(lb);
-            if (this.merger != null) {
-                this.merger.release();
-                this.merger = null;
-            }
-            releaseRef();
-        }
 
         @Override public int preferredRequestChunk() {
             return 8*super.preferredRequestChunk();
         }
 
-        @Override protected @Nullable B deliver(B b) {
-            if (merger == null)
-                b = super.deliver(b);
-            else
-                bt.recycle(super.deliver(merger.merge(null, lb, 0, b)));
-            return b;
+        @Override protected void deliver(Orphan<B> orphan) {
+            if (merger != null) {
+                B b = orphan.takeOwnership(this);
+                orphan = merger.merge(pollDownstreamFillingBatch(), lb, 0, b);
+                b.recycle(this);
+            }
+            super.deliver(orphan);
+        }
+        @Override protected void deliverByCopy(B b) {
+            if (merger == null) {
+                super.deliverByCopy(b);
+            } else {
+                Orphan<B> orphan = merger.merge(pollDownstreamFillingBatch(), lb, 0, b);
+                beforeDelivery(orphan);
+                deliver0(orphan);
+            }
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -413,14 +433,14 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 boundQuery = originalQuery.bound(binding);
                 var freeVars = boundQuery.publicVars();
                 if (freeVars.size() == originalQuery.publicVars().size()) {
-                    lb = bt.recycle(lb);
+                    lb = Batch.recycle(lb, this);
                     merger = null;
                 } else {
                     if (!freeVars.equals(mergerFreeVars)) {
                         mergerFreeVars = freeVars;
-                        merger          = bt.merger(vars, binding.vars, vars);
+                        merger          = bt.merger(vars, binding.vars, vars).takeOwnership(this);
                     }
-                    binding.putRow(lb = bt.empty(lb, binding.vars.size()));
+                    binding.putRow(lb = bt.empty(lb, this, binding.vars.size()));
                 }
                 var boundRequest = this.boundRequest;
                 if (boundRequest != null) {
@@ -452,7 +472,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private @Nullable ClientStreamNode<?> downstream;
         private @Nullable ResultsParser<?> parser;
         private @Nullable Charset decodeCS;
-        private ByteBufRopeView bbView = ByteBufRopeView.create();
+        private ByteBufRopeView bbView = new ByteBufRopeView(new SegmentRopeView());
+        private @Nullable MutableRope decodeTmp;
         private @Nullable String info;
 
         public NettyHandler() { super(netty.executor()); }
@@ -487,6 +508,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
                           cause == null ? null : cause.getClass().getSimpleName(), cause);
             }
             downstream = null;
+            if (decodeTmp != null)
+                decodeTmp.close();
         }
 
         /* --- --- --- ChannelBound --- --- --- */
@@ -537,16 +560,25 @@ public class NettySparqlClient extends AbstractSparqlClient {
             var parser = requireNonNull(this.parser);
             try {
                 var bb = content.content();
-                parser.feedShared(decodeCS == null ? bbView.wrapAsSingle(bb)
-                                                   : new ByteRope(bb.toString(decodeCS)));
+                if (decodeCS == null)
+                    parser.feedShared(bbView.wrapAsSingle(bb));
+                else
+                    feedDecoded(parser, bb); // cold
             } catch (TerminatedException | CancelledException e) {
                 journal("parser already terminated, err=", e, "on", this);
                 cancel(requireNonNull(downstream).cookie());
             }
         }
 
+        private void feedDecoded(ResultsParser<?> parser,
+                                 ByteBuf bb) throws CancelledException, TerminatedException {
+            if (decodeTmp == null) decodeTmp = new MutableRope(bb.readableBytes());
+            else                   decodeTmp.clear();
+            parser.feedShared(decodeTmp.append(bb.toString(decodeCS)));
+        }
+
         @Override
-        protected void onFailureResponse(@Nullable HttpResponse response, @Nullable ByteRope body, boolean bodyComplete) {
+        protected void onFailureResponse(@Nullable HttpResponse response, @Nullable MutableRope body, boolean bodyComplete) {
             String msg;
             if (response == null) {
                 if (downstream != null && downstream.retry())
@@ -596,7 +628,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
             super.channelUnregistered(ctx);
-            bbView.recycle();
+            bbView.close();
             bbView = null;
         }
     }

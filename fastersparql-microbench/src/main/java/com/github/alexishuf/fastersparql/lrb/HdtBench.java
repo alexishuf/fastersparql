@@ -6,11 +6,12 @@ import com.github.alexishuf.fastersparql.hdt.FSHdtProperties;
 import com.github.alexishuf.fastersparql.hdt.HdtSparqlClient;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatch;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.openjdk.jmh.annotations.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +21,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.concurrent.TimeUnit;
+
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 
 @State(Scope.Thread)
 @Threads(1)
@@ -40,6 +43,8 @@ public class HdtBench {
             PREFIX  owl: <http://www.w3.org/2002/07/owl#>
             PREFIX foaf: <http://xmlns.com/foaf/0.1/>
             """;
+    private static final FinalSegmentRope DUMP_SP          = asFinal(PROLOGUE+"SELECT * WHERE { ?s ?p ?o }");
+    private static final FinalSegmentRope DUMP_DISTINCT_SP = asFinal(PROLOGUE+"SELECT DISTINCT ?p WHERE { ?s ?p ?o }");
     private File nytFile;
     private HdtSparqlClient nyt;
     private SparqlQuery dump;
@@ -60,9 +65,11 @@ public class HdtBench {
         String url = "file://" + nytFile.getAbsolutePath().replace(" ", "%20");
         nyt = new HdtSparqlClient(SparqlEndpoint.parse(url));
         Async.waitStage(nyt.estimator().ready());
-        var p = new SparqlParser();
-        dump = p.parse(Rope.of(PROLOGUE, "SELECT * WHERE { ?s ?p ?o }"), 0);
-        distinctPredicates = p.parse(Rope.of(PROLOGUE,"SELECT DISTINCT ?p WHERE { ?s ?p ?o }"), 0);
+        try (var pGuard = new Guard<SparqlParser>(this)) {
+            var p = pGuard.set(SparqlParser.create());
+            dump = p.parse(DUMP_SP, 0);
+            distinctPredicates = p.parse(DUMP_DISTINCT_SP, 0);
+        }
     }
 
     @Setup(Level.Iteration) public void iterationSetup() {
@@ -75,15 +82,15 @@ public class HdtBench {
 
     private double query(SparqlClient client, SparqlQuery query) {
         int total = 0, lits = 0;
-        try (var it = client.query(HdtBatchType.HDT, query)) {
-            for (HdtBatch b = null; (b = it.nextBatch(b)) != null; ) {
-                for (var n = b; n != null; n = n.next) {
-                    for (short r = 0, rows = n.rows, cols = n.cols; r < rows; r++) {
+        try (var g = new Guard.ItGuard<>(this, client.query(HdtBatchType.HDT, query))) {
+            for (HdtBatch b; (b = g.nextBatch()) != null; ) {
+                for (; b != null; b = b.next) {
+                    for (short r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
                         for (int c = 0; c < cols; c++) {
-                            if (n.termType(r, c) == Term.Type.LIT) ++lits;
+                            if (b.termType(r, c) == Term.Type.LIT) ++lits;
                         }
                     }
-                    total += n.rows * n.cols;
+                    total += b.rows * b.cols;
                 }
             }
         }

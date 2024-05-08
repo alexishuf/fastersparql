@@ -13,7 +13,9 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
-import org.checkerframework.checker.nullness.qual.NonNull;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -29,6 +31,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
+import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ScatterStageTest {
@@ -48,24 +51,31 @@ class ScatterStageTest {
     @BeforeAll static void beforeAll() { Batch.makeValidationCheaper(); }
     @AfterAll  static void  afterAll() { Batch.restoreValidationCheaper(); }
 
-    private static final class P extends TaskEmitter<CompressedBatch> {
+    private static final class P extends TaskEmitter<CompressedBatch, P> implements Orphan<P> {
         private @Nullable CompressedBatch current;
         private final boolean injectCancel;
         private final @Nullable RuntimeException injectFail;
         private int absRow, relRow;
         private final int totalRows;
 
-        public P(@NonNull CompressedBatch expected, boolean injectCancel,
+        public P(Orphan<CompressedBatch> expected, boolean injectCancel,
                  @Nullable RuntimeException injectFail) {
             super(COMPRESSED, XY, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
-            assert expected.validate(Batch.Validation.CHEAP);
-            this.current = expected;
-            this.totalRows = expected.totalRows();
+            this.current = expected.takeOwnership(this);
+            assert current.validate(Batch.Validation.CHEAP);
+            this.totalRows = current.totalRows();
             this.injectCancel = injectCancel;
             this.injectFail = injectFail;
             if (ResultJournal.ENABLED)
                 ResultJournal.initEmitter(this, vars);
         }
+
+        @Override protected void doRelease() {
+            current = Owned.recycle(current, this);
+            super.doRelease();
+        }
+
+        @Override public P takeOwnership(Object o) {return takeOwnership0(o);}
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
             throw new UnsupportedOperationException();
@@ -85,7 +95,7 @@ class ScatterStageTest {
                 else                         return COMPLETED;
             }
             assert current != null;
-            COMPRESSED.recycleForThread(threadId, deliver(current.dupRow(relRow, threadId)));
+            deliver(current.dupRow(relRow, threadId));
             ++absRow;
             ++relRow;
             return state;
@@ -97,46 +107,57 @@ class ScatterStageTest {
     record D(int consumersCount, int height, @Nullable RuntimeException error, boolean cancel)
             implements Runnable {
         public void run() {
-            var expected = makeExpected();
-            P producer = new P(expected, cancel, error);
-            var scatter = new ScatterStage<>(producer);
             List<CollectingReceiver<CompressedBatch>> receivers = new ArrayList<>();
-            for (int i = 0; i < consumersCount; i++) {
-                var r = new CollectingReceiver<>(scatter.createConnector());
-                receivers.add(r);
-            }
-            for (int i = 0; i < consumersCount; i++)
-                receivers.get(i).start();
+            ScatterStage<CompressedBatch> scatter;
+            P producer;
+            try (var expectedG = new Guard.BatchGuard<CompressedBatch>(this)) {
+                var expected = expectedG.set(makeExpected());
+                producer = new P(makeExpected(), cancel, error);
+                scatter = new ScatterStage<>(producer);
+                for (int i = 0; i < consumersCount; i++)
+                    receivers.add(CollectingReceiver.create(scatter.createConnector()).takeOwnership(this));
+                for (int i = 0; i < consumersCount; i++)
+                    receivers.get(i).start();
 
-            for (int i = 0; i < consumersCount; i++) {
-                var rcv = receivers.get(i);
-                try {
-                    CompressedBatch actual = rcv.get();
-                    assertEquals(expected, actual, "consumer="+i);
-                    if (error != null) fail("Expected onError(" + error + "), consumer="+i);
-                    if (cancel) fail("Expected onCancelled(), consumer="+i);
-                } catch (InterruptedException e) {
-                    fail(e);
-                } catch (ExecutionException e) {
-                    if (error == null && !cancel)
-                        fail("Unexpected error", e);
-                    if (error != null)
-                        assertSame(error, e.getCause());
-                    if (cancel)
-                        assertInstanceOf(FSCancelledException.class, e.getCause());
+                for (int i = 0; i < consumersCount; i++) {
+                    var rcv = receivers.get(i);
+                    try {
+                        CompressedBatch actual = rcv.get();
+                        assertEquals(expected, actual, "consumer="+i);
+                        if (error != null) fail("Expected onError(" + error + "), consumer="+i);
+                        if (cancel) fail("Expected onCancelled(), consumer="+i);
+                    } catch (InterruptedException e) {
+                        fail(e);
+                    } catch (ExecutionException e) {
+                        if (error == null && !cancel)
+                            fail("Unexpected error", e);
+                        if (error != null)
+                            assertSame(error, e.getCause());
+                        if (cancel)
+                            assertInstanceOf(FSCancelledException.class, e.getCause());
+                    }
                 }
+            } finally {
+                for (CollectingReceiver<CompressedBatch> r : receivers)
+                    Owned.safeRecycle(r, this);
+                // recycling of receivers must cause recycling of scatter
             }
+            // recycling of receivers must cause recycling of scatter
+            assertFalse(scatter.isAlive());
+            for (long d = nanoTime()+1_000_000_000; producer.isAlive() && nanoTime() < d; )
+                Thread.yield();
+            assertFalse(producer.isAlive());
         }
 
-        private CompressedBatch makeExpected() {
-            var expected = COMPRESSED.create(2);
+        private Orphan<CompressedBatch> makeExpected() {
+            var expected = COMPRESSED.create(2).takeOwnership(this);
             for (int r = 0; r < height; r++) {
                 expected.beginPut();
                 expected.putTerm(0, INTEGERS[r]);
                 expected.putTerm(1, URIS[r]);
                 expected.commitPut();
             }
-            return expected;
+            return expected.releaseOwnership(this);
         }
     }
 
@@ -167,7 +188,7 @@ class ScatterStageTest {
 
     @ParameterizedTest @MethodSource
     void test(D d) {
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 200; i++) {
             Watchdog.reset();
             try (var w = Watchdog.spec("test").threadStdOut(100).create()) {
                 w.start(2_000_000_000L);

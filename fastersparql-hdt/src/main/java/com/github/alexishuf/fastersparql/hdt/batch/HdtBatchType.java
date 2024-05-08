@@ -1,39 +1,36 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.dedup.WeakDedup;
 import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
-import com.github.alexishuf.fastersparql.batch.type.*;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchConverter;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.IdBatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+
+import java.util.function.Supplier;
+
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 
 public class HdtBatchType extends IdBatchType<HdtBatch> {
+    private static final class HdtBatchFac implements Supplier<HdtBatch> {
+        @Override public HdtBatch get() {
+            long[] ids = new long[PREFERRED_BATCH_TERMS];
+            return new HdtBatch.Concrete(ids, (short)1).takeOwnership(RECYCLED);
+        }
+        @Override public String toString() {return "HdtStoreBathc.FAC";}
+    }
+
     public static final HdtBatchType HDT = new HdtBatchType();
 
-    static {
-        WeakDedup.registerBatchType(HDT);
-    }
-
-    private static final class HdtBatchFactory implements BatchPool.Factory<HdtBatch> {
-        @Override public HdtBatch create() {
-            var b = new HdtBatch(PREFERRED_BATCH_TERMS, (short)1, false);
-            b.markPooled();
-            return b;
-        }
-    }
-
-    private static final class SizedHdtBatchFactory implements LevelBatchPool.Factory<HdtBatch> {
-        @Override public HdtBatch create(int terms) {
-            HdtBatch b = new HdtBatch(terms, (short) 1, true);
-            b.markPooled();
-            return b;
-        }
-    }
-
     public HdtBatchType() {
-        super(HdtBatch.class, new HdtBatchFactory(), new SizedHdtBatchFactory());
+        super(HdtBatch.class, new HdtBatchFac());
     }
 
     public static final class Converter implements BatchConverter<HdtBatch> {
@@ -42,7 +39,8 @@ public class HdtBatchType extends IdBatchType<HdtBatch> {
         @Override public <I extends Batch<I>> BIt<HdtBatch> convert(BIt<I> in) {
             return HDT.convert(in, dictId);
         }
-        @Override public <I extends Batch<I>> Emitter<HdtBatch> convert(Emitter<I> in) {
+        @Override public <I extends Batch<I>>
+        Orphan<? extends Emitter<HdtBatch, ?>> convert(Orphan<? extends Emitter<I, ?>> in) {
             return HDT.convert(in, dictId);
         }
     }
@@ -70,35 +68,66 @@ public class HdtBatchType extends IdBatchType<HdtBatch> {
         }
     }
 
-    @Override public <I extends Batch<I>> Emitter<HdtBatch> convert(Emitter<I> emitter) {
-        if (equals(emitter.batchType())) //noinspection unchecked
-            return (Emitter<HdtBatch>) emitter;
+    @Override public <I extends Batch<I>> Orphan<? extends Emitter<HdtBatch, ?>>
+    convert(Orphan<? extends Emitter<I, ?>> emitter) {
+        if (equals(Emitter.peekBatchTypeWild(emitter))) //noinspection unchecked
+            return (Orphan<? extends Emitter<HdtBatch, ?>>)emitter;
         throw new UnsupportedOperationException("use convert(Emitter emitter, int dictId)");
     }
 
-    public <I extends Batch<I>> Emitter<HdtBatch>
-    convert(Emitter<I> upstream, int dictId) {
-        if (upstream.batchType() == HDT) //noinspection unchecked
-            return (Emitter<HdtBatch>) upstream;
-        return new HdtConverterStage<>(upstream, dictId);
+    public <I extends Batch<I>> Orphan<? extends Emitter<HdtBatch, ?>>
+    convert(Orphan<? extends Emitter<I, ?>> upstream, int dictId) {
+        if (Emitter.peekBatchType(upstream) == HDT) //noinspection unchecked
+            return (Orphan<? extends Emitter<HdtBatch, ?>>)upstream;
+        return new HdtConverterStage.Concrete<>(upstream, dictId);
     }
 
-    private static final class HdtConverterStage<I extends Batch<I>>
-            extends ConverterStage<I, HdtBatch> {
+    private static sealed abstract class HdtConverterStage<I extends Batch<I>>
+            extends ConverterStage<I, HdtBatch, HdtConverterStage<I>> {
         private final int dictId;
 
-        public HdtConverterStage(Emitter<I> upstream, int dictId) {
+        public HdtConverterStage(Orphan<? extends Emitter<I, ?>> upstream,
+                                 int dictId) {
             super(HDT, upstream);
             this.dictId = dictId;
         }
 
-        @Override public @Nullable I onBatch(I b) {
+        private static final class Concrete<I extends Batch<I>>
+                extends HdtConverterStage<I> implements Orphan<HdtConverterStage<I>> {
+            public Concrete(Orphan<? extends Emitter<I, ?>> upstream, int dictId) {
+                super(upstream, dictId);
+            }
+            @Override public HdtConverterStage<I> takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+
+        @Override public void onBatchByCopy(I b) {
             if (EmitterStats.ENABLED && stats != null) stats.onBatchPassThrough(b);
             int rows = b == null ? 0 : b.rows;
-            if (rows == 0) return b;
-            var dst = HDT.createForThread(threadId, cols).putConverting(b, dictId);
-            batchType.recycleForThread(threadId, downstream.onBatch(dst));
-            return b;
+            if (rows > 0)  {
+                var dst = HDT.createForThread(threadId, cols).takeOwnership(this);
+                dst.putConverting(b, dictId);
+                downstream.onBatch(dst.releaseOwnership(this));
+            }
         }
+    }
+
+    @Override public int hashId(long id) {
+        if (id == 0) return Rope.FNV_BASIS;
+        Term term = IdAccess.toTerm(id);
+        return term == null ? Rope.FNV_BASIS : term.hashCode();
+    }
+
+    @Override public boolean equals(long lId, long rId) {
+        return HdtBatch.equals(lId, rId);
+    }
+
+    @Override public ByteSink<?, ?> appendNT(ByteSink<?, ?> sink, long id, byte[] nullValue) {
+        CharSequence cs = IdAccess.toString(id);
+        if (cs != null && !cs.isEmpty())
+            sink.append(cs);
+        else
+            sink.append(nullValue);
+        return sink;
     }
 }

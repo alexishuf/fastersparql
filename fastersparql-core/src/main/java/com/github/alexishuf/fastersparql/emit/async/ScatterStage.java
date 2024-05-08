@@ -13,6 +13,8 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -25,7 +27,9 @@ import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxAcquire
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
-public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiver<B> {
+public class ScatterStage<B extends Batch<B>>
+        extends Stateful<ScatterStage<B>>
+        implements Receiver<B> {
     private static final VarHandle REQ, OLDEST;
     static {
         try {
@@ -41,7 +45,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
             .build();
     private static final int CLOG_SHIFT = 1;
 
-    private final Emitter<B> upstream;
+    private final Emitter<B, ?> upstream;
     private int connectorsCount;
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[12];
     private final BatchType<B> batchType;
@@ -54,16 +58,36 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
     private final Vars vars;
     private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
-    public ScatterStage(Emitter<B> upstream) {
+    public ScatterStage(Orphan<? extends Emitter<B, ?>> upstreamOrphan) {
         super(CREATED, SCATTER_FLAGS);
+        this.upstream  = upstreamOrphan.takeOwnership(this);
         this.batchType = upstream.batchType();
         this.vars      = upstream.vars();
-        this.upstream  = upstream;
         this.maxDelta  = upstream.preferredRequestChunk()<<CLOG_SHIFT;
         upstream.subscribe(this);
+        takeOwnership0(vars); // connectors collectively own the ScatterStage
     }
 
-    public Connector<B> createConnector() {
+    @Override protected void doRelease() {
+        super.doRelease();
+        upstream.recycle(this);
+    }
+
+    private void onConnectorRecycled() {
+        int st = lock(statePlain());
+        try {
+            if (!isAlive())
+                return; // already recycled
+            for (int i = 0; i < connectorsCount; i++) {
+                if (connectors[i].isAlive())
+                    return; // alive connector, do not recycle ScatterStage
+            }
+            recycle(vars);
+        } finally { unlock(st); }
+    }
+
+    public Orphan<Connector<B>> createConnector() {
+        requireAlive();
         int st = lock(statePlain());
         try {
             if ((st&IS_INIT) == 0)
@@ -72,8 +96,9 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
                 connectors = Arrays.copyOf(connectors, connectors.length<<1);
                 clocks     = Arrays.copyOf(clocks,         clocks.length<<1);
             }
-            var conn = new Connector<>(this, connectorsCount++);
-            return connectors[conn.index] = conn;
+            var orphan = new Connector.Concrete<>(this, connectorsCount++);
+            connectors[((Connector<B>)orphan).index] = orphan;
+            return orphan;
         } finally {
             unlock(st);
         }
@@ -97,9 +122,9 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
         int state = statePlain();
         boolean clogged = max-min > maxDelta;
         if (clogged && (state&CLOGGED) == 0)
-            state = setFlagsRelease(state, CLOGGED);
+            state = setFlagsRelease(CLOGGED);
         else if (!clogged && (state&CLOGGED) != 0)
-            state = clearFlagsRelease(state, CLOGGED);
+            state = clearFlagsRelease(CLOGGED);
         OLDEST.setRelease(this, min);
         return state;
     }
@@ -107,6 +132,7 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
     private boolean doCancel() {
         return moveStateRelease(statePlain(), CANCEL_REQUESTED) && upstream.cancel();
     }
+
 
     /* --- --- --- StreamNode --- --- --- */
 
@@ -127,17 +153,27 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
 
     /* --- --- --- Receiver --- --- --- */
 
-    @Override public @Nullable B onBatch(B batch) {
+    @Override public void onBatch(Orphan<B> orphan) {
+        B batch = orphan.takeOwnership(this);
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onBatchPassThrough(batch);
+        int last = connectorsCount - 1, rows = batch.totalRows();
+        delivered += rows; // Connector.request() requires this write before REQ.release
+        REQ.getAndAddRelease(this, (long)-rows);
+        for (int i = 0; i < last; i++)
+            connectors[i].downstream.onBatchByCopy(batch);
+        connectors[last].downstream.onBatch(batch.releaseOwnership(this));
+    }
+
+    @Override public void onBatchByCopy(B batch) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchPassThrough(batch);
         int last = connectorsCount-1, rows = batch.totalRows();
         delivered += rows; // Connector.request() requires this write before REQ.release
         REQ.getAndAddRelease(this, (long)-rows);
-        B copy = null;
         for (int i = 0; i < last; i++)
-            copy = connectors[i].downstream.onBatch(copy == null ? batch.dup() : copy);
-        batchType.recycle(copy);
-        return connectors[last].downstream.onBatch(batch);
+            connectors[i].downstream.onBatchByCopy(batch);
+        connectors[last].downstream.onBatchByCopy(batch);
     }
 
     private int beginTerminationDelivery(int termState) {
@@ -176,24 +212,40 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
     }
 
     /* --- --- --- Connector --- --- --- */
-    public static final class Connector<B extends Batch<B>> implements Stage<B, B> {
+    public static abstract sealed class Connector<B extends Batch<B>>
+            extends AbstractOwned<Connector<B>>
+            implements Stage<B, B, Connector<B>> {
         private final ScatterStage<B> p;
         private Receiver<B> downstream;
         private final int index;
 
-        public Connector(ScatterStage<B> parent, int index) {
+        protected Connector(ScatterStage<B> parent, int index) {
             this.p = parent;
             this.index = index;
         }
 
+        private static final  class Concrete<B extends Batch<B>>
+                extends Connector<B>
+                implements Orphan<Connector<B>> {
+            public Concrete(ScatterStage<B> parent, int index) {super(parent, index);}
+            @Override public Connector<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        @Override public @Nullable Connector<B> recycle(Object currentOwner) {
+            internalMarkGarbage(currentOwner);
+            p.onConnectorRecycled();
+            return null;
+        }
+
         /* --- --- --- Stage --- --- --- */
 
-        @Override public @This Stage<B, B> subscribeTo(Emitter<B> upstream) {
-            if (upstream != p.upstream) throw new MultipleRegistrationUnsupportedException(this);
+        @Override public @This Connector<B> subscribeTo(Orphan<? extends Emitter<B, ?>> orphan) {
+            if (orphan != p.upstream)
+                throw new MultipleRegistrationUnsupportedException(this);
             return this;
         }
 
-        @Override public Emitter<B> upstream() { return p.upstream; }
+        @Override public Emitter<B, ?> upstream() { return p.upstream; }
 
         /* --- --- --- StreamNode --- --- --- */
 
@@ -219,14 +271,6 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
 
         /* --- --- --- Rebindable --- --- --- */
 
-        @Override public void rebindAcquire() {
-            p.delayRelease();
-            p.upstream.rebindAcquire();
-        }
-        @Override public void rebindRelease() {
-            p.allowRelease();
-            p.upstream.rebindRelease();
-        }
         @Override public void rebindPrefetch(BatchBinding b) { p.upstream.rebindPrefetch(b); }
         @Override public void rebindPrefetchEnd()            { p.upstream.rebindPrefetchEnd(); }
         @Override public Vars bindableVars()                 { return p.upstream.bindableVars(); }
@@ -256,7 +300,8 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
 
         /* --- --- --- Receiver --- --- --- */
 
-        @Override public @Nullable B onBatch(B batch)  {throw new UnsupportedOperationException();}
+        @Override public void onBatch(Orphan<B> batch) {throw new UnsupportedOperationException();}
+        @Override public void onBatchByCopy(B batch)   {throw new UnsupportedOperationException();}
         @Override public void onComplete()             {throw new UnsupportedOperationException();}
         @Override public void onCancelled()            {throw new UnsupportedOperationException();}
         @Override public void onError(Throwable cause) {throw new UnsupportedOperationException();}
@@ -300,7 +345,6 @@ public class ScatterStage<B extends Batch<B>> extends Stateful implements Receiv
                 if ((rows = Math.max(p.plainReq, rows)) > 0)
                     p.upstream.request(rows);
             }
-
         }
     }
 

@@ -1,13 +1,14 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -27,7 +28,10 @@ class ExprTest {
 
     @ParameterizedTest @MethodSource
     void testVars(String exprString, Vars expected) {
-        Expr e = new ExprParser().parse(SegmentRope.of(exprString));
+        Expr e;
+        try (var parserGuard = new Guard<ExprParser>(this)) {
+            e = parserGuard.set(ExprParser.create()).parse(asFinal(exprString));
+        }
         Vars.Mutable vars = new Vars.Mutable(10);
         assertEquals(expected.size(), Expr.addVars(vars, e));
         assertEquals(expected, vars);

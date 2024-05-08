@@ -1,10 +1,14 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
-public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
+public interface RowBucket<B extends Batch<B>, R extends RowBucket<B, R>>
+        extends Iterable<B>, Owned<R> {
     @SuppressWarnings("unused") BatchType<B> batchType();
 
     /**
@@ -30,17 +34,10 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
     void clear(int rowsCapacity, int cols);
 
     /**
-     * Releases internal resources which are pooled. This MAY change {@link #capacity()} and
-     * {@link #cols()} MAY clear totally or partially the contents of this bucket.
-     *
-     * <p>A subsequent {@link #clear(int, int)} call will restore the bucket to a determined
-     * capacity and will reset all rows.</p>
+     * Makes a future {@link #recycle(Object)} offer {@code this} bucket to {@code pool}.
+     * @param pool a pool where {@code this} may be stored after a {@link #recycle(Object)}.
      */
-    @Nullable RowBucket<B> recycleInternals();
-
-    boolean poolInto(LIFOPool<RowBucket<B>> pool);
-
-    void unmarkPooled();
+    @This R setPool(LIFOPool<RowBucket<B, ?>> pool);
 
     /** How many rows fit in this bucket. */
     int capacity();
@@ -70,7 +67,7 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
     /**
      * Copy row {@code row} of {@code other} into row {@code dst} of {@code this} {@link RowBucket}.
      */
-    void set(int dst, RowBucket<B> other, int src);
+    void set(int dst, RowBucket<B, ?> other, int src);
 
     /** Appends the {@code srcRow}-th row of this bucket to the end of {@code dst}. */
     void putRow(B dst, int srcRow);
@@ -99,15 +96,16 @@ public interface RowBucket<B extends Batch<B>> extends Iterable<B> {
     int hashCode(int row);
 
     /** Create a string representation of this bucket. */
-    @SuppressWarnings("unused") default ByteRope dump() {
-        var br = new ByteRope();
-        br.append('[');
-        int rows = capacity();
-        for (int r = 0; r < rows; r++)
-            dump(br.append('\n').append(' '), r);
-        return br.append('\n').append(']');
+    @SuppressWarnings("unused") default FinalSegmentRope dump() {
+        try (var br = PooledMutableRope.get()) {
+            br.append('[');
+            int rows = capacity();
+            for (int r = 0; r < rows; r++)
+                dump(br.append('\n').append(' '), r);
+            return br.append('\n').append(']').take();
+        }
     }
 
     /** Append a representation of the {@code row}-th row of this bucket to {@code dest} */
-    void dump(ByteRope dest, int row);
+    void dump(MutableRope dest, int row);
 }

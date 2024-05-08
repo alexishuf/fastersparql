@@ -32,6 +32,7 @@ package com.github.alexishuf.fastersparql.batch;
 
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.openjdk.jcstress.annotations.*;
 import org.openjdk.jcstress.infra.results.L_Result;
 
@@ -46,8 +47,8 @@ import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 @Outcome(id = "0,1,2,3,4,5,6,7", expect = Expect.ACCEPTABLE, desc = "Only allowed outcome.")
 @State
 public class QueueWrappingSPSCUnitBItCTest extends BItCTest {
-    private static TermBatch[] makeBatches() {
-        var batches = new TermBatch[8];
+    @SuppressWarnings("unchecked") private static Orphan<TermBatch>[] makeBatches() {
+        var batches = new Orphan[8];
         for (int i = 0; i < batches.length; i++)
             batches[i] = TermBatch.of(List.of(INTS[i]));
         return batches;

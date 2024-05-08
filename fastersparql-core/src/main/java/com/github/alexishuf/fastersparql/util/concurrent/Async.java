@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 
 import java.lang.invoke.VarHandle;

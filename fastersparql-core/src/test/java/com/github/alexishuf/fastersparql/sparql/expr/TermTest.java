@@ -1,11 +1,9 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -17,7 +15,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.PrefixAssigner.CANON;
 import static com.github.alexishuf.fastersparql.sparql.PrefixAssigner.NOP;
@@ -227,47 +225,49 @@ class TermTest {
     }
 
     @Test void testTypedBadSuffix() {
-        assertEquals(Term.plainString("0"), Term.wrap(new ByteRope("\"0\""), EMPTY));
-        assertEquals(Term.plainString("0"), Term.wrap(new ByteRope("\"0\""), null));
-        assertThrows(IllegalArgumentException.class, () -> Term.wrap(new ByteRope("\"0\""), P_XSD));
+        var zero = asFinal("\"0\"");
+        assertEquals(Term.plainString("0"), Term.wrap(zero, FinalSegmentRope.EMPTY));
+        assertEquals(Term.plainString("0"), Term.wrap(zero, null));
+        assertThrows(IllegalArgumentException.class, () -> Term.wrap(zero, P_XSD));
     }
 
     @Test void testPrefixed() {
+        FinalSegmentRope local = asFinal("integer>");
         assertEquals("<http://www.w3.org/2001/XMLSchema#integer>",
-                     Term.wrap(P_XSD, new ByteRope("integer>")).toString());
-        assertEquals(XSD_INTEGER, Term.wrap(P_XSD, new ByteRope("integer>")));
-        assertSame(XSD_INTEGER, Term.wrap(P_XSD, new ByteRope("integer>")));
+                     Term.wrap(P_XSD, local).toString());
+        assertEquals(XSD_INTEGER, Term.wrap(P_XSD, local));
+        assertSame(XSD_INTEGER, Term.wrap(P_XSD, local));
     }
 
     @Test void testPrefixedRopeInterns() {
-        assertSame(XSD_INTEGER, Term.wrap(P_XSD, SegmentRope.of("integer>")));
-        assertSame(XSD_INTEGER, Term.wrap(P_XSD, SegmentRope.of("xsd:integer>").sub(4, 12)));
+        assertSame(XSD_INTEGER, Term.wrap(P_XSD, asFinal("integer>")));
+        assertSame(XSD_INTEGER, Term.wrap(P_XSD, asFinal("xsd:integer>").sub(4, 12)));
 
-        assertSame(XSD, Term.wrap(P_XSD, SegmentRope.of(">")));
-        assertSame(XSD, Term.wrap(P_XSD, SegmentRope.of("xsd:>").sub(4, 5)));
+        assertSame(XSD, Term.wrap(P_XSD, asFinal(">")));
+        assertSame(XSD, Term.wrap(P_XSD, asFinal("xsd:>").sub(4, 5)));
 
-        assertSame(RDF_TYPE, Term.wrap(P_RDF, SegmentRope.of("type>")));
-        assertSame(RDF_TYPE, Term.wrap(P_RDF, SegmentRope.of(".type>").sub(1, 6)));
+        assertSame(RDF_TYPE, Term.wrap(P_RDF, asFinal("type>")));
+        assertSame(RDF_TYPE, Term.wrap(P_RDF, asFinal(".type>").sub(1, 6)));
     }
 
 
     @Test void testPrefixedInternShortLocal() {
-        var sh = SHARED_ROPES.internPrefixOf(SegmentRope.of("<http://www.example.org/ns#>"), 0, 28);
-        assertEquals(SegmentRope.of("<http://www.example.org/ns#"), sh);
+        var sh = SHARED_ROPES.internPrefixOf(asFinal("<http://www.example.org/ns#>"), 0, 28);
+        assertEquals(asFinal("<http://www.example.org/ns#"), sh);
 
-        assertSame(CLOSE_IRI, Term.wrap(sh, SegmentRope.of(">")).local());
-        assertSame(CLOSE_IRI, Term.wrap(sh, SegmentRope.of(">.").sub(0, 1)).local());
-        assertSame(CLOSE_IRI, Term.wrap(sh, SegmentRope.of(".>,").sub(1, 2)).local());
+        assertSame(CLOSE_IRI, Term.wrap(sh, asFinal(">")).local());
+        assertSame(CLOSE_IRI, Term.wrap(sh, asFinal(">.").sub(0, 1)).local());
+        assertSame(CLOSE_IRI, Term.wrap(sh, asFinal(".>,").sub(1, 2)).local());
 
-        Term xy = Term.wrap(sh, SegmentRope.of("xy>"));
-        assertSame(xy.local(), Term.wrap(sh, SegmentRope.of("xy>")).local());
-        assertSame(xy.local(), Term.wrap(sh, SegmentRope.of("xy>.").sub(0, 3)).local());
-        assertSame(xy.local(), Term.wrap(sh, SegmentRope.of(":xy>").sub(1, 4)).local());
+        Term xy = Term.wrap(sh, asFinal("xy>"));
+        assertSame(xy.local(), Term.wrap(sh, asFinal("xy>")).local());
+        assertSame(xy.local(), Term.wrap(sh, asFinal("xy>.").sub(0, 3)).local());
+        assertSame(xy.local(), Term.wrap(sh, asFinal(":xy>").sub(1, 4)).local());
 
-        Term x = Term.wrap(sh, SegmentRope.of("x>"));
-        assertSame(x.local(), Term.wrap(sh, SegmentRope.of("x>")).local());
-        assertSame(x.local(), Term.wrap(sh, SegmentRope.of("x>.").sub(0, 2)).local());
-        assertSame(x.local(), Term.wrap(sh, SegmentRope.of(":x>").sub(1, 3)).local());
+        Term x = Term.wrap(sh, asFinal("x>"));
+        assertSame(x.local(), Term.wrap(sh, asFinal("x>")).local());
+        assertSame(x.local(), Term.wrap(sh, asFinal("x>.").sub(0, 2)).local());
+        assertSame(x.local(), Term.wrap(sh, asFinal(":x>").sub(1, 3)).local());
     }
 
     @Test void testLang() {
@@ -281,7 +281,7 @@ class TermTest {
     @Test void testIri() {
         for (var iri : List.of("http://example.org/Bob", "http://example.org/1", "http://example.org/aB")) {
             String wrapped = "<" + iri + ">";
-            assertEquals(wrapped, requireNonNull(splitAndWrap(new ByteRope(wrapped))).toString());
+            assertEquals(wrapped, requireNonNull(splitAndWrap(asFinal(wrapped))).toString());
             assertEquals(wrapped, Term.valueOf(wrapped).toString());
             assertEquals(wrapped, Term.iri(wrapped).toString());
             assertEquals(wrapped, Term.iri("<"+iri).toString());
@@ -292,13 +292,16 @@ class TermTest {
 
     @Test void testWrap() {
         String bob = "\"bob\"";
-        var r = new ByteRope(bob);
-        Term term = wrap(r, null);
-        assertEquals(bob, term.toString());
-        assertEquals(Term.Type.LIT, term.type());
+        Term term;
+        try (var mutable = PooledMutableRope.get().append(bob)) {
+            term = wrap(mutable, null);
+            assertEquals(bob, term.toString());
+            assertEquals(Type.LIT, term.type());
 
-        r.u8()[1] = 'r';
-        assertEquals("\"rob\"", term.toString()); // change reflects in term
+            mutable.u8()[1] = 'r';
+            assertEquals(bob, term.toString()); // change does NOT reflect in term
+        }
+        assertEquals(bob, term.toString()); // still valid
     }
 
     @Test void testPlain() {
@@ -339,37 +342,39 @@ class TermTest {
     void testValueOf(String in, String ex) {
         ex = ex == null ? in : ex;
         byte[] u8 = in.getBytes(UTF_8);
-        ByteRope br = new ByteRope(u8);
-        SegmentRope padded = new SegmentRope(ByteBuffer.wrap(("\""+in+"\"").getBytes(UTF_8)));
+        FinalTerm fromMutable = null;
+        try (var mutable = PooledMutableRope.get().append(u8)) {
+            var padded = new FinalSegmentRope(ByteBuffer.wrap(("\"" + in + "\"").getBytes(UTF_8)));
 
-        if (ex.equals("ERROR")) {
-            assertThrows(Throwable.class, () -> Term.valueOf(br));
-            assertThrows(Throwable.class, () -> Term.valueOf(in));
-            assertThrows(Throwable.class, () -> Term.valueOf(br, 0, u8.length));
-            assertThrows(Throwable.class, () -> Term.valueOf(padded, 1, 1+u8.length));
-        } else {
-            assertEquals(ex, Term.valueOf(br).toString());
-            assertEquals(ex, Term.valueOf(in).toString());
-            assertEquals(ex, Term.valueOf(br, 0, u8.length).toString());
-            assertEquals(ex, Term.valueOf(padded, 1, 1+u8.length).toString());
+            if (ex.equals("ERROR")) {
+                assertThrows(Throwable.class, () -> Term.valueOf(mutable));
+                assertThrows(Throwable.class, () -> Term.valueOf(in));
+                assertThrows(Throwable.class, () -> Term.valueOf(mutable, 0, u8.length));
+                assertThrows(Throwable.class, () -> Term.valueOf(padded, 1, 1 + u8.length));
+            } else {
+                fromMutable = valueOf(mutable);
+                assertEquals(ex, fromMutable.toString());
+                assertEquals(ex, Term.valueOf(in).toString());
+                assertEquals(ex, Term.valueOf(mutable, 0, u8.length).toString());
+                assertEquals(ex, Term.valueOf(padded, 1, 1 + u8.length).toString());
+            }
         }
+        if (fromMutable != null)
+            assertEquals(ex, fromMutable.toString()); // must remain valid after br.close
     }
 
     @Test void testValueOfNull() {
-        //noinspection RedundantCast
         assertNull(Term.valueOf((Rope)null));
         assertNull(Term.valueOf(null, 0, 0));
         assertNull(Term.valueOf(null, 0, 23));
-        //noinspection RedundantCast
         assertNull(Term.valueOf((CharSequence) null));
-        //noinspection RedundantCast
         assertNull(Term.valueOf((String) null));
 
-        assertNull(Term.valueOf(EMPTY));
-        assertNull(Term.valueOf(EMPTY, 0, 0));
-        assertNull(Term.valueOf(SegmentRope.of("a"), 1, 1));
-        assertNull(Term.valueOf(SegmentRope.of("a"), 0, 0));
-        assertNull(Term.valueOf(SegmentRope.of("a"), 23, 23));
+        assertNull(Term.valueOf(FinalSegmentRope.EMPTY));
+        assertNull(Term.valueOf(FinalSegmentRope.EMPTY, 0, 0));
+        assertNull(Term.valueOf(asFinal("a"), 1, 1));
+        assertNull(Term.valueOf(asFinal("a"), 0, 0));
+        assertNull(Term.valueOf(asFinal("a"), 23, 23));
         assertNull(Term.valueOf(new StringBuilder()));
         assertNull(Term.valueOf(""));
     }
@@ -385,15 +390,15 @@ class TermTest {
                 arguments(DT_decimal, "\"23.5", Term.typed("23.5", DT_decimal)),
                 arguments(DT_DOUBLE, "\"-1.2e+2", Term.typed("-1.2e+2", DT_DOUBLE)),
 
-                arguments(EMPTY, "\"\"", EMPTY_STRING),
-                arguments(EMPTY, "\"a\"", plainString("a")),
-                arguments(EMPTY, "\" \"", plainString(" ")),
-                arguments(EMPTY, "\"as\"", plainString("as")),
-                arguments(EMPTY, "\"asd\"", plainString("asd")),
-                arguments(EMPTY, "\"Alice\"", plainString("Alice")),
+                arguments(FinalSegmentRope.EMPTY, "\"\"", EMPTY_STRING),
+                arguments(FinalSegmentRope.EMPTY, "\"a\"", plainString("a")),
+                arguments(FinalSegmentRope.EMPTY, "\" \"", plainString(" ")),
+                arguments(FinalSegmentRope.EMPTY, "\"as\"", plainString("as")),
+                arguments(FinalSegmentRope.EMPTY, "\"asd\"", plainString("asd")),
+                arguments(FinalSegmentRope.EMPTY, "\"Alice\"", plainString("Alice")),
 
-                arguments(EMPTY, "\"\"@en", Term.lang("", "en")),
-                arguments(EMPTY, "\"\"@pt-BR", Term.lang("", "pt-BR")),
+                arguments(FinalSegmentRope.EMPTY, "\"\"@en", Term.lang("", "en")),
+                arguments(FinalSegmentRope.EMPTY, "\"\"@pt-BR", Term.lang("", "pt-BR")),
 
                 arguments(P_XSD, "string>", Term.XSD_STRING),
                 arguments(P_XSD, "short>", Term.XSD_SHORT),
@@ -404,48 +409,53 @@ class TermTest {
     }
 
     @ParameterizedTest @MethodSource void testMake(SegmentRope sh, String local, Term expected) {
-        var localRope = new ByteRope(local);
-        var localRope2 = new ByteRope("("+local+")").sub(1, 1+local.length());
-        boolean suffix = local.charAt(0) == '"';
-        Term term = wrap(suffix ? localRope : sh, suffix ? sh : localRope);
-        Term term2 = wrap(suffix ? localRope2 : sh, suffix ? sh : localRope2);
+        boolean suffix;
+        Term term, term2;
+        try (var localRope = PooledMutableRope.get().append(local);
+             var localRope2Outer = PooledMutableRope.get()) {
+            localRope2Outer.append('(').append(local).append(')');
+            var localRope2 = localRope2Outer.sub(1, 1+local.length());
+            suffix = local.charAt(0) == '"';
+            term = wrap(suffix ? localRope : sh, suffix ? sh : localRope);
+            term2 = wrap(suffix ? localRope2 : sh, suffix ? sh : localRope2);
+        } // mutable ropes are invalidated, but terms must remain valid
         assertEquals(expected, term);
         assertEquals(expected, term2);
 
-        if (sh == null) {
+        if (sh == null)
             assertEquals(local, expected.toString());
-        } else if (sh == DT_string) {
+        else if (sh == DT_string)
             assertEquals(local+"\"", requireNonNull(term).toString());
-        } else {
+        else
             assertEquals(suffix ? local+sh : sh+local, term.toString());
-        }
+
     }
 
     @Test void testMakeInvalid() {
-        assertThrows(Throwable.class, () -> Term.wrap(DT_string, new ByteRope("\"asd")));
-        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope("\"")));
-        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope(".")));
-        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope("<\"")));
-        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, new ByteRope("<\".")));
-        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope(">")));
-        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope(".")));
-        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope("<.")));
-        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, new ByteRope(">..")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_string, FinalSegmentRope.asFinal("\"asd")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, FinalSegmentRope.asFinal("\"")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, FinalSegmentRope.asFinal(".")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, FinalSegmentRope.asFinal("<\"")));
+        assertThrows(Throwable.class, () -> Term.wrap(P_XSD, FinalSegmentRope.asFinal("<\".")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, FinalSegmentRope.asFinal(">")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, FinalSegmentRope.asFinal(".")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, FinalSegmentRope.asFinal("<.")));
+        assertThrows(Throwable.class, () -> Term.wrap(DT_integer, FinalSegmentRope.asFinal(">..")));
 
-        assertThrows(Throwable.class, () -> new Term(P_XSD, new ByteRope(">"), true));
+        assertThrows(Throwable.class, () -> new FinalTerm(P_XSD, FinalSegmentRope.asFinal(">"), true));
     }
 
     static Stream<Arguments> testWrapInterns() {
         return Stream.of(
-                arguments(null, new ByteRope("\"\""), EMPTY_STRING),
-                arguments(P_XSD, new ByteRope("anyURI>"), XSD_ANYURI),
-                arguments(P_XSD, new ByteRope(".anyURI>)").sub(1, 8), XSD_ANYURI),
-                arguments(P_XSD, new ByteRope("unsignedInt>"), XSD_UNSIGNEDINT),
-                arguments(P_RDF, new ByteRope("type>"), RDF_TYPE),
-                arguments(P_RDF, new ByteRope("\"type>)").sub(1, 6), RDF_TYPE),
-                arguments(P_RDF, new ByteRope("Property>"), RDF_PROPERTY),
-                arguments(null, new ByteRope("\"1\""), Term.wrap(null, new ByteRope("\"1\""))),
-                arguments(EMPTY, new ByteRope("\"aZ\""), Term.wrap(null, new ByteRope("\"aZ\"")))
+                arguments(null, FinalSegmentRope.asFinal("\"\""), EMPTY_STRING),
+                arguments(P_XSD, FinalSegmentRope.asFinal("anyURI>"), XSD_ANYURI),
+                arguments(P_XSD, FinalSegmentRope.asFinal(".anyURI>)").sub(1, 8), XSD_ANYURI),
+                arguments(P_XSD, FinalSegmentRope.asFinal("unsignedInt>"), XSD_UNSIGNEDINT),
+                arguments(P_RDF, FinalSegmentRope.asFinal("type>"), RDF_TYPE),
+                arguments(P_RDF, FinalSegmentRope.asFinal("\"type>)").sub(1, 6), RDF_TYPE),
+                arguments(P_RDF, FinalSegmentRope.asFinal("Property>"), RDF_PROPERTY),
+                arguments(null, FinalSegmentRope.asFinal("\"1\""), Term.wrap(null, FinalSegmentRope.asFinal("\"1\""))),
+                arguments(FinalSegmentRope.EMPTY, FinalSegmentRope.asFinal("\"aZ\""), Term.wrap(null, FinalSegmentRope.asFinal("\"aZ\"")))
         );
     }
 
@@ -461,17 +471,17 @@ class TermTest {
 
     @Test
     void testMakeInternsIriLocal() {
-        var iri = SegmentRope.of("<http://www.example.org/ns#>");
+        var iri = asFinal("<http://www.example.org/ns#>");
         SegmentRope sh = SHARED_ROPES.internPrefixOf(iri, 0, iri.len);
         assertNotNull(sh);
 
-        assertSame(CLOSE_IRI, requireNonNull(wrap(sh, new ByteRope(">")).local()));
-        Term one = wrap(sh, new ByteRope("1>"));
-        Term ab = wrap(sh, new ByteRope("ab>"));
+        assertSame(CLOSE_IRI, requireNonNull(wrap(sh, FinalSegmentRope.asFinal(">")).local()));
+        Term one = wrap(sh, FinalSegmentRope.asFinal("1>"));
+        Term ab = wrap(sh, FinalSegmentRope.asFinal("ab>"));
         assertNotNull(one);
         assertNotNull(ab);
-        assertSame(one.local(), requireNonNull(wrap(sh, new ByteRope("1>")).local()));
-        assertSame(ab.local(), requireNonNull(wrap(sh, new ByteRope("ab>")).local()));
+        assertSame(one.local(), requireNonNull(wrap(sh, FinalSegmentRope.asFinal("1>")).local()));
+        assertSame(ab.local(), requireNonNull(wrap(sh, FinalSegmentRope.asFinal("ab>")).local()));
     }
 
     static Stream<Arguments> testValueOfReversible() {
@@ -489,8 +499,15 @@ class TermTest {
     @ParameterizedTest @MethodSource
     void testValueOfReversible(String in) {
         byte[] utf8 = in.getBytes(UTF_8);
-        assertEquals(in, valueOf(new ByteRope(utf8)).toString());
-        Term wrapped = valueOf(SegmentRope.of("'\"", new ByteRope(utf8), "<"), 2, 2+utf8.length);
+        FinalTerm termFromTmp;
+        try (var tmp = PooledMutableRope.get().append(utf8)) {
+            termFromTmp = valueOf(tmp);
+            assertEquals(in, termFromTmp.toString());
+        }
+        assertEquals(in, termFromTmp.toString()); // must remain valid
+
+        var padd = RopeFactory.make(3 + utf8.length).add("'").add('"').add(utf8).add('>').take();
+        Term wrapped = valueOf(padd, 2, 2+utf8.length);
         assertEquals(in, wrapped.toString());
         assertEquals(in, valueOf(in).toString());
     }
@@ -501,19 +518,19 @@ class TermTest {
             assertEquals(Type.VAR, t.type());
             assertEquals("x", requireNonNull(t.name()).toString());
         }
-        for (Term t : List.of(valueOf(SegmentRope.of(", ?1"), 2, 4),
-                valueOf(SegmentRope.of("_:$1"), 2, 4))) {
+        for (Term t : List.of(valueOf(asFinal(", ?1"), 2, 4),
+                valueOf(asFinal("_:$1"), 2, 4))) {
             assertEquals(Type.VAR, t.type());
             assertEquals("1", requireNonNull(t.name()).toString());
         }
-        for (Term t : List.of(valueOf(SegmentRope.of(",?test123"), 1, 9),
-                valueOf(SegmentRope.of("$test123")))) {
+        for (Term t : List.of(valueOf(asFinal(",?test123"), 1, 9),
+                valueOf(asFinal("$test123")))) {
             assertEquals(Type.VAR, t.type());
             assertEquals("test123", requireNonNull(t.name()).toString());
         }
 
-        for (Term t : List.of(valueOf("$test"), valueOf(SegmentRope.of("$test")),
-                              valueOf(new SegmentRope(ByteBuffer.wrap(",$test".getBytes(UTF_8))), 1, 6))) {
+        for (Term t : List.of(valueOf("$test"), valueOf(asFinal("$test")),
+                              valueOf(new FinalSegmentRope(ByteBuffer.wrap(",$test".getBytes(UTF_8))), 1, 6))) {
             assertEquals("$test", t.toString());
             assertEquals("$test", t.toString(0, 5));
             assertEquals("test", requireNonNull(t.name()).toString());
@@ -540,35 +557,45 @@ class TermTest {
     @ParameterizedTest @MethodSource
     void testEscapedLexical(String in, String ex) {
         TwoSegmentRope lex = new TwoSegmentRope();
-        valueOf(SegmentRope.of(in)).escapedLexical(lex);
+        valueOf(asFinal(in)).escapedLexical(lex);
         assertEquals(ex, requireNonNull(lex).toString());
 
         valueOf(in).escapedLexical(lex);
         assertEquals(ex, requireNonNull(lex).toString());
 
-        var padded = SegmentRope.of("\"" + in + "\"");
+        var padded = asFinal("\"" + in + "\"");
         valueOf(padded, 1, 1+in.length()).escapedLexical(lex);
         assertEquals(ex, requireNonNull(lex).toString());
 
     }
 
+    private static PrefixAssigner CUSTOM_PREFIX_ASSIGNER;
+
+    static {
+        var customMap = RopeArrayMap.create().takeOwnership(TermTest.class);
+        customMap.put(FinalSegmentRope.asFinal("<http://example.org/"), FinalSegmentRope.EMPTY);
+        customMap.put(FinalSegmentRope.asFinal("<http://xmlns.com/foaf/0.1/"), Rope.asRope("foaf"));
+        var orphan = customMap.releaseOwnership(TermTest.class);
+        CUSTOM_PREFIX_ASSIGNER = PrefixAssigner.create(orphan).takeOwnership(TermTest.class);
+    }
+
+    @AfterAll static void afterAll() {
+        CUSTOM_PREFIX_ASSIGNER = CUSTOM_PREFIX_ASSIGNER.recycle(TermTest.class);
+    }
+
     static Stream<Arguments> testToSparql() {
-        var customMap = new RopeArrayMap();
-        customMap.put(new ByteRope("<http://example.org/"), EMPTY);
-        customMap.put(new ByteRope("<http://xmlns.com/foaf/0.1/"), Rope.of("foaf"));
-        var custom = new PrefixAssigner(customMap);
-        SegmentRope foaf = SHARED_ROPES.internPrefixOf(SegmentRope.of("<http://xmlns.com/foaf/0.1/>"), 0, 28);
+        SegmentRope foaf = SHARED_ROPES.internPrefixOf(asFinal("<http://xmlns.com/foaf/0.1/>"), 0, 28);
         assertNotNull(foaf);
 
         return Stream.of(
-                arguments(NOP, EMPTY, "_:bn", "_:bn"),
-                arguments(NOP, EMPTY, "\"bob\"", "\"bob\""),
-                arguments(NOP, EMPTY, "\"bob\"@en", "\"bob\"@en"),
-                arguments(NOP, EMPTY, "\"bob\"@en-US", "\"bob\"@en-US"),
-                arguments(NOP, EMPTY, "\"\\\"\"", "\"\\\"\""),
-                arguments(NOP, EMPTY, "<>", "<>"),
-                arguments(NOP, EMPTY, "<rel>", "<rel>"),
-                arguments(NOP, EMPTY, "<http://example.org/>", "<http://example.org/>"),
+                arguments(NOP, FinalSegmentRope.EMPTY, "_:bn", "_:bn"),
+                arguments(NOP, FinalSegmentRope.EMPTY, "\"bob\"", "\"bob\""),
+                arguments(NOP, FinalSegmentRope.EMPTY, "\"bob\"@en", "\"bob\"@en"),
+                arguments(NOP, FinalSegmentRope.EMPTY, "\"bob\"@en-US", "\"bob\"@en-US"),
+                arguments(NOP, FinalSegmentRope.EMPTY, "\"\\\"\"", "\"\\\"\""),
+                arguments(NOP, FinalSegmentRope.EMPTY, "<>", "<>"),
+                arguments(NOP, FinalSegmentRope.EMPTY, "<rel>", "<rel>"),
+                arguments(NOP, FinalSegmentRope.EMPTY, "<http://example.org/>", "<http://example.org/>"),
 
                 arguments(NOP, P_XSD, "int>", "<http://www.w3.org/2001/XMLSchema#int>"),
                 arguments(NOP, P_RDF, "object>", "<http://www.w3.org/1999/02/22-rdf-syntax-ns#object>"),
@@ -591,7 +618,7 @@ class TermTest {
                 arguments(CANON, DT_INT, "\"23", "\"23\"^^xsd:int"),
 
                 arguments(NOP, foaf, "knows>", "<http://xmlns.com/foaf/0.1/knows>"),
-                arguments(custom, foaf, "knows>", "foaf:knows")
+                arguments(CUSTOM_PREFIX_ASSIGNER, foaf, "knows>", "foaf:knows")
         );
     }
 
@@ -602,12 +629,13 @@ class TermTest {
                 var ctx = "padLeft=" + padLeft + ", padRight=" + padRight
                         + ", sh=" + sh + ", local=" + local;
                 int off = padLeft.length(), len = local.getBytes(UTF_8).length;
-                ByteRope actual = new ByteRope();
-                byte[] u8 = (padLeft + local + padRight).getBytes(UTF_8);
-                MemorySegment seg = MemorySegment.ofArray(u8);
-                Term.toSparql(actual, assigner, sh, seg, u8, off, len,
-                              sh.len > 0 && sh.get(0) == '"');
-                assertEquals(expected, actual.toString(), ctx);
+                try (var actual = PooledMutableRope.get()) {
+                    byte[] u8 = (padLeft + local + padRight).getBytes(UTF_8);
+                    MemorySegment seg = MemorySegment.ofArray(u8);
+                    Term.toSparql(actual, assigner, sh, seg, u8, off, len,
+                            sh.len > 0 && sh.get(0) == '"');
+                    assertEquals(expected, actual.toString(), ctx);
+                }
             }
         }
     }
@@ -634,10 +662,12 @@ class TermTest {
     @ParameterizedTest @MethodSource
     void testUnescapedLexical(String in, int exSize, String ex) {
         Term term = valueOf(in);
-        ByteRope dest = new ByteRope().append('@');
-        int n = term.unescapedLexical(dest);
-        assertEquals(dest.len, n+1);
-        assertEquals("@"+ex, dest.toString());
+        try (var dest = PooledMutableRope.get()) {
+            dest.append('@');
+            int n = term.unescapedLexical(dest);
+            assertEquals(dest.len, n + 1);
+            assertEquals("@" + ex, dest.toString());
+        }
     }
 
     static Stream<Arguments> testTolerantNumericComparison() {
@@ -675,8 +705,8 @@ class TermTest {
 
     @ParameterizedTest @MethodSource
     void testTolerantNumericComparison(String lStr, String rStr, int expected) {
-        Term l = Objects.requireNonNull(Term.termList(lStr).get(0));
-        Term r = Objects.requireNonNull(Term.termList(rStr).get(0));
+        Term l = Objects.requireNonNull(Term.termList(lStr).getFirst());
+        Term r = Objects.requireNonNull(Term.termList(rStr).getFirst());
         assertEquals( signum(expected), signum(l.compareTo(r)));
         assertEquals(-signum(expected), signum(r.compareTo(l)));
         assertEquals(expected == 0, l.equals(r));

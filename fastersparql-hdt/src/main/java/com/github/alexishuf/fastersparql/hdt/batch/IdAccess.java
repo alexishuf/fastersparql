@@ -1,8 +1,7 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
 import jdk.incubator.vector.ByteVector;
@@ -256,13 +255,13 @@ public class IdAccess {
      * @throws NoDictException if {@code sourcedId} has a {@code dictId} that is invalid or was
      *                          {@link #release(int)}d
      */
-    public static Term toTerm(long sourcedId) {
+    public static FinalTerm toTerm(long sourcedId) {
         var str = pollCached(sourcedId);
         if (str instanceof Term t)
-            return t;
+            return FinalTerm.asFinal(t);
         SegmentRope nt = toNT(sourcedId);
         if (nt == null) return null;
-        Term t = Term.valueOf(nt, 0, nt.len);
+        FinalTerm t = Term.valueOf(nt, 0, nt.len);
         if (t != null)
             offerCache(sourcedId, t);
         return t;
@@ -273,7 +272,7 @@ public class IdAccess {
         if (str instanceof SegmentRope r)
             return r;
         if (str instanceof Term t)
-            return new ByteRope(t.len).append(t);
+            return FinalSegmentRope.asFinal(t);
         str = toString(sourcedId);
         if (str == null)
             return null;
@@ -281,47 +280,46 @@ public class IdAccess {
         int len = str.length();
         SegmentRope rope = switch (str.charAt(0)) {
             case '"' -> {
-                ByteRope esc = new ByteRope((len + B_SP_LEN) & -B_SP_LEN);
+                var esc = PooledMutableRope.getWithCapacity((len + B_SP_LEN) & -B_SP_LEN);
                 esc.append('"');
                 if (u8 == null) {
                     coldEscapeString(esc, str);
-                    yield esc;
-                }
-                int endLex = len -1;
-                while (endLex > 0 && u8[endLex] != '"') --endLex;
-                for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
-                    byte c = 0;
-                    while (i < endLex && ((c=u8[i]) < 0 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
-                        ++i;
-                    esc.append(u8, consumed, i);
-                    if (i >= endLex) break;
-                    esc.append('\\');
-                    switch (c) {
-                        case '\\', '"' -> esc.append(c);
-                        case '\t'      -> esc.append('t');
-                        case '\r'      -> esc.append('r');
-                        case '\n'      -> esc.append('n');
-                        default        -> esc.append(UNICODE_WS, c*5, 5);
+                } else {
+                    int endLex = len -1;
+                    while (endLex > 0 && u8[endLex] != '"') --endLex;
+                    for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
+                        byte c = 0;
+                        while (i < endLex && ((c=u8[i]) < 0 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
+                            ++i;
+                        esc.append(u8, consumed, i);
+                        if (i >= endLex) break;
+                        esc.append('\\');
+                        switch (c) {
+                            case '\\', '"' -> esc.append(c);
+                            case '\t'      -> esc.append('t');
+                            case '\r'      -> esc.append('r');
+                            case '\n'      -> esc.append('n');
+                            default        -> esc.append(UNICODE_WS, c*5, 5);
+                        }
                     }
+                    esc.append(u8, endLex, len);
                 }
-                esc.append(u8, endLex, len);
-                yield esc;
+                yield FinalSegmentRope.asFinal(esc);
             }
-            case '_' -> u8 == null ? new ByteRope(str)
-                                   : new ByteRope(len).append(u8, 0, len);
+            case '_' -> u8 == null ? FinalSegmentRope.asFinal(str.toString())
+                                   : FinalSegmentRope.asFinal(u8, 0, len);
             default -> {
-                ByteRope wrapped = new ByteRope(len + 2).append('<');
-                if (u8 == null) wrapped.append(str);
-                else            wrapped.append(u8, 0, len);
-                wrapped.append('>');
-                yield wrapped;
+                RopeFactory fac = RopeFactory.make(len + 2).add('<');
+                if (u8 == null) fac.add(str);
+                else            fac.add(u8, 0, len);
+                yield fac.add('>').take();
             }
         };
         offerCache(sourcedId, rope);
         return rope;
     }
 
-    private static void coldEscapeString(ByteRope esc, CharSequence in) {
+    private static void coldEscapeString(MutableRope esc, CharSequence in) {
         while (in instanceof DelayedString d) in = d.getInternal();
         int endLex = in.length()-1;
         while (endLex > 0 && in.charAt(endLex) != '"') --endLex;
@@ -495,10 +493,17 @@ public class IdAccess {
             case LIT -> {
                 int endLex = t.endLex(), required = 1 + t.unescapedLexicalSize() + t.len-endLex;
                 var str = new ReplazableString(required);
-                var unescaped = new ByteRope(str.getBuffer(), 0, 0);
-                unescaped.append('"');
-                t.unescapedLexical(unescaped);
-                unescaped.append(t, endLex, t.len);
+                byte[] buf = str.getBuffer();
+                if (required == t.len) { // no escapes
+                    t.copy(0, required, buf, 0);
+                } else { // has escape sequences
+                    try (var tmp = PooledMutableRope.get()) {
+                        tmp.append('"');
+                        t.unescapedLexical(tmp);
+                        tmp.append(t, endLex, t.len);
+                        tmp.copy(0, tmp.len, buf, 0);
+                    }
+                }
                 yield str;
             }
         };

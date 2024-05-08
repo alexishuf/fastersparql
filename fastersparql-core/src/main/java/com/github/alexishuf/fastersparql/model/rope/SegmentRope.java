@@ -2,7 +2,7 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.Vector;
 import org.checkerframework.checker.nullness.qual.NonNull;
@@ -14,7 +14,6 @@ import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 
-import static com.github.alexishuf.fastersparql.model.rope.ByteRope.*;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Integer.numberOfTrailingZeros;
@@ -25,8 +24,12 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
-public class SegmentRope extends PlainRope {
-    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+@SuppressWarnings("resource")
+public abstract class SegmentRope extends PlainRope {
+    protected static final boolean DEBUG = SegmentRope.class.desiredAssertionStatus();
+
+    public static final byte[]        EMPTY_UTF8    = Bytes.EMPTY.arr;
+    public static final MemorySegment EMPTY_SEGMENT = Bytes.EMPTY.segment;
 
     public long offset;
     public byte @Nullable [] utf8;
@@ -34,69 +37,48 @@ public class SegmentRope extends PlainRope {
 
     public SegmentRope() {
         super(0);
-        this.offset = 0;
-        this.utf8 = EMPTY_UTF8;
+        this.offset  = 0;
+        this.utf8    = EMPTY_UTF8;
         this.segment = EMPTY_SEGMENT;
     }
-    public SegmentRope(ByteBuffer buffer) {
-        this(MemorySegment.ofBuffer(buffer), null, 0, buffer.remaining());
+
+    protected static void checkRange(long offset, int len, long cap) {
+        if (offset < 0 || len < 0 ||  offset+len > cap) {
+            String msg = len < 0 ? "negative len" : "range [offset,offset+len) is out of bounds";
+            throw new IndexOutOfBoundsException(msg);
+        }
     }
 
-    public static SegmentRope pooled() {
-        SegmentRope r = GlobalAffinityShallowPool.get(POOL_COL);
-        if (r == null) r = new SegmentRope(EMPTY_SEGMENT, EMPTY_UTF8, 0, 0);
-        else           r.wrapSegment(EMPTY_SEGMENT, EMPTY_UTF8, 0, 0);
-        return r;
-    }
-    public static SegmentRope pooledWrap(MemorySegment segment, byte @Nullable[] utf8,
-                                         long offset, int len) {
-        SegmentRope r = GlobalAffinityShallowPool.get(POOL_COL);
-        if (r == null) r = new SegmentRope(segment, utf8, offset, len);
-        else           r.wrapSegment(segment, utf8, offset, len);
-        return r;
+    protected static int asIntLen(long len) {
+        if (len > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Rope len cannot be above Integer.MAX_LEN");
+        return (int)len;
     }
 
-    public SegmentRope(MemorySegment segment, byte @Nullable[] utf8, long offset, int len) {
+    protected static byte @Nullable[] arrayOf(MemorySegment segment) {
+        return segment.isNative() ? null : (byte[])segment.heapBase().orElse(null);
+    }
+    protected static void checkSameArray(MemorySegment segment, byte[] utf8) {
+        if (utf8 != segment.heapBase().orElse(null))
+            throw new IllegalArgumentException("given byte[] is not segment.heapBase()");
+    }
+
+    protected SegmentRope(byte[] utf8) {
+        this(MemorySegment.ofArray(utf8), utf8, 0, utf8.length);
+    }
+
+    protected SegmentRope(MemorySegment segment, byte @Nullable[] utf8, long offset, int len) {
         super(len);
-        if (offset < 0 || len < 0)
-            throw new IllegalArgumentException("Negative offset/len");
-        if (offset+len > segment.byteSize())
-            throw new IndexOutOfBoundsException("offset+len > segment.byteSize");
-        this.offset = offset;
-        if (utf8 == null)
-            this.utf8 = segment.isNative() ? null : (byte[]) segment.heapBase().orElse(null);
-        else
-            this.utf8 = utf8;
+        checkRange(offset, len, segment.byteSize());
+        this.offset  = offset;
         this.segment = segment;
-    }
-
-    public SegmentRope(MemorySegment segment, long offset, int len) {
-        this(segment, null, offset, len);
-    }
-
-    public SegmentRope(byte @NonNull [] utf8, int offset, int len) {
-        this(MemorySegment.ofArray(utf8), utf8, offset, len);
-    }
-
-    public static SegmentRope of(Rope r) {
-        if (r instanceof SegmentRope sr)
-            return sr;
-        return new SegmentRope(r.toArray(0, r.len), 0, r.len);
-    }
-
-    public static SegmentRope of(Object cs) {
-        if (cs instanceof SegmentRope sr)
-            return sr;
-        if (cs instanceof TwoSegmentRope tsr)
-            return new SegmentRope(tsr.toArray(0, tsr.len), 0, tsr.len);
-        byte[] u8 = cs.toString().getBytes(UTF_8);
-        return new SegmentRope(u8, 0, u8.length);
-    }
-
-    public void recycle() {
-        if (this == EMPTY) throw new UnsupportedOperationException();
-        wrapEmptyBuffer();
-        GlobalAffinityShallowPool.offer(POOL_COL, this);
+        if (utf8 == null) {
+            this.utf8 = arrayOf(segment);
+        } else {
+            if (DEBUG)
+                checkSameArray(segment, utf8);
+            this.utf8 = utf8;
+        }
     }
 
     protected int rangeLen(int begin, int end) {
@@ -114,8 +96,6 @@ public class SegmentRope extends PlainRope {
     public byte @Nullable [] backingArray()       { return utf8; }
     @Override public int     backingArrayOffset() { return (int)(segment.address() + offset); }
 
-
-
     public ByteBuffer asBuffer() {
         if (utf8 != null)
             return ByteBuffer.wrap(utf8, backingArrayOffset(), len);
@@ -123,34 +103,6 @@ public class SegmentRope extends PlainRope {
         if (end >= Integer.MAX_VALUE)
             return segment.asSlice(offset, len).asByteBuffer();
         return segment.asByteBuffer().position((int) offset).limit((int) end);
-    }
-
-    public void wrap(SegmentRope other) {
-        if (this == EMPTY) throw new UnsupportedOperationException();
-        this.segment = other.segment;
-        this.utf8    = other.utf8;
-        this.offset  = other.offset;
-        this.len     = other.len;
-    }
-
-    public void slice(long offset, int len) {
-        this.offset = offset;
-        this.len = len;
-    }
-
-    public void wrapSegment(MemorySegment segment, byte[] utf8, long offset, int len) {
-        if (this == EMPTY) throw new UnsupportedOperationException();
-        this.segment = segment;
-        this.utf8    = utf8;
-        this.offset  = offset;
-        this.len     = len;
-    }
-
-    public void wrapEmptyBuffer() {
-        segment = EMPTY_SEGMENT;
-        utf8    = EMPTY_UTF8;
-        offset  = 0;
-        len     = 0;
     }
 
     @Override public byte get(int i) {
@@ -185,7 +137,8 @@ public class SegmentRope extends PlainRope {
 
     @Override public SegmentRope sub(int begin, int end) {
         int rLen = rangeLen(begin, end);
-        return rLen == len ? this : SegmentRope.pooledWrap(segment, utf8, offset + begin, rLen);
+        if (rLen == len) return this;
+        return new SegmentRopeView().wrap(this, begin, rLen);
     }
 
     static long safeSkipUntil(MemorySegment segment, long i, long e, char c0) {
@@ -542,15 +495,16 @@ public class SegmentRope extends PlainRope {
         return super.equals(o);
     }
 
-    @Override public boolean hasAnyCase(int position, byte[] uppercaseSequence) {
+    @Override public boolean hasAnyCase(int position, byte[] up,
+                                        int upOffset, int upLen) {
         if (position < 0) throw new IndexOutOfBoundsException(position);
-        if (position + uppercaseSequence.length > len) return false;
-
+        if (position+upLen > len)
+            return false;
         var segment = this.segment;
-        long phys = position + offset;
-        for (byte expected : uppercaseSequence) {
-            byte actual = segment.get(JAVA_BYTE, phys++);
-            if (actual != expected && ((actual < 'a' || actual > 'z') || actual - 32 != expected))
+        long phys = position+offset;
+        for (int i = upOffset, upEnd = upOffset+upLen; i < upEnd; i++) {
+            byte actual = segment.get(JAVA_BYTE, phys++), ex = up[i];
+            if (actual != ex && ((actual < 'a' || actual > 'z') || actual-32 != ex))
                 return false;
         }
         return true;
@@ -594,6 +548,13 @@ public class SegmentRope extends PlainRope {
             return hashCode(FNV_BASIS, segment, offset, len);
         else
             return hashCode(FNV_BASIS, utf8, segment.address()+offset, len);
+    }
+
+
+    @Override public void appendTo(StringBuilder sb, int begin, int end) {
+        try (var d = RopeDecoder.create()) {
+            d.write(sb, segment, offset+begin, end-begin);
+        }
     }
 
     @Override public @NonNull String toString() {

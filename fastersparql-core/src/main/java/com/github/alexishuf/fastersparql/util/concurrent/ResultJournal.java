@@ -2,11 +2,12 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.owned.TempOwner;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
@@ -33,23 +34,24 @@ public class ResultJournal {
             }
         }
         @SuppressWarnings("unused") private int plainLock;
-        private final ByteRope log;
+        private final MutableRope log;
         private final TsvSerializer serializer;
 
         public EmitterJournal(Object emitter, Vars vars) {
             String label = emitter instanceof StreamNode sn ? sn.label(StreamNodeDOT.Label.SIMPLE)
                          : emitter.toString();
-            log = new ByteRope(256);
+            log = new MutableRope(256);
             log.append("\n[[").append(label.replace("\n", "\n ")).append("]]\n");
-            serializer = new TsvSerializer();
+            serializer = TsvSerializer.create().takeOwnership(this);
             serializer.init(vars, vars, vars.isEmpty());
             serializer.serializeHeader(log);
         }
 
-        void clear() {
+        void close() {
             while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
             try {
-                log.recycleUtf8();
+                log.close();
+                serializer.recycle(this);
             } finally {
                 LOCK.setRelease(this, 0);
             }
@@ -75,13 +77,13 @@ public class ResultJournal {
             j.add(binding);
     }
 
-    public static void logBatch(Object emitter, Batch<?> b) {
+    public static <B extends Batch<B>> void logBatch(Object emitter, B b) {
         EmitterJournal j;
         if (ENABLED && b != null && (j = JOURNALS.get(emitter)) != null) {
             while ((int) EmitterJournal.LOCK.compareAndExchangeAcquire(j, 0, 1) != 0)
                 onSpinWait();
-            try {
-                j.serializer.serialize(b, j.log);
+            try (var tmp = new TempOwner<>(b)) {
+                j.serializer.serialize(b, tmp.tempOwner(), j.log);
                 j.log.append("tick=").append(DebugJournal.SHARED.tick())
                         .append(", &b=0x").append(Integer.toHexString(identityHashCode(b)))
                         .append(", fromRow=").append(0)
@@ -99,7 +101,7 @@ public class ResultJournal {
     public static void clear() {
         for (var it = JOURNALS.entrySet().iterator(); it.hasNext(); ) {
             try {
-                it.next().getValue().clear();
+                it.next().getValue().close();
                 it.remove();
             } catch (NoSuchElementException ignored) {  }
         }

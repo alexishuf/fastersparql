@@ -1,27 +1,41 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.function.Supplier;
+
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 
 public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B> {
-    protected static final int POOL_THREADS = Runtime.getRuntime().availableProcessors();
-    protected static final int POOL_SHARED = POOL_THREADS*2048;
+    private static int bigQueryPoolSize() {
+        int longJoinPath = 16;
+        int manySources = 16;
+        int queuedPerBindingStage = FSProperties.emitReqChunkBatches();
+        return longJoinPath*manySources*queuedPerBindingStage;
+    }
+    protected static final int POOL_SHARED = Math.max(bigQueryPoolSize(), Alloc.THREADS*2048);
     /**
      * Preferred number of terms in the default size of batches obtained via
      * {@link #create(int)} and other related methods. {@link BatchType} implementations may
      * use other values, but using this values prevents situations where a single batch yields
      * more than one batch when converted to another type.
      */
-    protected static final short PREFERRED_BATCH_TERMS = 256;
+    public static final short PREFERRED_BATCH_TERMS = 256;
+
+    private static final int PRIME_ADD = bigQueryPoolSize();
 
     @SuppressWarnings("unused") private static int plainNextId;
     public static final int MAX_BATCH_TYPE_ID = 63;
@@ -34,21 +48,23 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
         }
     }
 
-    protected final BatchPool<B> pool;
+    protected final Alloc<B> pool;
     /** A 0-based auto-increment id unique to this {@link BatchType} instance. */
     public final int id;
     private final String name;
 
-    public BatchType(Class<B> cls, BatchPool.Factory<B> factory) {
+    public BatchType(Class<B> cls, Supplier<B> primerFactory, Supplier<B> factory,
+                     int bytesPerBatch) {
         this.id = (int)NEXT_ID.getAndAddRelease(1);
         if (this.id > MAX_BATCH_TYPE_ID)
             throw new IllegalStateException("Too many BatchType instances");
-        this.pool = new BatchPool<>(cls, factory, POOL_THREADS, POOL_SHARED);
         this.name = getClass().getSimpleName().replaceAll("Type$", "");
+        this.pool = new Alloc<>(cls, toString(), POOL_SHARED, factory, bytesPerBatch);
+        Primer.INSTANCE.sched(() -> pool.prime(primerFactory, 2, PRIME_ADD));
     }
 
     /** Get the {@link Class} object of {@code B}. */
-    @SuppressWarnings("unused") public final Class<B> batchClass() { return pool.batchClass(); }
+    @SuppressWarnings("unused") public final Class<B> batchClass() { return pool.itemClass(); }
 
 
     /**
@@ -57,18 +73,29 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param cols desired {@link Batch#cols} of the returned batch
      * @return an empty {@link Batch}
      */
-    public abstract B create(int cols);
+    public abstract Orphan<B> create(int cols);
+
+    /**
+     * Equivalent to {@link #create(int)}, but will return {@code null} instead of instantiating
+     * a new {@link Batch} if the pool is empty.
+     *
+     * @param cols the desired {@link Batch#cols()}.
+     * @return an orphan batch with {@code cols} columns or {@code null}.
+     */
+    public abstract @Nullable Orphan<B> poll(int cols);
 
     /**
      * Equivalent to {@link #create(int)} if {@code offer == null},
      * else return {@code offer} after {@link Batch#clear(int)}.
      *
      * @param offer possibly null batch to be used before trying the global pool.
-     * @param cols number of columns in the batch returned by this method.
+     * @param owner current owner of {@code offer} (if {@code offer != null}) and owner of the
+     *              batch returned by this call.
+     * @param cols  number of columns in the batch returned by this method.
      * @return {@code offer}, cleared with {@code cols} columns or a new batch with space
-     *         to fit {@code rows} and {@code localBytes} bytes of local segments.
+     * to fit {@code rows} and {@code localBytes} bytes of local segments.
      */
-    public abstract B empty(@Nullable B offer,  int cols);
+    public abstract B empty(@Nullable B offer, Object owner, int cols);
 
     /**
      * Equivalent to {@link #create(int)}, but will internally use {@code threadId} as a
@@ -82,30 +109,51 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param cols see {@link #create(int)}
      * @return see {@link #create(int)}
      */
-    public abstract B createForThread(int threadId, int cols);
+    public abstract Orphan<B> createForThread(int threadId, int cols);
 
     /**
-     * Equivalent to {@link #empty(Batch, int)}, but will internally use {@code threadId} as a
+     * Equivalent to {@link #createForThread(int, int)}, but will not create a new batch instance:
+     * If there is no batch in the pool, will return {@code null}.
+     *
+     * @param threadId see {@link #createForThread(int, int)}
+     * @param cols see {@link #createForThread(int, int)}
+     * @return an orphan batch with {@code cols} columns or null if there  was no pooled batch.
+     */
+    public abstract @Nullable Orphan<B> pollForThread(int threadId, int cols);
+
+    /**
+     * Equivalent to {@link #empty(Batch, Object, int)}, but will internally use {@code threadId} as a
      * surrogate for {@code Thread.currentThread().threadId()}.
      *
      * @param threadId see {@link #createForThread(int, int)}
-     * @param offer see {@link #empty(Batch, int)}
-     * @param cols see {@link #empty(Batch, int)}
-     * @return see {@link #empty(Batch, int)}
+     * @param offer see {@link #empty(Batch, Object, int)}
+     * @param owner see {@link #empty(Batch, Object, int)}
+     * @param cols see {@link #empty(Batch, Object, int)}
+     * @return see {@link #empty(Batch, Object, int)}
      */
-    public abstract B emptyForThread(int threadId, @Nullable B offer, int cols);
+    public abstract B emptyForThread(int threadId, @Nullable B offer, Object owner, int cols);
 
     protected final B createForThread0(int threadId) {
-        B b = pool.get(threadId);
-        BatchEvent.Unpooled.record(b.markUnpooled());
+        B b = pool.create(threadId);
+        BatchEvent.Unpooled.record(b);
         return b;
     }
 
-    protected final B emptyForThread0(int threadId, @Nullable B offer) {
+    protected final @Nullable B pollForThread0(int threadId) {
+        B b = pool.poll(threadId);
+        if (b == null)
+            return null;
+        BatchEvent.Unpooled.record(b);
+        return b;
+    }
+
+    protected final B emptyForThread0(int threadId, @Nullable B offer, Object owner) {
         if (offer == null) {
-            offer = pool.get(threadId);
-            offer.markUnpooled();
+            offer = pool.create(threadId);
             BatchEvent.Unpooled.record(offer);
+            offer.releaseOwnership(RECYCLED).takeOwnership(owner);
+        } else {
+            offer.requireOwner(owner);
         }
         return offer;
     }
@@ -119,10 +167,11 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
         return new ConverterBIt<>(other, this);
     }
 
-    public <I extends Batch<I>> Emitter<B> convert(Emitter<I> emitter) {
-        if (equals(emitter.batchType())) //noinspection unchecked
-            return (Emitter<B>) emitter;
-        return new ConverterStage<>(this, emitter);
+    public <I extends Batch<I>> Orphan<? extends Emitter<B, ?>>
+    convert(Orphan<? extends Emitter<I, ?>> emitter) {
+        if (equals(Emitter.peekBatchTypeWild(emitter))) //noinspection unchecked
+            return (Orphan<? extends Emitter<B, ?>>)emitter;
+        return ConverterStage.create(this, emitter);
     }
 
     /**
@@ -131,36 +180,11 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param src original batch
      * @return a batch of this type ({@code B}) with the same rows as {@code src}
      */
-    public <O extends Batch<O>> B convert(O src) {
-        B b = create(src.cols);
+    public <I extends Batch<I>> Orphan<B> convertOrCopy(I src) {
+        B b = create(src.cols).takeOwnership(this);
         b.putConverting(src);
-        return b;
+        return b.releaseOwnership(this);
     }
-
-    /**
-     * Offer a batch for recycling so that it may be returned in future {@link #create(int)}
-     * (and similar) calls.
-     *
-     * <p>If the batch has a linked successor ({@link Batch#next()}), <strong>it and all
-     * transitive successors WILL ALSO BE RECYCLED</strong></p>
-     *
-     * @param batch the {@link Batch} to be recycled
-     * @return {@code null}, for conveniently setting recycled references to null:
-     *         {@code b = type.recycle(b)}
-     */
-    @SuppressWarnings("SameReturnValue")
-    public abstract @Nullable B recycle(@Nullable B batch);
-
-    /**
-     * Equivalent to {@link #recycle(Batch)}, but internally uses {@code threadId} as a
-     * surrogate for {@code Thread.currentThread().threadId()}.
-     *
-     * @param threadId see {@link #createForThread(int, int)}
-     * @param batch see {@link #recycle(Batch)}
-     * @return see {@link #recycle(Batch)}
-     */
-    @SuppressWarnings("UnusedReturnValue")
-    public abstract @Nullable B recycleForThread(int threadId, @Nullable B batch);
 
     /**
      * The preferred or default capacity of batches obtained from {@link #create(int)}, in
@@ -194,10 +218,15 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param cols number of columns that all rows must have
      * @return a new {@link RowBucket}
      */
-    public abstract RowBucket<B> createBucket(int rowsCapacity, int cols);
+    public abstract Orphan<? extends RowBucket<B, ?>>
+    createBucket(int rowsCapacity, int cols);
+
+    /** Estimate how many bytes of RAM a {@link RowBucket} with the requested capacity will use. */
+    public abstract int bucketBytesCost(int rowsCapacity, int cols);
 
     /** Get a {@link BatchMerger} that only executes a projection on its left operand. */
-    public abstract @Nullable BatchMerger<B> projector(Vars out, Vars in);
+    public abstract @Nullable Orphan<? extends BatchMerger<B, ?>>
+    projector(Vars out, Vars in);
 
     /**
      * Get a merger that builds a new batch by merging columns of a fixed left-side row with all
@@ -209,12 +238,13 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      *
      * @param out   the variables of the result (merged) row
      * @param left  the variables present in {@code left} parameter of
-     *              {@link BatchMerger#merge(Batch, Batch, int, Batch)}
+     *              {@link BatchMerger#merge(Orphan, Batch, int, Batch)}
      * @param right the variables present in {@code right} parameter of
-     *              {@link BatchMerger#merge(Batch, Batch, int, Batch)}
+     *              {@link BatchMerger#merge(Orphan, Batch, int, Batch)}
      * @return a new {@link BatchMerger}
      */
-    public abstract @NonNull BatchMerger<B> merger(Vars out, Vars left, Vars right);
+    public abstract @NonNull Orphan<? extends BatchMerger<B, ?>>
+    merger(Vars out, Vars left, Vars right);
 
     /**
      * Creates a {@link BatchFilter} that removes all rows for which
@@ -223,16 +253,17 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * {@link Batch} whose columns correspond to {@code out}.
      *
      * @param out vars in the resulting {@link Batch}
-     * @param in vars in the input batch ({@code in} in {@link BatchFilter#filterInPlace(Batch)}).
+     * @param in vars in the input batch ({@code in} in {@link BatchFilter#filterInPlace(Orphan)}).
      * @param filter the filter that will be applied to each row
      * @param before a {@link BatchFilter} to always execute before this {@link BatchFilter}.
      * @return a {@link BatchFilter}
      */
-    public abstract BatchFilter<B> filter(Vars out, Vars in, RowFilter<B> filter,
-                                          BatchFilter<B> before);
+    public abstract Orphan<? extends BatchFilter<B, ?>> filter(Vars out, Vars in,
+                                          Orphan<? extends RowFilter<B, ?>> filter,
+                                          Orphan<? extends BatchFilter<B, ?>> before);
 
-    /** {@link #filter(Vars, Vars, RowFilter, BatchFilter)} with {@code before=null}. */
-    public final BatchFilter<B> filter(Vars out, Vars in, RowFilter<B> filter) {
+    /** {@link #filter(Vars, Vars, Orphan, Orphan)} with {@code before=null}. */
+    public final Orphan<? extends BatchFilter<B, ?>> filter(Vars out, Vars in, Orphan<? extends RowFilter<B, ?>> filter) {
         return filter(out, in, filter, null);
     }
 
@@ -245,10 +276,13 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param before a {@link BatchFilter} to always execute before this {@link BatchFilter}.
      * @return a {@link BatchFilter}
      */
-    public abstract BatchFilter<B> filter(Vars vars, RowFilter<B> filter, BatchFilter<B> before);
+    public abstract Orphan<? extends BatchFilter<B, ?>> filter(Vars vars,
+                                          Orphan<? extends RowFilter<B, ?>> filter,
+                                          Orphan<? extends BatchFilter<B, ?>> before);
 
-    /** {@link #filter(Vars, RowFilter, BatchFilter)} with {@code before=null} */
-    public final BatchFilter<B> filter(Vars vars, RowFilter<B> filter) {
+    /** {@link #filter(Vars, Orphan, Orphan)} with {@code before=null} */
+    public final Orphan<? extends BatchFilter<B, ?>>
+    filter(Vars vars, Orphan<? extends RowFilter<B, ?>> filter) {
         return filter(vars, filter, null);
     }
 

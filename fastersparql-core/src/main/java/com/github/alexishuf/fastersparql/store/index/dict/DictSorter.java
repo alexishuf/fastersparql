@@ -1,14 +1,13 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.store.index.RopeHandlePool;
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
 import com.github.alexishuf.fastersparql.store.index.Sorter;
 import com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -164,9 +163,9 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
      *
      * @param string a string to be stored.
      */
-    public void copy(SegmentRope string) { copy(string, ByteRope.EMPTY); }
+    public void copy(SegmentRope string) { copy(string, FinalSegmentRope.EMPTY); }
 
-    @Override public void visit(SegmentRope string) { copy(string, ByteRope.EMPTY); }
+    @Override public void visit(SegmentRope string) { copy(string, FinalSegmentRope.EMPTY); }
 
     /**
      * Stores a copy of the string resulting from the concatenation of {@code prefix}
@@ -200,6 +199,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
     /* --- --- --- internals --- --- --- */
 
     private static final class Merger implements AutoCloseable {
+        private final SortedStandaloneDict[] blockDicts;
         private final SortedStandaloneDict.Lookup[] blocks;
         private final SegmentRope[] currStrings;
         private final long[] currIds;
@@ -217,12 +217,16 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
             this.split = split;
             this.comparator = comparator;
             int n = blockFiles.size();
+            blockDicts = new SortedStandaloneDict[n];
             blocks = new SortedStandaloneDict.Lookup[n];
             FileChannel destChannel = null;
             var condenser = new ExceptionCondenser<>(IOException.class, IOException::new);
             try {
-                for (int i = 0; i < n; i++) //noinspection resource
-                    blocks[i] = new SortedStandaloneDict(blockFiles.get(i)).lookup();
+                for (int i = 0; i < n; i++) {
+                    var dict = new SortedStandaloneDict(blockFiles.get(i));
+                    blockDicts[i] = dict;
+                    blocks[i] = dict.lookup().takeOwnership(this);
+                }
                 log.info("Validating block files: {}", blockFiles);
                 List<Path> invalid = IntStream.range(0, n).parallel()
                         .mapToObj(i -> invalidBlock(blockFiles, i))
@@ -251,34 +255,38 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
             Path path = blockFiles.get(i);
             var lookup = blocks[i];
             @SuppressWarnings("resource") long strings = lookup.dict().strings();
-            SegmentRope last = new SegmentRope(), curr = lookup.get(1);
-            if (curr == null) {
-                if (strings == 0) return null;
-                log.error("null string in non-empty block {}", path);
-                return path;
-            }
-            last.wrap(curr);
-            for (int id = 2; id <= strings; id++) {
-                if ((curr = lookup.get(id)) == null) {
-                    log.error("null string at id={} of {}", id, path);
+            try (var last = PooledSegmentRopeView.ofEmpty()) {
+                SegmentRope curr = lookup.get(1);
+                if (curr == null) {
+                    if (strings == 0) return null;
+                    log.error("null string in non-empty block {}", path);
                     return path;
                 }
-                int diff = comparator.compare(curr, last);
-                if (diff > 0) {
-                    last.wrap(curr);
-                } else if (diff == 0) {
-                    log.error("duplicate string at id={} of {}", id, path);
-                    return path;
-                } else {
-                    log.error("smaller string at id={} of {}", id, path);
-                    return path;
+                last.wrap(curr);
+                for (int id = 2; id <= strings; id++) {
+                    if ((curr = lookup.get(id)) == null) {
+                        log.error("null string at id={} of {}", id, path);
+                        return path;
+                    }
+                    int diff = comparator.compare(curr, last);
+                    if (diff > 0) {
+                        last.wrap(curr);
+                    } else if (diff == 0) {
+                        log.error("duplicate string at id={} of {}", id, path);
+                        return path;
+                    } else {
+                        log.error("smaller string at id={} of {}", id, path);
+                        return path;
+                    }
                 }
             }
             return null;
         }
 
         @Override public void close() {
-            ExceptionCondenser.closeAll(Arrays.stream(blocks).map(AbstractLookup::dict).iterator());
+            ExceptionCondenser.closeAll(Arrays.asList(blockDicts).iterator());
+            for (int i = 0; i < blocks.length; i++)
+                blocks[i] = Owned.safeRecycle(blocks[i], this);
         }
 
         /** Merges the content of all sorted blocks writing then to the destination dict file. */
@@ -365,7 +373,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
     private final class DictBlock implements BlockJob<Path> {
         private final Arena arena;
         private final MemorySegment bytes;
-        private SegmentRope[] ropes;
+        private SegmentRopeView[] ropes;
         private final TwoSegmentRope offer = new TwoSegmentRope();
         private int nBytes = 0, nRopes = 0;
 
@@ -374,7 +382,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
             // native memory here will avoid one copy when rope[i] is written to a FileChannel
             arena = Arena.ofShared();
             bytes = arena.allocate(bytesCapacity, 8);
-            ropes = new SegmentRope[ropesCapacity];
+            ropes = new SegmentRopeView[ropesCapacity];
         }
 
         @Override public void      reset() { nBytes = nRopes = 0; }
@@ -383,8 +391,13 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
         @Override public void close() {
             arena.close();
             for (int i = 0, n = nRopes; i < n; i++) {
-                SegmentRope r = ropes[i];
-                if (r != null && RopeHandlePool.offer(r) != null) break;
+                var r = ropes[i];
+                if (r != null) {
+                    if (RopeHandlePool.offer(r) == null)
+                        ropes[i] = null;
+                    else
+                        break;
+                }
             }
         }
 
@@ -410,7 +423,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
                 ropes = Arrays.copyOf(ropes, ropes.length + (ropes.length>>1));
             var handle = ropes[nRopes];
             if (handle == null) ropes[nRopes] = handle = RopeHandlePool.segmentRope();
-            handle.wrapSegment(bytes, null, nBytes, len);
+            handle.wrap(bytes, null, nBytes, len);
 
             //store UTF-8 bytes
             MemorySegment.copy(prefix.segment(), prefix.offset(), bytes, nBytes, prefixLen);

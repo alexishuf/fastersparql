@@ -7,7 +7,8 @@ import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.exceptions.UnacceptableSparqlConfiguration;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -35,7 +36,7 @@ public class SparqlClientHelpers {
         int size = list.size();
         assert size > 0;
         if (size == 1)
-            return toString.apply(list.get(0));
+            return toString.apply(list.getFirst());
         double step = size < 10 ? 0.1 : size < 20 ? 0.5 : 0.01;
         String format = step <= 0.01 ? "; q=%.2f, " : "; q=%.1f, ";
 
@@ -100,9 +101,17 @@ public class SparqlClientHelpers {
     public static String firstLine(SparqlEndpoint endpoint, SparqlConfiguration eff, Rope sparql) {
         char sep = endpoint.hasQuery() ? '&' : '?';
         Rope prefix = endpoint.rawPathWithQueryRope();
-        return switch (eff.methods().get(0)) {
-            case GET     -> writeParams(prefix, sep, sparql, eff.params()).toString();
-            case POST,WS -> writeParams(prefix, sep, null, eff.params()).toString();
+        return switch (eff.methods().getFirst()) {
+            case GET     -> {
+                try (var r = writeParams(prefix, sep, sparql, eff.params())) {
+                    yield r.toString();
+                }
+            }
+            case POST,WS -> {
+                try (var b = writeParams(prefix, sep, null, eff.params())) {
+                    yield b.toString();
+                }
+            }
             case FORM    -> endpoint.rawPathWithQuery();
             case FILE    -> throw new UnsupportedOperationException();
         };
@@ -116,17 +125,16 @@ public class SparqlClientHelpers {
      * @return a non-null and non-empty string to be used as a request body for
      *         {@code application/x-www-form-urlencoded}
      */
-    public static Rope formString(Rope sparql, Map<?, ? extends Collection<?>> params) {
-        return writeParams(ByteRope.EMPTY, '\0', sparql, params);
+    public static PooledMutableRope formString(Rope sparql, Map<?, ? extends Collection<?>> params) {
+        return writeParams(FinalSegmentRope.EMPTY, '\0', sparql, params);
     }
 
-    private static final ByteRope QUERY_PARAM = new ByteRope("query=");
-    private static ByteRope writeParams(Rope prefix, char firstSeparator, @Nullable Rope sparql,
-                                 Map<?, ? extends Collection<?>> params) {
+    private static final FinalSegmentRope QUERY_PARAM = FinalSegmentRope.asFinal("query=");
+    private static PooledMutableRope writeParams(Rope prefix, char firstSeparator, @Nullable Rope sparql,
+                                                 Map<?, ? extends Collection<?>> params) {
         int capacity = prefix.len() + (sparql == null ? 0 : 7 + sparql.len()) + params.size()*32;
-        if (capacity == 0)
-            return ByteRope.EMPTY;
-        ByteRope b = new ByteRope(capacity).append(prefix);
+        var b = PooledMutableRope.getWithCapacity(capacity);
+        b.append(prefix);
         char sep = firstSeparator;
         if (sparql != null) {
             escapeQueryParam((sep == 0 ? b : b.append(sep)).append(QUERY_PARAM), sparql);
@@ -136,8 +144,8 @@ public class SparqlClientHelpers {
             for (var v : e.getValue()) {
                 if (sep != 0) b.append(sep);
                 if (sep == firstSeparator) sep = '&';
-                assert !needsEscape(new ByteRope(e.getKey()));
-                assert !needsEscape(new ByteRope(v));
+                assert !needsEscape(FinalSegmentRope.asFinal(e.getKey()));
+                assert !needsEscape(FinalSegmentRope.asFinal(v));
                 b.append(e.getKey()).append('=').append(v);
             }
         }

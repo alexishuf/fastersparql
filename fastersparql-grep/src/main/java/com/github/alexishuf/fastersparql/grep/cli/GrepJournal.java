@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.grep.FileOutputChunk;
 import com.github.alexishuf.fastersparql.grep.FileScanner;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
-import com.github.alexishuf.fastersparql.util.concurrent.PoolCleaner;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import picocli.CommandLine.*;
 import picocli.CommandLine.Model.CommandSpec;
@@ -60,8 +59,11 @@ public class GrepJournal implements Callable<Void> {
         writtenChunks = 0;
         laneWidth = MAX_VALUE;
         if (filteredPool == null) {
-            filteredPool = new LIFOPool<>(FilteredChunk.class, 2*scannerOpts.maxTotalChunks());
-            PoolCleaner.INSTANCE.monitor(filteredPool);
+            filteredPool = new LIFOPool<>(FilteredChunk.class,
+                    "FilteredChunkPool",
+                    2*scannerOpts.maxTotalChunks(),
+                    scannerOpts.chunkBytes
+            );
         }
         if (Files.notExists(journalFile))
             raiseParamException("File "+journalFile+" does not exist");

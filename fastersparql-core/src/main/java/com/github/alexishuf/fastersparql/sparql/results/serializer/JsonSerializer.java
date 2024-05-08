@@ -4,24 +4,27 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 import java.util.Map;
 
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.JSON;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class JsonSerializer extends ResultsSerializer {
+public abstract sealed class JsonSerializer extends ResultsSerializer<JsonSerializer> {
     private boolean firstRow = true;
 
     public static class JsonFactory implements Factory {
-        @Override public ResultsSerializer create(Map<String, String> params) {
-            return new JsonSerializer();
+        @Override public Orphan<? extends JsonSerializer> create(Map<String, String> params) {
+            return new JsonSerializer.Concrete();
         }
         @Override public SparqlResultFormat name() { return JSON; }
     }
 
-    public JsonSerializer() {
-        super(JSON.asMediaType());
+    private JsonSerializer() {super(JSON.asMediaType());}
+
+    private static final class Concrete extends JsonSerializer implements Orphan<JsonSerializer> {
+        @Override public JsonSerializer takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
     private static final byte[] HDR_BFR = "{\"head\":{\"vars\":[".getBytes(UTF_8);
@@ -50,13 +53,13 @@ public class JsonSerializer extends ResultsSerializer {
     private static final byte[] ROW_SEP   = ",\n{".getBytes(UTF_8);
 
     @Override
-    public <B extends Batch<B>, S extends ByteSink<S, T>, T>
-    void serialize(Batch<B> batch0, ByteSink<S, T> sink, int hardMax,
+    public <B extends Batch<B>, T>
+    void serialize(Orphan<B> orphan, ByteSink<?, T> sink, int hardMax,
                    NodeConsumer<B> nodeConsumer, ChunkConsumer<T> chunkConsumer) {
-        if (batch0 == null) return;
-        if (batch0.rows > 0) empty = false;
-
-        @SuppressWarnings("unchecked") B batch = (B)batch0;
+        if (orphan == null)
+            return;
+        B batch = orphan.takeOwnership(this);
+        if (batch.rows > 0) empty = false;
         boolean chunk = !chunkConsumer.isNoOp();
         int softMax = sink.freeCapacity();
         int chunkRows = 0, lastLen = 0, r = 0;

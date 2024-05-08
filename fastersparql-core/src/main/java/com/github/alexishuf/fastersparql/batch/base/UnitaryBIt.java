@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.batch.base;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -52,7 +54,7 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         return this;
     }
 
-    @Override public @Nullable B nextBatch(@Nullable B b) {
+    @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
         lock();
         try {
             if (pendingError != null)
@@ -60,7 +62,8 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
             if (plainState.isTerminated())
                 return null;
             //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
-            b = batchType.empty(b, nColumns);
+            B b = orphan != null ? orphan.takeOwnership(this).clear(nColumns)
+                                 : batchType.create(nColumns).takeOwnership(this);
             //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
             long start = fillingStart;
             if (needsStartTime && start == Timestamp.ORIGIN)
@@ -73,7 +76,8 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
             }
             fillingStart = Timestamp.ORIGIN;
             if (b.rows == 0) {
-                batchType.recycle(b);
+                //noinspection UnusedAssignment
+                b = b.recycle(this);
                 if (pendingError != null) {
                     throwPending();
                 } else {
@@ -82,9 +86,10 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
                 }
                 return null;
             }
-            onNextBatch(b);
+            orphan = Owned.releaseOwnership(b, this);
+            onNextBatch(orphan);
             //journal.write("UBIt.nextBatch: return &b=", System.identityHashCode(b), "rows=", b.rows, "[0][0]=", b.get(0, 0));
-            return b;
+            return orphan;
         } finally {
             unlock();
         }

@@ -6,10 +6,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.stages.MetricsStage;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
@@ -20,6 +17,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -51,55 +49,54 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
 
     public int id() { return id == 0 ? id = nextId.getAndIncrement() : id; }
 
-    private static final ByteRope EMPTY_NM = new ByteRope("Empty");
-    private static final ByteRope EXISTS_NM = new ByteRope("Exists");
-    private static final ByteRope NOT_EXISTS_NM = new ByteRope("NotExists");
-    private static final ByteRope JOIN_NM = new ByteRope("Join");
-    private static final ByteRope LEFT_JOIN_NM = new ByteRope("LeftJoin");
-    private static final ByteRope MINUS_NM = new ByteRope("Minus");
-    private static final ByteRope UNION_NM = new ByteRope("Union");
-    private static final ByteRope UNION_NM_CD = new ByteRope("Union[crossDedup]");
-    private static final ByteRope VALUES_NM = new ByteRope("Values");
+    private static final FinalSegmentRope EMPTY_NM = FinalSegmentRope.asFinal("Empty");
+    private static final FinalSegmentRope EXISTS_NM = FinalSegmentRope.asFinal("Exists");
+    private static final FinalSegmentRope NOT_EXISTS_NM = FinalSegmentRope.asFinal("NotExists");
+    private static final FinalSegmentRope JOIN_NM = FinalSegmentRope.asFinal("Join");
+    private static final FinalSegmentRope LEFT_JOIN_NM = FinalSegmentRope.asFinal("LeftJoin");
+    private static final FinalSegmentRope MINUS_NM = FinalSegmentRope.asFinal("Minus");
+    private static final FinalSegmentRope UNION_NM = FinalSegmentRope.asFinal("Union");
+    private static final FinalSegmentRope UNION_NM_CD = FinalSegmentRope.asFinal("Union[crossDedup]");
+    private static final FinalSegmentRope VALUES_NM = FinalSegmentRope.asFinal("Values");
     private static final byte[] QUERY_LBRAC = "Query[".getBytes(UTF_8);
     /** Operator name to be used in {@link Plan#toString()} */
-    public Rope algebraName() {
-        return switch (type) {
-            case JOIN       -> JOIN_NM;
-            case LEFT_JOIN  -> LEFT_JOIN_NM;
-            case MINUS      -> MINUS_NM;
-            case EMPTY      -> EMPTY_NM;
-            case EXISTS     -> EXISTS_NM;
-            case NOT_EXISTS -> NOT_EXISTS_NM;
-            case VALUES     -> new ByteRope().append(VALUES_NM).append(allVars());
-            case UNION -> ((Union)this).crossDedup ? UNION_NM : UNION_NM_CD;
+    public void algebraName(MutableRope dest) {
+        switch (type) {
+            case JOIN       -> dest.append(JOIN_NM);
+            case LEFT_JOIN  -> dest.append(LEFT_JOIN_NM);
+            case MINUS      -> dest.append(MINUS_NM);
+            case EMPTY      -> dest.append(EMPTY_NM);
+            case EXISTS     -> dest.append(EXISTS_NM);
+            case NOT_EXISTS -> dest.append(NOT_EXISTS_NM);
+            case VALUES     -> dest.append(VALUES_NM).append(allVars());
+            case UNION -> dest.append(((Union)this).crossDedup ? UNION_NM : UNION_NM_CD);
             case QUERY -> {
                 Query q = (Query) this;
-                ByteRope rb = new ByteRope(256);
-                rb.append(QUERY_LBRAC).append(q.client.endpoint().uri()).append(']').append('(');
+                dest.append(QUERY_LBRAC).append(q.client.endpoint().uri()).append(']').append('(');
                 Rope sparql = sparql();
-                yield  sparql.len() < 80
-                        ? rb.appendEscapingLF(sparql).append(')')
-                        : rb.append('\n').indented(2, sparql).append('\n').append(')');
+                if (sparql.len() < 80)
+                    dest.appendEscapingLF(sparql).append(')');
+                else
+                    dest.append('\n').indented(2, sparql).append('\n').append(')');
+
             }
             case TRIPLE -> {
                 TriplePattern t = (TriplePattern) this;
-                ByteRope r = new ByteRope();
-                t.s.toSparql(r,             PrefixAssigner.NOP);
-                t.p.toSparql(r.append(' '), PrefixAssigner.NOP);
-                t.o.toSparql(r.append(' '), PrefixAssigner.NOP);
-                r.append(' ');
-                yield r;
+                t.s.toSparql(dest,             PrefixAssigner.NOP);
+                t.p.toSparql(dest.append(' '), PrefixAssigner.NOP);
+                t.o.toSparql(dest.append(' '), PrefixAssigner.NOP);
+                dest.append(' ');
             }
             default -> throw new UnsupportedOperationException();
-        };
+        }
     }
 
-    private static final ByteRope UNION_SP = new ByteRope(" UNION");
-    private static final ByteRope MINUS_SP = new ByteRope("MINUS");
-    private static final ByteRope LEFT_JOIN_SP = new ByteRope("OPTIONAL");
-    private static final ByteRope EXISTS_SP = new ByteRope("FILTER EXISTS");
-    private static final ByteRope NOT_EXISTS_SP = new ByteRope("FILTER NOT EXISTS");
-    private static final ByteRope FILTER_SP = new ByteRope("FILTER");
+    private static final FinalSegmentRope UNION_SP = FinalSegmentRope.asFinal(" UNION");
+    private static final FinalSegmentRope MINUS_SP = FinalSegmentRope.asFinal("MINUS");
+    private static final FinalSegmentRope LEFT_JOIN_SP = FinalSegmentRope.asFinal("OPTIONAL");
+    private static final FinalSegmentRope EXISTS_SP = FinalSegmentRope.asFinal("FILTER EXISTS");
+    private static final FinalSegmentRope NOT_EXISTS_SP = FinalSegmentRope.asFinal("FILTER NOT EXISTS");
+    private static final FinalSegmentRope FILTER_SP = FinalSegmentRope.asFinal("FILTER");
     public Rope sparqlName() {
         return switch (type) {
             case UNION -> UNION_SP;
@@ -107,7 +104,7 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
             case EXISTS -> EXISTS_SP;
             case NOT_EXISTS -> NOT_EXISTS_SP;
             case LEFT_JOIN -> LEFT_JOIN_SP;
-            default -> ByteRope.EMPTY;
+            default -> FinalSegmentRope.EMPTY;
         };
     }
 
@@ -175,10 +172,11 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
     @Override public SegmentRope sparql() {
         if (this instanceof Query q)
             return q.sparql.sparql();
-        ByteRope rb = new ByteRope(256);
-        rb.append(SparqlSkip.SELECT_u8).append(' ').append('*');
-        groupGraphPattern(rb, 0, PrefixAssigner.NOP);
-        return rb;
+        try (var rb = PooledMutableRope.getWithCapacity(256)) {
+            rb.append(SparqlSkip.SELECT_u8).append(' ').append('*');
+            groupGraphPattern(rb, 0, PrefixAssigner.NOP);
+            return FinalSegmentRope.asFinal(rb);
+        }
     }
 
     /**
@@ -510,13 +508,17 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
     }
 
     @Override public String toString() {
-        if (left == null)
-            return algebraName().toString();
-        var sb = new StringBuilder().append(algebraName()).append("(\n");
-        for (int i = 0, n = opCount(); i < n; i++)
-            indent(sb, op(i).toString()).append(",\n");
-        sb.setLength(sb.length()-2);
-        return sb.append("\n)").toString();
+        try (var sb = PooledMutableRope.get()) {
+            algebraName(sb);
+            if (left != null) {
+                sb.append("(\n");
+                for (int i = 0, n = opCount(); i < n; i++)
+                    indent(sb, op(i).toString()).append(",\n");
+                sb.len -= 2;
+                sb.append("\n)");
+            }
+            return sb.toString();
+        }
     }
 
     /* --- --- --- pure abstract methods --- --- --- */
@@ -531,8 +533,8 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
     /** See {@link #execute(BatchType, Binding, boolean)} */
     @SuppressWarnings("unused") public final <B extends Batch<B>> BIt<B> execute(BatchType<B> bt, Binding binding) { return execute(bt, binding, false); }
 
-    public abstract <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
-                                                           boolean weakDedup);
+    public abstract <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup);
 
     /**
      * Create a unstarted {@link Emitter} that will produce the solutions for this plan.
@@ -542,21 +544,22 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
      * @return an unstarted {@link Emitter}
      * @param <B> the batch type to be emitted
      */
-    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Vars rebindHint,
-                                                      boolean weakDedup) {
-        Emitter<B> em = doEmit(type, rebindHint, weakDedup);
+    public final <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
+        var em = doEmit(type, rebindHint, weakDedup);
         if (this.listeners.isEmpty()) return em;
-        return new MetricsStage<>(em, new Metrics(this));
+        return MetricsStage.create(em, new Metrics(this));
     }
 
     /** See {@link #emit(BatchType, Vars, boolean)} */
-    public final <B extends Batch<B>> Emitter<B> emit(BatchType<B> type, Vars rebindHint) {
+    public final <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(BatchType<B> type, Vars rebindHint) {
         return emit(type, rebindHint, false);
     }
 
     /* --- --- --- helpers --- --- --- */
 
-    private StringBuilder indent(StringBuilder sb, String string) {
+    private MutableRope indent(MutableRope sb, String string) {
         for (int start = 0, i, len = string.length(); start < len; start = i+1) {
             i = string.indexOf('\n', start);
             if (i == -1) i = string.length();
@@ -564,7 +567,7 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
             sb.append(string, start, i);
             sb.append('\n');
         }
-        sb.setLength(Math.max(0, sb.length()-1));
+        sb.len = Math.max(0, sb.len-1);
         return sb;
     }
 }

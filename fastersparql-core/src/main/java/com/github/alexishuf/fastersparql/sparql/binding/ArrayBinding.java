@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -12,6 +13,7 @@ import java.util.Collection;
 import static java.lang.System.arraycopy;
 
 public class ArrayBinding extends Binding {
+    public static final int BYTES = 16 + 4*2 + 20;
     public static final ArrayBinding EMPTY = new ArrayBinding(Vars.EMPTY, new Term[0]);
 
     public Vars vars;
@@ -49,11 +51,11 @@ public class ArrayBinding extends Binding {
         var vars = new Vars.Mutable(varAndValues.length >> 1);
         var terms = new Term[varAndValues.length>>1];
         for (int i = 0; i < varAndValues.length; i += 2) {
-            var name = SegmentRope.of(varAndValues[i]);
-            if (name.len() > 0 && (name.get(0) == '?' || name.get(0) == '$'))
-                name = name.sub(1, name.len());
-            if (name.len() == 0)
+            SegmentRope name = FinalSegmentRope.asFinal(varAndValues[i]);
+            if (name.len == 0)
                 throw new IllegalArgumentException("Empty string is not a valid var name");
+            else if (name.get(0) == '?' || name.get(0) == '$')
+                name = name.sub(1, name.len);
             vars.add(name);
             terms[i>>1] = Term.array(varAndValues[i+1])[0];
         }

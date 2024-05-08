@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.util.UriUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -81,21 +80,21 @@ class SparqlClientHelpersTest {
         SparqlConfiguration form = builder().method(FORM).method(GET).build();
 
         SparqlConfiguration getSingleParamConfig = builder().method(GET)
-                .param(Rope.of("x"), Rope.ropeList("23")).build();
+                .param(Rope.asRope("x"), Rope.ropeList("23")).build();
         SparqlConfiguration postSingleParamConfig = builder().method(POST)
-                .param(Rope.of("x"), Rope.ropeList("23")).build();
+                .param(Rope.asRope("x"), Rope.ropeList("23")).build();
         SparqlConfiguration formSingleParamConfig = builder().method(FORM)
-                .param(Rope.of("x"), Rope.ropeList("23")).build();
+                .param(Rope.asRope("x"), Rope.ropeList("23")).build();
 
         SparqlConfiguration getMultiParamConfig = builder().method(GET)
-                .param(Rope.of("x"), Rope.ropeList("2", "3"))
-                .param(Rope.of("par"), Rope.ropeList("test")).build();
+                .param(Rope.asRope("x"), Rope.ropeList("2", "3"))
+                .param(Rope.asRope("par"), Rope.ropeList("test")).build();
         SparqlConfiguration postMultiParamConfig = builder().method(POST)
-                .param(Rope.of("x"), Rope.ropeList("2", "3"))
-                .param(Rope.of("par"), Rope.ropeList("test")).build();
+                .param(Rope.asRope("x"), Rope.ropeList("2", "3"))
+                .param(Rope.asRope("par"), Rope.ropeList("test")).build();
         SparqlConfiguration formMultiParamConfig = builder().method(FORM)
-                .param(Rope.of("x"), Rope.ropeList("2", "3"))
-                .param(Rope.of("par"), Rope.ropeList("test")).build();
+                .param(Rope.asRope("x"), Rope.ropeList("2", "3"))
+                .param(Rope.asRope("par"), Rope.ropeList("test")).build();
 
         String sparql = "SELECT ?x WHERE { ?x a <http://schema.org/Person>}";
         String escaped = UriUtils.escapeQueryParam(sparql).toString();
@@ -126,7 +125,7 @@ class SparqlClientHelpersTest {
     void testFirstLine(String endpoint, SparqlConfiguration config, String sparql,
                        String expected) {
         SparqlEndpoint parsed = SparqlEndpoint.parse(endpoint);
-        assertEquals(expected, firstLine(parsed, config, new ByteRope(sparql)));
+        assertEquals(expected, firstLine(parsed, config, Rope.asRope(sparql)));
     }
 
     static Stream<Arguments> testFormString() {
@@ -149,11 +148,11 @@ class SparqlClientHelpersTest {
 
     @ParameterizedTest @MethodSource
     void testFormString(String sparqlStr, Map<String, List<String>> paramsStr, String expectedStr) {
-        Rope sparql = Rope.of(sparqlStr);
+        Rope sparql = Rope.asRope(sparqlStr);
         Map<Rope, List<Rope>> params = new LinkedHashMap<>();
         for (var e : paramsStr.entrySet())
-            params.put(Rope.of(e.getKey()), Rope.ropeList(e.getValue()));
-        Rope expected = Rope.of(expectedStr);
+            params.put(Rope.asRope(e.getKey()), Rope.ropeList(e.getValue()));
+        Rope expected = Rope.asRope(expectedStr);
         assertEquals(expected, formString(sparql, params));
     }
 }

@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.model.TripleRoleSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -94,8 +95,8 @@ public final class TriplePattern extends Plan {
     }
 
     @Override
-    public <B extends Batch<B>> Emitter<B> doEmit(BatchType<B> type, Vars rebindHint,
-                                                  boolean weakDedup) {
+    public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    doEmit(BatchType<B> type, Vars rebindHint, boolean weakDedup) {
         throw new UnsupportedOperationException();
     }
 

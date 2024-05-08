@@ -1,8 +1,8 @@
 package com.github.alexishuf.fastersparql.store.index.triples;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
 import com.github.alexishuf.fastersparql.store.index.Sorter;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

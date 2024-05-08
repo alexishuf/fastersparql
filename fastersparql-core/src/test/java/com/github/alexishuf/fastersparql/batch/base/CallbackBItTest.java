@@ -9,6 +9,12 @@ import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.IntList;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
+import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -45,31 +51,34 @@ public abstract class CallbackBItTest extends AbstractBItTest {
 
     @Test void testSimple() {
         try (var it = create(1)) {
-            TermBatch b = intsBatch(1);
-            assertNull(assertDoesNotThrow(() -> it.offer(b)));
-            assertSame(b, it.nextBatch(null));
+            var orphan = intsBatch(1);
+            assertDoesNotThrow(() -> it.offer(orphan));
+            assertSame(orphan, it.nextBatch(null));
+            Orphan.recycle(orphan);
             it.complete(null);
-            assertNull(it.nextBatch(b));
+            assertNull(it.nextBatch(null));
         }
     }
 
     @Test void testCompleteBeforeExhausted() {
         try (var it = create(1)) {
-            TermBatch b = intsBatch(1);
-            assertNull(assertDoesNotThrow(() -> it.offer(b)));
+            var orphan = intsBatch(1);
+            assertDoesNotThrow(() -> it.offer(orphan));
             it.complete(null);
-            assertSame(b, it.nextBatch(null));
-            assertNull(it.nextBatch(b));
+            assertSame(orphan, it.nextBatch(null));
+            Orphan.recycle(orphan);
+            assertNull(it.nextBatch(null));
         }
     }
 
     @Test void testFailBeforeExhausted() {
         try (var it = create(1)) {
-            TermBatch b = intsBatch(1);
-            assertNull(assertDoesNotThrow(() -> it.offer(b)));
+            var orphan = intsBatch(1);
+            assertDoesNotThrow(() -> it.offer(orphan));
             var ex = new RuntimeException();
             it.complete(ex);
-            assertSame(b, it.nextBatch(null));
+            assertSame(orphan, it.nextBatch(null));
+            Orphan.recycle(orphan);
             try {
                 it.nextBatch(null);
                 fail("Expected BItReadFailedException");
@@ -82,19 +91,21 @@ public abstract class CallbackBItTest extends AbstractBItTest {
 
     private void testRaceFeedNextAndClose(int round, int minBatch, int waitBatches) {
         CompletableFuture<?> feed = new CompletableFuture<>(), drain = new CompletableFuture<>();
-//        var yieldAfter = 2* getRuntime().availableProcessors()*minBatch*waitBatches;
         var stop = new AtomicBoolean();
-        var prematureExhaust = new AtomicBoolean(false);
+        var prematureExit = new AtomicBoolean(false);
         var suffix = format("{round=%d, min=%d, wait=%d}", round, minBatch, waitBatches);
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"))) {
             it.maxReadyItems(Math.max(65_536, 2*minBatch)).minBatch(minBatch);
             var batchDrained = new Semaphore(0);
             Thread.ofVirtual().name("Feeder"+suffix).start(() -> {
                 try {
-                    for (int i = 0; !stop.get(); i++) {
-                        IntsBatch.offerAndInvalidate(it, intsBatch(i));
-//                        if (i >= yieldAfter)
-//                            Thread.yield();
+                    int goalRows = waitBatches*minBatch;
+                    for (int i = 0, yieldCountdown = minBatch>>1; !stop.get(); i++) {
+                        IntsBatch.offer(it, intsBatch(i));
+                        if (i >= goalRows || --yieldCountdown <= 0) {
+                            yieldCountdown = minBatch;
+                            Thread.yield();
+                        }
                     }
                     feed.complete(null);
                 } catch (Throwable t) {
@@ -102,11 +113,11 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                 }
             });
             Thread.ofVirtual().name("Drainer"+suffix).start(() -> {
-                try {
-                    for (TermBatch b = null; (b = it.nextBatch(b)) != null; )
+                try (var bGuard = new Guard.BatchGuard<TermBatch>(this)) {
+                    while (bGuard.nextBatch(it) != null)
                         batchDrained.release();
                     if (stop.compareAndSet(false, true))
-                        prematureExhaust.set(true);
+                        prematureExit.set(true);
                     drain.complete(null);
                 } catch (BItReadCancelledException e) {
                     drain.complete(null);
@@ -126,7 +137,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
         } catch (ExecutionException | InterruptedException e) {
             throw new RuntimeException(e);
         }
-        assertFalse(prematureExhaust.get());
+        assertFalse(prematureExit.get());
     }
 
     static Stream<Arguments> testRaceFeedNextAndClose() {
@@ -143,12 +154,17 @@ public abstract class CallbackBItTest extends AbstractBItTest {
     /** Concurrent calls to feed(), nextBatch() and close() */
     @ParameterizedTest @MethodSource
     void testRaceFeedNextAndClose(int minBatch, int waitBatches) throws Exception {
+        ThreadJournal.resetJournals();
         int threads = getRuntime().availableProcessors()+1;
         String name = ".testRaceFeedNextAndClose("+minBatch+", "+waitBatches+")";
+        Watchdog w = Watchdog.spec("check").startSecs(10);
         try {
             testRaceFeedNextAndClose(-1, minBatch, waitBatches);
             platformRepeatAndWait(name, threads, (Consumer<Integer>) thread
                     -> testRaceFeedNextAndClose(thread, minBatch, waitBatches));
+        } catch (Throwable t) {
+            w.stopAndTrigger();
+            throw t;
         } finally {
             System.gc();
         }
@@ -164,24 +180,24 @@ public abstract class CallbackBItTest extends AbstractBItTest {
             iterators.add(new SPSCBIt<>(TERM, Vars.of("x"), capacity));
         Thread producer = Thread.ofPlatform().name("producer").unstarted(() -> {
             for (CallbackBIt<TermBatch> it : iterators) {
-                offerAndInvalidate(it, ints);
+                offer(it, ints);
                 it.complete(null);
             }
         });
-        CompletableFuture<List<int[]>> consumed = new CompletableFuture<>();
+        CompletableFuture<List<IntList>> consumed = new CompletableFuture<>();
         Thread consumer = Thread.ofPlatform().name("consumer").unstarted(() -> {
             try {
-                ArrayList<int[]> intsList = new ArrayList<>(iteratorCount);
+                ArrayList<IntList> intsLists = new ArrayList<>(iteratorCount);
                 for (CallbackBIt<TermBatch> it : iterators)
-                    intsList.add(BItDrainer.RECYCLING.drainToInts(it, ints.length));
-                consumed.complete(intsList);
+                    intsLists.add(BItDrainer.RECYCLING.drainToInts(it, ints.length));
+                consumed.complete(intsLists);
             } catch (Throwable t) { consumed.completeExceptionally(t); }
         });
         producer.start();
         consumer.start();
         producer.join();
-        for (int[] actual : consumed.get())
-            IntsBatch.assertEqualsOrdered(ints, actual, actual.length);
+        for (IntList actual : consumed.get())
+            IntsBatch.assertEqualsOrdered(ints, actual);
     }
 
 
@@ -219,15 +235,15 @@ public abstract class CallbackBItTest extends AbstractBItTest {
                                 try { Thread.sleep(1); } catch (Throwable ignored) {}
                                 barrier1.getAndDecrement();
                                 while (barrier1.get() > 0) Thread.onSpinWait();
-                                try (var it = gen.asBIt(ints(currentStart, 2))) {
+                                try (var guard = new ItGuard<>(this, gen.asBIt(ints(currentStart, 2)))) {
                                     barrier2.getAndDecrement();
                                     while (barrier2.get() > 0) Thread.onSpinWait();
                                     // drain it into cb
-                                    for (TermBatch b = null; (b = it.nextBatch(b)) != null; ) {
+                                    while (guard.advance()) {
                                         lock.lock(); // offer(
                                         try {
                                             //journal.write("offer b[0][0]=", b.get(0, 0).local[1]-'0', "size=", b.rows);
-                                            b = cb.offer(b);
+                                            cb.offer(guard.take());
                                         } catch (CancelledException|TerminatedException ignored) {
                                         } finally { lock.unlock(); }
                                     }
@@ -250,7 +266,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
     @Test void testTightWaitProgress() {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"))) {
             it.minBatch(3).minWait(50, MICROSECONDS).maxWait(50, MICROSECONDS);
-            IntsBatch.offerAndInvalidate(it, 1, 2);
+            IntsBatch.offer(it, 1, 2);
             assertEquals(intsBatch(1, 2), it.nextBatch(null));
         }
     }
@@ -259,7 +275,7 @@ public abstract class CallbackBItTest extends AbstractBItTest {
         int wait = 50;
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"))) {
             it.minBatch(3).minWait(50, MILLISECONDS).maxWait(50, MILLISECONDS);
-            IntsBatch.offerAndInvalidate(it, 1, 2);
+            IntsBatch.offer(it, 1, 2);
             long start = nanoTime();
             var b = it.nextBatch(null);
             double ms = (nanoTime() - start) / 1_000_000.0;

@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 public interface BatchConverter<B extends Batch<B>> {
 
@@ -23,7 +24,7 @@ public interface BatchConverter<B extends Batch<B>> {
      * @param in the input {@link Emitter}
      * @return a {@link Emitter} over converted batches or {@code in} itself if {@code I} is or
      *         extends {@code B}
-     * @param <I> The input batch type
      */
-    <I extends Batch<I>> Emitter<B> convert(Emitter<I> in);
+    <I extends Batch<I>> Orphan<? extends Emitter<B, ?>>
+    convert(Orphan<? extends Emitter<I, ?>> in);
 }

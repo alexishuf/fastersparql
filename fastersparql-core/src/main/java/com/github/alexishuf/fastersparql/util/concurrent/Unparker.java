@@ -1,78 +1,44 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
+import org.jctools.queues.MessagePassingQueue;
+import org.jctools.queues.atomic.MpmcAtomicArrayQueue;
+
 import java.util.concurrent.locks.LockSupport;
 
 public class Unparker {
-    private static final VarHandle LOCK;
+    private static final MpmcAtomicArrayQueue<Thread> unparkQueue = new MpmcAtomicArrayQueue<>(16);
+    private static final Thread thread = new Thread(new UnparkerTask(), "Unparker");
     static {
-        try {
-            LOCK  = MethodHandles.lookup().findStaticVarHandle(Unparker.class, "plainLock",  int.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-    private static final long PERIOD_NS = 50_000L;
-    private static final int CAPACITY = 256/4;
-    private static final int UNPARK_AT_CAPACITY = Math.max(CAPACITY/4, 8);
-    private static final int CAPACITY_MASK = CAPACITY-1;
-    static { assert Integer.bitCount(CAPACITY) == 1; }
-    private static final Thread[] queue = new Thread[CAPACITY];
-    @SuppressWarnings("unused") private static int plainLock;
-    private static int size, takeIdx;
-    private static final Thread thread;
-
-    static {
-        thread = new Thread(Unparker::unparkQueued, "Unparker");
         thread.setDaemon(true);
-        thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY-1));
+        thread.setPriority(Thread.NORM_PRIORITY-1);
         thread.start();
+        Timestamp.ON_TICK = new UnparkUnparker();
     }
 
-
-    private static void unparkQueued() {
-        while (true) {
+    private static final Unpark UNPARK = new Unpark();
+    private static final class Unpark implements MessagePassingQueue.Consumer<Thread> {
+        @Override public void accept(Thread t) {LockSupport.unpark(t);}
+        @Override public String toString() {return "LockSupport.unpark()";}
+    }
+    private static final class UnparkerTask implements Runnable {
+        @SuppressWarnings("InfiniteLoopStatement") @Override public void run() {
             while (true) {
-                while (!tryLock()) Thread.yield();
-                Thread thread = null;
-                if (size > 0) {
-                    thread = queue[takeIdx];
-                    takeIdx = (takeIdx+1)&CAPACITY_MASK;
-                    --size;
-                }
-                LOCK.setRelease(0);
-                if (thread == null) break;
-                else                 LockSupport.unpark(thread);
+                unparkQueue.drain(UNPARK);
+                LockSupport.parkNanos(61_000);
             }
-            LockSupport.parkNanos(PERIOD_NS);
         }
     }
-
-    private static boolean tryLock() {
-        for (int i = 0; i < 16; i++) {
-            if ((int)LOCK.compareAndExchangeAcquire(0, 1) == 0) return true;
-            else                                                Thread.onSpinWait();
+    private static final class UnparkUnparker implements Runnable {
+        @Override public void run() {
+            if (!unparkQueue.isEmpty())
+                LockSupport.unpark(thread);
         }
-        return false;
+        @Override public String toString() {return "UnparkUnparker";}
     }
 
     public static void unpark(Thread thread) {
-        if (thread == null)
-            return;
-        boolean unpark = true;
-        if (tryLock()) {
-            if (size < CAPACITY) {
-                unpark = false;
-                queue[(takeIdx+size)&CAPACITY_MASK] = thread;
-                ++size;
-            }
-            LOCK.setRelease(0);
-            if (size == UNPARK_AT_CAPACITY)
-                LockSupport.unpark(Unparker.thread);
-        }
-        if (unpark)
+        if (!unparkQueue.offer(thread))
             LockSupport.unpark(thread);
-    }
 
+    }
 }

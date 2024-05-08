@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.batch.Timestamp;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.ChildJVM;
@@ -9,12 +8,15 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledSegmentRopeView;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.IntList;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.RepeatedTest;
@@ -69,9 +71,9 @@ class GatherAndScatterTest {
             this(batchType, height, nConsumers, nProducers, -1, -1, -1);
         }
 
-        private class P<B extends Batch<B>> extends TaskEmitter<B> {
+        private class P<B extends Batch<B>> extends TaskEmitter<B, P<B>> implements Orphan<P<B>> {
             private final int id, end, failAt;
-            private final ByteRope nt = new ByteRope();
+            private final MutableRope nt = new MutableRope(12);
             private int next;
             private boolean cleaned;
 
@@ -86,8 +88,16 @@ class GatherAndScatterTest {
                     ResultJournal.initEmitter(this, vars);
             }
 
+            @Override public P<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
             @Override protected StringBuilder minimalLabel() {
                 return new StringBuilder().append("P(").append(id).append(')');
+            }
+
+            @Override public String journalName() {
+                if (journalName == null)
+                    journalName = "P("+id+")";
+                return journalName;
             }
 
             @Override protected int produceAndDeliver(int state) {
@@ -102,14 +112,14 @@ class GatherAndScatterTest {
                 if (failAt >= next && failAt < next + n) {
                     throw new DummyException(id, next);
                 } else {
-                    B b = bt.createForThread(preferredWorker, 1);
+                    B b = bt.createForThread(preferredWorker, 1).takeOwnership(this);
                     for (long e = Math.min(end, next+n); next < e; next++) {
                         b.beginPut();
                         nt.clear().append('"').append(next);
                         b.putTerm(0, DT_integer, nt.u8(), 0, nt.len, true);
                         b.commitPut();
                     }
-                    bt.recycleForThread(preferredWorker, deliver(b));
+                    deliver(b.releaseOwnership(this));
                 }
                 return next < end ? state : COMPLETED;
             }
@@ -120,38 +130,46 @@ class GatherAndScatterTest {
 
             @Override public Vars bindableVars() { return Vars.EMPTY; }
 
-            @Override protected void doRelease() { cleaned = true; }
+            @Override protected void doRelease() {
+                cleaned = true;
+                nt.close();
+            }
         }
 
-        private class C<B extends Batch<B>> implements Receiver<B> {
+        private class C<B extends Batch<B>>
+                extends AbstractOwned<C<B>>
+                implements Receiver<B>, Orphan<C<B>> {
             private final AtomicReference<Thread> lock = new AtomicReference<>();
             private final ConsumerBarrier<B> barrier;
-            private final Emitter<B> emitter;
+            private final Emitter<B, ?> emitter;
             private final int id;
             private final EmitterStats stats = EmitterStats.createIfEnabled();
             private int state = Stateful.CREATED;
-            private int[] history;
-            private int historyLen = 0;
+            private final IntList history;
 
-            private C(Emitter<B> emitter, ConsumerBarrier<B> barrier, int id) {
-                emitter.subscribe(this);
+            private C(Orphan<? extends Emitter<B, ?>> emitter, ConsumerBarrier<B> barrier, int id) {
                 this.id = id;
                 this.barrier = barrier;
-                this.emitter = emitter;
-                this.history = ArrayPool.intsAtLeast(8);
-                Arrays.fill(this.history, 0);
+                this.history = new IntList(128);
+                this.emitter = emitter.takeOwnership(this);
+                this.emitter.subscribe(this);
             }
 
-            @Override public Stream<? extends StreamNode> upstreamNodes() {
-                return Stream.of(emitter);
+            @Override public Stream<? extends StreamNode> upstreamNodes() {return Stream.of(emitter);}
+
+            @Override public C<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+            public @Nullable C<B> recycle(Object currentOwner) {
+                history.clear();
+                emitter.recycle(this);
+                return null;
             }
 
-            public void release() {
-                ArrayPool.INT.offer(history, history.length);
-                history = ArrayPool.EMPTY_INT;
+            @Override public String journalName() {
+                if (journalName == null)
+                    journalName = "C("+id+")";
+                return journalName;
             }
-
-            @Override public String toString() { return "C("+id+")"; }
 
             @Override public String label(StreamNodeDOT.Label type) {
                 var sb = new StringBuilder().append("C(").append(id).append(')');
@@ -171,32 +189,32 @@ class GatherAndScatterTest {
                 lock.setRelease(null);
             }
 
-            @Override public @Nullable B onBatch(B batch) {
+            @Override public void onBatch(Orphan<B> orphan) {
+                B b = orphan.takeOwnership(this);
+                onBatchByCopy(b);
+                b.recycle(this);
+            }
+
+            @Override public void onBatchByCopy(B batch) {
                 if (EmitterStats.ENABLED && stats != null)
                     stats.onBatchReceived(batch);
                 lock();
                 try {
                     if (state == Stateful.CREATED)
                         state = Stateful.ACTIVE;
-                    if (cancelAtRow >= 0 && historyLen + batch.totalRows() > cancelAtRow)
+                    if (cancelAtRow >= 0 && history.size() + batch.totalRows() > cancelAtRow)
                         emitter.cancel();
                     assertNotNull(batch);
                     assertEquals(1, batch.cols);
-                    int required = historyLen + batch.totalRows();
-                    if (required > history.length) {
-                        history = ArrayPool.grow(history, required);
-                        Arrays.fill(history, historyLen, history.length, 0);
-                    }
-                    SegmentRope view = SegmentRope.pooled();
-                    for (var node = batch; node != null; node = node.next) {
-                        for (int r = 0, rows = node.rows; r < rows; r++) {
-                            assertTrue(node.localView(r, 0, view));
-                            history[historyLen++] = (int) view.parseLong(1);
+                    try (var view = PooledSegmentRopeView.ofEmpty()) {
+                        for (var node = batch; node != null; node = node.next) {
+                            for (int r = 0, rows = node.rows; r < rows; r++) {
+                                assertTrue(node.localView(r, 0, view));
+                                history.add((int)view.parseLong(1));
+                            }
                         }
                     }
-                    view.recycle();
                 } finally { unlock(); }
-                return batch;
             }
 
             @Override public void onComplete() {
@@ -266,8 +284,7 @@ class GatherAndScatterTest {
             ResultJournal.clear();
             //noinspection unchecked
             var batchType        = (BatchType<B>) this.batchType;
-            var gather           = new GatheringEmitter<>(batchType, X);
-            var scatter          = new ScatterStage<>(gather);
+            var gather           = GatheringEmitter.create(batchType, X).takeOwnership(this);
             List<P<B>> producers = new ArrayList<>();
             for (int i = 0, begin = 0; i < nProducers; i++, begin += height) {
                 int failAt = i == failingProducer ? begin+this.failAtRow : -1;
@@ -275,12 +292,16 @@ class GatherAndScatterTest {
                 gather.subscribeTo(p);
                 producers.add(p);
             }
+            var scatter         = new ScatterStage<>(gather.releaseOwnership(this));
             Set<C<B>> consumers = new HashSet<>();
-            FakeRoot fakeRoot = new FakeRoot(consumers);
+            FakeRoot fakeRoot   = new FakeRoot(consumers);
             try {
                 ConsumerBarrier<B> consumerBarrier = new ConsumerBarrier<>(consumers);
-                for (int i = 0; i < nConsumers; i++)
-                    consumers.add(new C<>(scatter.createConnector(), consumerBarrier, i));
+                for (int i = 0; i < nConsumers; i++) {
+                    C<B> c = new C<>(scatter.createConnector(), consumerBarrier, i);
+                    consumers.add(c);
+                    c.takeOwnership(this);
+                }
                 long requestSize = (long) height * nProducers + 1;
                 try (var w = Watchdog.spec("test").threadStdOut(100).streamNode(fakeRoot).create()) {
                     w.start(10_000_000_000L);
@@ -294,7 +315,6 @@ class GatherAndScatterTest {
                 assertTerminationStatus(consumerBarrier);
                 assertHistory(consumers.iterator().next());
                 assertSameHistory(consumers);
-                assertCleanProducers(producers);
             } catch (Throwable t) {
                 try {
                     ThreadJournal.dumpAndReset(System.out, 100);
@@ -305,8 +325,16 @@ class GatherAndScatterTest {
                 }
                 throw t;
             } finally {
-                for (C<B> c : consumers) c.release();
+                for (C<B> c : consumers)
+                    c.recycle(this);
+                if (consumers.isEmpty())
+                    scatter.recycle(this);
+                if (gather.isOwner(this))
+                    gather.recycle(this);
             }
+            assertCleanProducers(producers);
+            assertFalse(scatter.isAlive()); // c.recycle() on all consumers must have recycled scatter
+            assertFalse(gather.isAlive());  // must be recycled by scatter
         }
 
         private <B extends Batch<B>> void assertTerminationStatus(ConsumerBarrier<B> barrier) {
@@ -342,9 +370,8 @@ class GatherAndScatterTest {
         private <B extends Batch<B>> void assertHistory(C<B> consumer) {
             int bound = nProducers * height;
             BitSet met = new BitSet(bound), expected = new BitSet();
-            int[] hist = consumer.history;
-            for (int i = 0, len = consumer.historyLen; i < len; i++) {
-                int value = hist[i];
+            for (var it = consumer.history.iterator(); it.hasNext(); ) {
+                int value = it.nextInt();
                 if (value < 0 || value >= bound)
                     fail("value "+value+" not in [0, "+bound+")");
                 if (met.get(value))
@@ -366,19 +393,13 @@ class GatherAndScatterTest {
         }
 
         private <B extends Batch<B>> void assertSameHistory(Set<C<B>> consumers) {
-            int[] ex = null;
-            int exLen = 0;
+            IntList ex = null;
             for (C<B> c : consumers) {
                 if (ex == null) {
                     ex = c.history;
-                    exLen = c.historyLen;
                 } else {
-                    assertEquals(exLen, c.historyLen, "history size differs");
-                    int[] ac = c.history;
-                    for (int i = 0; i < exLen; i++) {
-                        if (ac[i] != ex[i])
-                            fail("history mismatch at index "+i);
-                    }
+                    assertEquals(ex.size(), c.history.size(), "history size differs");
+                    assertEquals(ex, c.history);
                 }
             }
         }
@@ -486,10 +507,10 @@ class GatherAndScatterTest {
         for (long s = Timestamp.nanoTime(); (Timestamp.nanoTime()-s) < 100_000_000L; )
             d.run();
         for (long s = Timestamp.nanoTime(); (Timestamp.nanoTime()-s) < 100_000_000L; )
-            TestTaskSet.virtualRepeatAndWait(getClass().getSimpleName(), THREADS, d);
+            TestTaskSet.platformRepeatAndWait(getClass().getSimpleName(), THREADS, d);
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] ignoredArgs) throws Exception {
         benchmark();
 //        var ds = test().map(a -> (D)a.get()[0]).toList();
 //        for (int i = 0; i < 10; i++) ds.get(i).run();
@@ -541,7 +562,7 @@ class GatherAndScatterTest {
 
     public static class BenchmarkHelper {
         static final Pattern VAL_RX = Pattern.compile("GatherAndScatterTest-avg=(\\d+\\.\\d+)");
-        public static void main(String[] args) {
+        public static void main(String[] ignoredArgs) {
             var ds = test().map(a -> (D)a.get()[0]).toList();
             for (long t0 = nanoTime(); (nanoTime()-t0) < 1_000_000_000L; ) {
                 for (D d : ds) d.run();

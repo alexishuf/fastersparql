@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
@@ -20,35 +21,39 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
         S in = lastIn;
         lastIn = null;
         if (in != null)
-            in.recycle();
+            in.recycle(this);
     }
 
-    @Override public @Nullable B nextBatch(@Nullable B out) {
+    @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
         S in = lastIn;
         lastIn = null;
         try {
-            in = delegate.nextBatch(in);
+            in = delegate.nextBatch(in, this);
         } catch (Throwable t) {
             onTermination(t);
             throw t;
         }
         if (in == null) {
-            batchType.recycle(out);
+            Orphan.recycle(offer);
             onTermination(null);
             return null;
         }
-        lock();
-        try {
-            if (isTerminated()) {
-                delegate.batchType().recycle(in);
-                return null;
-            } else {
-                out = putConverting(batchType.empty(out, in.cols), in);
-                lastIn = in;
-            }
-        } finally { unlock(); }
-        onNextBatch(out);
-        return out;
+        if (!isTerminated()) {
+            B out = offer == null ? batchType.create(in.cols).takeOwnership(this)
+                                  : offer.takeOwnership(this).clear(in.cols);
+            lock();
+            try {
+                if (isTerminated()) {
+                    out.recycle(this);
+                } else {
+                    onNextBatch(offer = putConverting(out, in).releaseOwnership(this));
+                    lastIn = in;
+                    return offer;
+                }
+            } finally { unlock(); }
+        }
+        in.recycle(this);
+        return null;
     }
 
     protected B putConverting(B out, S in) {

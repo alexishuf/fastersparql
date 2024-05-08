@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 /**
  * A {@link SparqlClient} allows submitting queries to remote SPARQL endpoints.
@@ -130,8 +131,8 @@ public interface SparqlClient extends AutoCloseable {
      * @return an {@link Emitter}
      * @param <B> the batch type
      */
-    <B extends Batch<B>> Emitter<B> emit(BatchType<B> batchType, SparqlQuery sparql,
-                                         Vars rebindHint);
+    <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(BatchType<B> batchType, SparqlQuery sparql, Vars rebindHint);
 
     /**
      * Analogous to {@link #query(ItBindQuery)} but returns an unstarted {@link Emitter}.
@@ -146,7 +147,8 @@ public interface SparqlClient extends AutoCloseable {
      * @return An unstarted {@link Emitter}
      * @param <B> the batch type
      */
-    <B extends Batch<B>> Emitter<B> emit(EmitBindQuery<B> bindQuery, Vars rebindHint);
+    <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
+    emit(EmitBindQuery<B> bindQuery, Vars rebindHint);
 
     /**
      * Closes the client, releasing all resources.

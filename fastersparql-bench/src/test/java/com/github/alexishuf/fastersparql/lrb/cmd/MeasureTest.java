@@ -2,24 +2,16 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
-import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
+import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
-import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
-import com.github.alexishuf.fastersparql.emit.Emitters;
-import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
-import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
-import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
-import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
@@ -43,7 +35,6 @@ import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.C
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.CHECK;
 import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsConsumer.COUNT;
 import static com.github.alexishuf.fastersparql.lrb.sources.SourceKind.*;
-import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
@@ -191,41 +182,46 @@ class MeasureTest {
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] ignoredArgs) throws Exception {
         beforeAll();
-        String uriA = "file://" + dataDir + "/LinkedTCGA-A";
-        String uriM = "file://" + dataDir + "/LinkedTCGA-M";
-        String uriE = "file://" + dataDir + "/LinkedTCGA-E";
-        try (var clientA = new StoreSparqlClient(SparqlEndpoint.parse(uriA));
-             var clientM = new StoreSparqlClient(SparqlEndpoint.parse(uriM));
-             var clientE = new StoreSparqlClient(SparqlEndpoint.parse(uriE))) {
-            var query = new OpaqueSparqlQuery("""
-                    ASK {
-                        ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> <http://tcga.deri.ie/TCGA-D9-A1X3>
-                    }""");
-            var emA = clientA.emit(COMPRESSED, query, Vars.EMPTY);
-            var emM = clientM.emit(COMPRESSED, query, Vars.EMPTY);
-            var emE = clientE.emit(COMPRESSED, query, Vars.EMPTY);
-            var em = new GatheringEmitter<>(COMPRESSED, Vars.EMPTY);
-            em.subscribeTo(emA);
-            em.subscribeTo(emM);
-            em.subscribeTo(emE);
-            CompressedBatch acc;
-            try (var w = ThreadJournal.watchdog(System.out, 100)) {
-                w.start(10_000_000_000L).andThen(() -> dump(em, true));
-                acc = Emitters.collect(em);
-                dump(em, false);
-            }
-            var serializer = ResultsSerializer.create(TSV);
-            var tsv = new ByteRope();
-            serializer.init(em.vars(), em.vars(), false);
-            serializer.serializeHeader(tsv);
-            serializer.serializeAll(acc, tsv);
-            serializer.serializeTrailer(tsv);
-            System.out.println(tsv);
-        }
+        MeasureTest test = new MeasureTest();
+        test.setUp();
+        test.testSQueries(true, FS_STORE);
+
+//        String uriA = "file://" + dataDir + "/LinkedTCGA-A";
+//        String uriM = "file://" + dataDir + "/LinkedTCGA-M";
+//        String uriE = "file://" + dataDir + "/LinkedTCGA-E";
+//        try (var clientA = new StoreSparqlClient(SparqlEndpoint.parse(uriA));
+//             var clientM = new StoreSparqlClient(SparqlEndpoint.parse(uriM));
+//             var clientE = new StoreSparqlClient(SparqlEndpoint.parse(uriE))) {
+//            var query = new OpaqueSparqlQuery("""
+//                    ASK {
+//                        ?uri <http://tcga.deri.ie/schema/bcr_patient_barcode> <http://tcga.deri.ie/TCGA-D9-A1X3>
+//                    }""");
+//            var emA = clientA.emit(COMPRESSED, query, Vars.EMPTY);
+//            var emM = clientM.emit(COMPRESSED, query, Vars.EMPTY);
+//            var emE = clientE.emit(COMPRESSED, query, Vars.EMPTY);
+//            var em = new GatheringEmitter<>(COMPRESSED, Vars.EMPTY);
+//            em.subscribeTo(emA);
+//            em.subscribeTo(emM);
+//            em.subscribeTo(emE);
+//            CompressedBatch acc;
+//            try (var w = ThreadJournal.watchdog(System.out, 100)) {
+//                w.start(10_000_000_000L).andThen(() -> dump(em, true));
+//                acc = Emitters.collect(em);
+//                dump(em, false);
+//            }
+//            var serializer = ResultsSerializer.create(TSV);
+//            var tsv = new ByteRope();
+//            serializer.init(em.vars(), em.vars(), false);
+//            serializer.serializeHeader(tsv);
+//            serializer.serializeAll(acc, tsv);
+//            serializer.serializeTrailer(tsv);
+//            System.out.println(tsv);
+//        }
     }
 
+    @SuppressWarnings("unused")
     private static void dump(StreamNode node, boolean append) {
         try (var journal = new OutputStreamWriter(
                 new TeeOutputStream(new CloseShieldOutputStream(System.out),
@@ -270,14 +266,9 @@ class MeasureTest {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         String regex = "C.*";
         if (sourceKind.isHdt())
-            regex = "C[1-46-8]";
+            regex = "C[1-46-9]0?";
+        doTest(sourceKind, jsonPlans, regex, sel, CHECK, ITERATE);
         doTest(sourceKind, jsonPlans, regex, sel, CHECK, EMIT);
-//        System.out.printf("""
-//                BindingStage.repeatRebind: %5d
-//                   TPEmitter.repeatRebind: %5d
-//                """,
-//                (int)BindingStage.REPEAT_REBIND.getOpaque(),
-//                (int)StoreSparqlClient.REPEAT_REBIND.getOpaque());
     }
 
     @ParameterizedTest @MethodSource("test")
@@ -295,18 +286,23 @@ class MeasureTest {
             tasks.repeat(Runtime.getRuntime().availableProcessors()*2, () -> {
                 CompressedBatch s10 = QueryName.S10.expected(COMPRESSED);
                 assertNotNull(s10);
-                var dedup = StrongDedup.strongForever(COMPRESSED, s10.totalRows(), s10.cols);
-                for (var node = s10; node != null; node = node.next) {
-                    for (int r = 0; r < node.rows; r++) {
-                        dedup.add(node, r);
-                        assertTrue(dedup.contains(node, r));
+                var dedup = Dedup.strongForever(COMPRESSED, s10.totalRows(), s10.cols)
+                                 .takeOwnership(this);
+                try {
+                    for (var node = s10; node != null; node = node.next) {
+                        for (int r = 0; r < node.rows; r++) {
+                            dedup.add(node, r);
+                            assertTrue(dedup.contains(node, r));
+                        }
                     }
-                }
-                for (var node = s10; node != null; node = node.next) {
-                    for (int r = 0; r < node.rows; r++)
-                        assertTrue(dedup.contains(node, r));
-                    for (int r = node.rows-1; r >= 0; r--)
-                        assertTrue(dedup.contains(node, r));
+                    for (var node = s10; node != null; node = node.next) {
+                        for (int r = 0; r < node.rows; r++)
+                            assertTrue(dedup.contains(node, r));
+                        for (int r = node.rows-1; r >= 0; r--)
+                            assertTrue(dedup.contains(node, r));
+                    }
+                } finally {
+                    dedup.recycle(this);
                 }
             });
         }

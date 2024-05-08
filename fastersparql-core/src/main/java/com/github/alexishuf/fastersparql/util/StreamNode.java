@@ -18,7 +18,9 @@ public interface StreamNode extends JournalNamed {
 
     @Override default String journalName() { return label(StreamNodeDOT.Label.MINIMAL); }
 
-    default String   label(StreamNodeDOT.Label type)                    { return toString(); }
+    default String   label(StreamNodeDOT.Label type) {
+        return StreamNodeDOT.minimalLabel(new StringBuilder(), this).toString();
+    }
     default String   toDOT(StreamNodeDOT.Label type)                    { return StreamNodeDOT.toDOT(this, type); }
     default void   viewDOT(StreamNodeDOT.Label type) throws IOException { viewDOT("xdg-open", type); }
 

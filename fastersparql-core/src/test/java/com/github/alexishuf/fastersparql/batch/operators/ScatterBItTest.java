@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.batch.adapters.BItDrainer;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -101,15 +102,15 @@ public class ScatterBItTest extends AbstractBItTest {
                     IntConsumer consumer = thread -> {
                         int[] actual = new int[expected.length];
                         int actualSize = 0;
-                        try (var q = scatter.consumer(thread)) {
+                        try (var g = new Guard.ItGuard<>(this, scatter.consumer(thread))) {
                             semaphore.acquireUninterruptibly();
-                            TermBatch b = q.nextBatch(null);
-                            if (!q.tryCancel()) {
-                                assertTrue(q.isTerminated());
+                            TermBatch b = g.nextBatch();
+                            if (!g.it.tryCancel()) {
+                                assertTrue(g.it.state().isTerminated());
                                 assertNotEquals(upstream.state(), BIt.State.ACTIVE);
                             }
                             assertNotNull(b);
-                            for (; b != null; b = q.nextBatch(b)) {
+                            for (; b != null; b = g.nextBatch()) {
                                 for (TermBatch n = b; n != null; n = n.next) {
                                     for (int r = 0, rows = n.rows; r < rows; r++)
                                         actual[actualSize++] = IntsBatch.parse(n.get(r, 0));

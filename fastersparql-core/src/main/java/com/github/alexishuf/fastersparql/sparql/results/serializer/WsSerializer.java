@@ -4,80 +4,97 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.RopeArrayMap;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
-import com.github.alexishuf.fastersparql.model.rope.ByteSink;
-import com.github.alexishuf.fastersparql.model.rope.Rope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayPool;
-import com.github.alexishuf.fastersparql.util.concurrent.GlobalAffinityShallowPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.lang.foreign.MemorySegment;
 import java.util.Map;
+import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-public class WsSerializer extends ResultsSerializer {
+public class WsSerializer extends ResultsSerializer<WsSerializer> {
     public static final int DEF_BUFFER_HINT = 2048;
-    private static final ByteRope PREFIX_CMD = new ByteRope("!prefix ");
-    private static final int POOL_COL = GlobalAffinityShallowPool.reserveColumn();
+    private static final FinalSegmentRope PREFIX_CMD = FinalSegmentRope.asFinal("!prefix ");
+    private static final class PrefixAssignerFac implements Supplier<WsPrefixAssigner> {
+        @Override public WsPrefixAssigner get() {
+            var pa = new WsPrefixAssigner(RopeArrayMap.create()).takeOwnership(RECYCLED);
+            pa.reset();
+            return pa;
+        }
+        @Override public String toString() {return "WsSerializer.PrefixAssignerFac";}
+    }
+    private static final class PrefixAssignerPrimerFac implements Supplier<WsPrefixAssigner> {
+        @Override public WsPrefixAssigner get() {
+            var ram = RopeArrayMap.create(new Rope[16]);
+            var pa = new WsPrefixAssigner(ram).takeOwnership(RECYCLED);
+            pa.reset();
+            return pa;
+        }
+        @Override public String toString() {return "WsSerializer.PrefixAssignerPrimerFac";}
+    }
 
-    private final ByteRope rowsBuffer;
+    private static final Alloc<WsPrefixAssigner> PREFIX_ASSIGNER_ALLOC =
+            new Alloc<>(WsPrefixAssigner.class, "WsSerializer.PREFIX_ASSIGNER_ALLOC",
+                    Alloc.THREADS*64,
+                    new PrefixAssignerFac(), 16 /* WsPrefixAssigner header */
+                    + 4*2      /* PrefixAssigner fields */
+                    + 4*2      /* WsPrefixAssigner fields */
+                    + 16       /* RopeArrayMap header */
+                    + 4*2      /* RopeArrayMap fields */
+                    + 20+16*4  /* RopeArrayMap.data */
+            );
+    static {
+        var fac = new PrefixAssignerPrimerFac();
+        Primer.INSTANCE.sched(() -> PREFIX_ASSIGNER_ALLOC.prime(fac, 2, 0));
+    }
+
+    private final MutableRope rowsBuffer;
     private final WsPrefixAssigner prefixAssigner;
-    private boolean pooled;
 
     public static class WsFactory implements Factory {
-        @Override public ResultsSerializer create(Map<String, String> params) {
-            return WsSerializer.create(DEF_BUFFER_HINT);
+        @Override public Orphan<WsSerializer> create(Map<String, String> params) {
+            return new WsSerializer.Concrete(DEF_BUFFER_HINT);
         }
         @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
     }
 
-    public static WsSerializer create(int bufferHint) {
-        var s = (WsSerializer) GlobalAffinityShallowPool.get(POOL_COL);
-        if (s == null) return new WsSerializer(bufferHint);
-        if (!s.pooled)
-            throw new IllegalStateException("Pooled WsSerializer not marked as pooled");
-        s.pooled = false;
-        ByteRope buffer = s.rowsBuffer;
-        if (buffer.freeCapacity() < bufferHint) {
-            byte[] bigger = ArrayPool.BYTE.getAtLeast(bufferHint);
-            if (bigger != null && bigger.length >= bufferHint) {
-                buffer.recycleUtf8();
-                buffer.wrapSegment(MemorySegment.ofArray(bigger), bigger, 0, 0);
-            }
-        }
-        return s;
-    }
-
+    public static Orphan<WsSerializer> create(int bufferHint) {return new Concrete(bufferHint);}
     protected WsSerializer(int bufferHint) {
         super(SparqlResultFormat.WS.asMediaType());
-        (prefixAssigner = new WsPrefixAssigner()).reset();
-        rowsBuffer = new ByteRope(ArrayPool.bytesAtLeast(bufferHint), 0, 0);
+        rowsBuffer     = new MutableRope(bufferHint);
+        prefixAssigner = PREFIX_ASSIGNER_ALLOC.create();
+        prefixAssigner.transferOwnership(RECYCLED, this);
+    }
+    private static final class Concrete extends WsSerializer implements Orphan<WsSerializer> {
+        private Concrete(int bufferHint) {super(bufferHint);}
+        @Override public WsSerializer takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
-    public void recycle() {
-        if (pooled)
-            throw new IllegalStateException("recycle() on pooled WsSerializer");
-        pooled = true;
+    @Override protected @Nullable WsSerializer internalMarkGarbage(Object currentOwner) {
+        super.internalMarkGarbage(currentOwner);
         columns = null;
-        vars = Vars.EMPTY;
-        ask = false;
-        empty = true;
-        prefixAssigner.reset();
-        if (GlobalAffinityShallowPool.offer(POOL_COL, this) != null)  // rejected
-            rowsBuffer.recycleUtf8(); // at least try to recycle our byte[] buffer
+        vars    = Vars.EMPTY;
+        ask     = false;
+        empty   = true;
+        prefixAssigner.recycle(this);
+        rowsBuffer.close();
+        return null;
     }
 
     @Override protected void onInit() {
-        if (pooled) throw new IllegalStateException("use of recycle()d serializer");
+        requireAlive();
         prefixAssigner.reset();
     }
 
     @Override public void serializeHeader(ByteSink<?, ?> dest) {
-        if (pooled) throw new IllegalStateException("use of recycle()d serializer");
+        requireAlive();
         for (int i = 0, n = subset.size(); i < n; i++) {
             if (i != 0) dest.append('\t');
             dest.append('?').append(subset.get(i));
@@ -86,12 +103,12 @@ public class WsSerializer extends ResultsSerializer {
     }
 
     @Override
-    public <B extends Batch<B>, S extends ByteSink<S, T>, T>
-    void serialize(Batch<B> batch0, ByteSink<S, T> sink, int hardMax,
+    public <B extends Batch<B>, T>
+    void serialize(Orphan<B> orphan, ByteSink<?, T> sink, int hardMax,
                    NodeConsumer<B> nodeCons, ChunkConsumer<T> chunkCons) {
-        if (batch0 == null) return;
-
-        @SuppressWarnings("unchecked") B batch = (B)batch0;
+        if (orphan == null)
+            return;
+        B batch = orphan.takeOwnership(this);
         int r = 0;
         try {
             prefixAssigner.dest = sink;
@@ -164,7 +181,8 @@ public class WsSerializer extends ResultsSerializer {
                               ChunkConsumer<T> chunkConsumer) {
         if (batch.rows > 0) {
             sink.append('\n');
-            deliver(sink, chunkConsumer, 1, 0, Integer.MAX_VALUE);
+            if (!chunkConsumer.isNoOp())
+                deliver(sink, chunkConsumer, 1, 0, Integer.MAX_VALUE);
         }
         while (batch != null)
             batch = detachAndDeliverNode(batch, nodeConsumer);
@@ -172,22 +190,33 @@ public class WsSerializer extends ResultsSerializer {
 
     private static final byte[] END = "!end\n".getBytes(UTF_8);
     @Override public void serializeTrailer(ByteSink<?, ?> dest) {
-        if (pooled) throw new IllegalStateException("Use of recycle()d serializer");
+        requireAlive();
         dest.append(END);
     }
 
-    private static final class WsPrefixAssigner extends PrefixAssigner {
+    private static final class WsPrefixAssigner extends PrefixAssigner
+            implements Orphan<PrefixAssigner> {
         private @MonotonicNonNull ByteSink<?, ?> dest;
 
-        public WsPrefixAssigner() {
-            super(new RopeArrayMap());
+        private WsPrefixAssigner(Orphan<RopeArrayMap> map) {super(map);}
+
+        @Override public @Nullable WsPrefixAssigner recycle(Object currentOwner) {
+            internalMarkRecycled(currentOwner);
+            if (PREFIX_ASSIGNER_ALLOC.offer(this) != null)
+                internalMarkGarbage(RECYCLED);
+            return null;
+        }
+
+        @Override public WsPrefixAssigner takeOwnership(Object newOwner) {
+            takeOwnership0(newOwner);
+            return this;
         }
 
         @Override public Rope nameFor(SegmentRope prefix) {
             Rope name = prefix2name.get(prefix);
             if (name == null) {
-                name = new ByteRope().append('p').append(prefix2name.size());
-                prefix2name.put(prefix, name);
+                name = RopeFactory.make(12).add('p').add(prefix2name.size()).take();
+                prefix2name.put(FinalSegmentRope.asFinal(prefix), name);
                 dest.ensureFreeCapacity(PREFIX_CMD.len+name.len()+ prefix.len()+3)
                       .append(PREFIX_CMD).append(name).append(':')
                       .append(prefix).append('>').append('\n');

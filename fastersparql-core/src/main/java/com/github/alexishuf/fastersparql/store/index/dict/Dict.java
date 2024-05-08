@@ -1,11 +1,15 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PlainRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues;
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -110,28 +114,38 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
         md.valueWidth   = 1;
     }
 
-    public abstract AbstractLookup polymorphicLookup();
+    public abstract Orphan<? extends AbstractLookup<?>> polymorphicLookup();
+
+    protected static final int LOOKUP_POOL_CAPACITY = Alloc.THREADS*128;
+
     public void validate() throws IOException {
-        var lookup = polymorphicLookup();
-        for (int id = 1; id <= nStrings; id++) {
-            PlainRope str = lookup.get(id);
-            if (str.len < 0)
-                throw new IOException("Malformed "+this+": string with id "+id+" has negative length");
-            long found = lookup.find(str);
-            if (found != id)
-                throw new IOException("Malformed "+this+": expected "+id+" for find("+str+"), got "+found);
+        var lookup = polymorphicLookup().takeOwnership(this);
+        try {
+            for (int id = 1; id <= nStrings; id++) {
+                PlainRope str = lookup.get(id);
+                if (str.len < 0)
+                    throw new IOException("Malformed "+this+": string with id "+id+" has negative length");
+                long found = lookup.find(str);
+                if (found != id)
+                    throw new IOException("Malformed "+this+": expected "+id+" for find("+str+"), got "+found);
+            }
+        } finally {
+            lookup.recycle(this);
         }
     }
 
     public String dump() {
         var sb = new StringBuilder();
-        var lookup = this instanceof SortedCompositeDict c ? c.lookup()
-                                                     : ((SortedStandaloneDict)this).lookup();
-        for (long i = MIN_ID; i <= nStrings; i++) {
-            PlainRope r = lookup.get(i);
-            if (r == null)
-                throw new RuntimeException("Valid string not found");
-            sb.append(r).append('\n');
+        var lookup = polymorphicLookup().takeOwnership(this);
+        try {
+            for (long i = MIN_ID; i <= nStrings; i++) {
+                PlainRope r = lookup.get(i);
+                if (r == null)
+                    throw new RuntimeException("Valid string not found");
+                sb.append(r).append('\n');
+            }
+        } finally {
+            lookup.recycle(this);
         }
         sb.setLength(Math.max(0, sb.length()-1));
         return sb.toString();
@@ -153,8 +167,8 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
         return (flags & (byte)((LOCALITY_MASK|SHARED_MASK) >>> FLAGS_BIT)) == 0;
     }
 
-    public abstract static class AbstractLookup {
-
+    public abstract static class AbstractLookup<L extends AbstractLookup<L>>
+            extends AbstractOwned<L> {
         public abstract Dict dict();
 
         /**
@@ -197,7 +211,7 @@ public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable
     public static final class BadSharedId extends IllegalStateException {
         public BadSharedId(long id, Dict dict, long off, int len) {
             super(String.format("String %d (%s) at %s refers to invalid shared string",
-                    id, new SegmentRope(dict.seg, off, len), dict));
+                    id, new FinalSegmentRope(dict.seg, off, len), dict));
         }
     }
 

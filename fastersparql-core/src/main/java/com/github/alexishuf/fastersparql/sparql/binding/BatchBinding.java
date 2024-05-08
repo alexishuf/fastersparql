@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -14,8 +15,9 @@ import java.util.List;
 public class BatchBinding extends Binding {
     private static final BatchBinding[] EMPTY = new BatchBinding[BatchType.MAX_BATCH_TYPE_ID];
     static {
-        for (var t : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED, StoreBatchType.STORE)) {
-            var b = t.create(0);
+        for (var t : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED,
+                             StoreBatchType.STORE)) {
+            var b = t.create(0).takeOwnership(BatchBinding.class);
             b.beginPut();
             b.commitPut();
             EMPTY[t.id] = new BatchBinding(Vars.EMPTY).attach(b, 0);
@@ -32,7 +34,7 @@ public class BatchBinding extends Binding {
         var bb = EMPTY[type.id];
         var b = bb == null ? null : bb.batch;
         if (b == null || b.rows != 1  || b.next != null || b.cols != 0) {
-            (b = type.create(0)).beginPut();
+            (b = type.create(0).takeOwnership(BatchBinding.class)).beginPut();
             b.commitPut();
             EMPTY[type.id] = bb = new BatchBinding(Vars.EMPTY).attach(b, 0);
         }
@@ -132,20 +134,19 @@ public class BatchBinding extends Binding {
      * If there is a term at column {@code i}, set {@code view} to it and return {@code true}.
      *
      * @param i the column to read from
-     * @param view A mutable {@link Term} ({@link Term#mutable()}/{@link Term#pooledMutable()})
-     *             that will have its segments replaced to be the same as the term at column
-     *             {@code i}
+     * @param view A {@link TermView} that will have its segments replaced/remapped to be the
+     *             same as the term at column {@code i}
      * @return {@code true} iff there was a non-null {@link Term} at column {@code i}, else,
      *         {@code false}
      * @throws IndexOutOfBoundsException if {@code i < 0 || i >= vars.size()}
      */
-    final public boolean get(int i, Term view) {
+    final public boolean get(int i, TermView view) {
         if (i >= cols) return getFromRemainder(i, view);
         var batch = this.batch;
         return batch != null && batch.getView(row, i, view);
     }
 
-    private boolean getFromRemainder(int idx, Term view) {
+    private boolean getFromRemainder(int idx, TermView view) {
         var name = vars.get(idx);
         int c = -1;
         var b = remainder;

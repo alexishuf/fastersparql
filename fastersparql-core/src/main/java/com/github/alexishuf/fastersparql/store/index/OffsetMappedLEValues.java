@@ -43,6 +43,7 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
     protected final long offsCount, valEnd;
     protected final int offShift, valShift;
     protected final int offWidth, valWidth;
+    protected boolean open;
     protected String stringValue;
     private final IllegalStateException unreachable;
 
@@ -67,6 +68,7 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
         this.valShift = Integer.numberOfTrailingZeros(valWidth);
         this.offsCount = md.offsetsCount;
 
+        this.open = true;
         this.stringValue = getClass().getSimpleName() + "(" + path + ")";
         this.unreachable = new IllegalStateException("Unreachable code reached for "+this);
     }
@@ -118,15 +120,18 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
     }
 
     @Override public void close() {
-        try {
-            seg.unload();
-        } catch (Throwable t) { log.error("Ignoring failure to unmap {}", path); }
-        try {
-            ch.close();
-        } catch (Throwable t) { log.error("Ignoring failure to close {}", ch); }
-        try {
-            if (arena != null) arena.close();
-        } catch (Throwable t) { log.error("Ignoring failure to close arena for {}", path); }
+        if (open) {
+            open = false;
+            try {
+                seg.unload();
+            } catch (Throwable t) { log.error("Ignoring failure to unmap {}", path); }
+            try {
+                ch.close();
+            } catch (Throwable t) { log.error("Ignoring failure to close {}", ch); }
+            try {
+                if (arena != null) arena.close();
+            } catch (Throwable t) { log.error("Ignoring failure to close arena for {}", path); }
+        }
     }
 
     /**

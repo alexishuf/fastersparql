@@ -41,22 +41,22 @@ class RopeTest {
 
     private static final class ByteRopeFac implements Factory {
         @Override public List<Rope> create(String string) {
-            return List.of(new ByteRope(string.getBytes(UTF_8)));
+            return List.of(FinalSegmentRope.asFinal(string));
         }
         @Override public String toString() { return "ByteRopeFac"; }
     }
 
-    private static final class ByteSubRopeFac implements Factory {
+    private static final class FinalSegmentRopeSubRopeFac implements Factory {
         @Override public List<Rope> create(String string) {
             List<Rope> list = new ArrayList<>();
             byte[] utf8 = string.getBytes(UTF_8);
-            list.add(new ByteRope(utf8, 0, utf8.length));
+            list.add(new FinalSegmentRope(utf8));
 
             byte[] paddedShort = new byte[utf8.length + 2];
             paddedShort[0] = '<';
             paddedShort[paddedShort.length-1] = '\"';
             arraycopy(utf8, 0, paddedShort, 1, utf8.length);
-            list.add(new ByteRope(paddedShort, 1, utf8.length));
+            list.add(new FinalSegmentRope(paddedShort, 1, utf8.length));
 
             byte[] paddedLong = new byte[utf8.length + 64];
             byte[] junk = "@!.,{}()[]<>0+ -_:#/?%abcdefg^\"\0".getBytes(UTF_8);
@@ -64,7 +64,7 @@ class RopeTest {
             arraycopy(junk, 0, paddedLong, 0, junk.length);
             arraycopy(utf8, 0, paddedLong, junk.length, utf8.length);
             arraycopy(junk, 0, paddedLong, junk.length+utf8.length, junk.length);
-            list.add(new ByteRope(paddedLong, junk.length, utf8.length));
+            list.add(new FinalSegmentRope(paddedLong, junk.length, utf8.length));
             return list;
         }
         @Override public String toString() { return "ByteSubRopeFac"; }
@@ -133,8 +133,8 @@ class RopeTest {
             var innerDirect = ByteBuffer.allocateDirect(utf8.length+66)
                                         .position(33).put(utf8)
                                         .position(33).limit(33+utf8.length);
-            return List.of(new SegmentRope(tight), new SegmentRope(inner),
-                           new SegmentRope(innerDirect));
+            return List.of(new FinalSegmentRope(tight), new FinalSegmentRope(inner),
+                           new FinalSegmentRope(innerDirect));
         }
         @Override public String toString() { return "BufferRopeFac"; }
     }
@@ -151,16 +151,22 @@ class RopeTest {
                 return List.of();
             }
             byte[] u8 = string.getBytes(UTF_8);
-            list.add(Term.valueOf(new ByteRope(u8)));
-            list.add(Term.valueOf(new SegmentRope(ByteBuffer.wrap(u8))));
+            list.add(Term.valueOf(new FinalSegmentRope(u8)));
+            list.add(Term.valueOf(new FinalSegmentRope(ByteBuffer.wrap(u8))));
+            try (var tmp = PooledMutableRope.getWithCapacity(u8.length)) {
+                list.add(Term.valueOf(tmp.append(u8)));
+            } // invalidate tmp content, Term.valueOf() must have copied the bytes
             if (string.startsWith("\"") && string.matches("\"(@[a-zA-Z\\-]+)?$")) {
-                list.add(Term.wrap(new ByteRope(u8), null));
-                list.add(Term.wrap(null, new ByteRope(u8)));
-                list.add(Term.wrap(new ByteRope(u8), ByteRope.EMPTY));
-                list.add(Term.wrap(ByteRope.EMPTY, new ByteRope(u8)));
+                list.add(Term.wrap(new FinalSegmentRope(u8), null));
+                list.add(Term.wrap(null, new FinalSegmentRope(u8)));
+                list.add(Term.wrap(new FinalSegmentRope(u8), FinalSegmentRope.EMPTY));
+                list.add(Term.wrap(FinalSegmentRope.EMPTY, new FinalSegmentRope(u8)));
             }
-            ByteRope padded = Rope.of(".", string, ".");
-            list.add(Term.valueOf(padded, 1, padded.len()-1));
+
+            try (var tmp = PooledMutableRope.getWithCapacity(string.length()+2)) {
+                tmp.append('.').append(string).append('.');
+                list.add(Term.valueOf(tmp, 1, tmp.len()-1));
+            }
             assertTrue(list.stream().noneMatch(Objects::isNull), "null ropes generated");
             return list;
         }
@@ -170,7 +176,7 @@ class RopeTest {
     private static final TwoSegmentSubRopeFac TWO_SEGMENT_ROPE_FAC = new TwoSegmentSubRopeFac();
     private static final List<Factory> FACTORIES = List.of(
             new ByteRopeFac(),
-            new ByteSubRopeFac(),
+            new FinalSegmentRopeSubRopeFac(),
             new BufferRopeFac(),
             new TwoSegmentRopeFac(),
             TWO_SEGMENT_ROPE_FAC,
@@ -226,7 +232,7 @@ class RopeTest {
                     assertTrue(rope.hasAnyCase(i, new byte[0]));
                 }
 
-                var lhs = new ByteRope(rope.toArray(0, len));
+                var lhs = FinalSegmentRope.asFinal(rope, 0, len);
                 assertTrue(lhs.equals(rope));
                 assertTrue(rope.equals(lhs));
                 assertEquals(fnv(sb), rope.hashCode());
@@ -479,36 +485,6 @@ class RopeTest {
                 assertEquals(i, rope.skip(0, i, until));
         }
     }
-
-    @Test void testOf() {
-        assertEquals("", Rope.of().toString());
-        assertEquals("", Rope.of("").toString());
-        assertEquals("", Rope.of("", "").toString());
-        assertEquals("", Rope.of("", new StringBuilder()).toString());
-        assertEquals("", Rope.of(ByteRope.EMPTY, new StringBuilder()).toString());
-
-        assertEquals("a", Rope.of(new ByteRope(new byte[]{'a'})).toString());
-        assertEquals("a", Rope.of("a").toString());
-        assertEquals("a", Rope.of(new StringBuilder().append('a')).toString());
-
-        assertEquals("b", Rope.of("b", new StringBuilder()).toString());
-        assertEquals("b", Rope.of("b", ByteRope.EMPTY).toString());
-        assertEquals("b", Rope.of(ByteRope.EMPTY, new StringBuilder().append('b')).toString());
-
-        assertEquals("12", Rope.of("1", "2").toString());
-        assertEquals("12", Rope.of("1", 2).toString());
-        assertEquals("12", Rope.of(new StringBuilder().append("1"), new ByteRope("2")).toString());
-        assertEquals("12", Rope.of(new ByteRope("1"), new StringBuilder().append("2")).toString());
-
-        assertEquals("123", Rope.of(1, 2, 3).toString());
-        assertEquals("123", Rope.of(new ByteRope((Integer)1), 2, 3).toString());
-        assertEquals("123", Rope.of(new ByteRope("1"), new StringBuilder().append("2"), "3").toString());
-
-        Rope a = new ByteRope("a"), b = new SegmentRope(ByteBuffer.wrap("b".getBytes(UTF_8)));
-        assertSame(a, Rope.of(a));
-        assertSame(b, Rope.of(b));
-    }
-
 
     @ParameterizedTest @MethodSource("factories")
     void testParseLong(Factory fac) {
@@ -795,37 +771,41 @@ class RopeTest {
     }
 
     @Test void testErase() {
-        assertEquals("", new ByteRope("").erase(0, 0).toString());
-        assertEquals("", new ByteRope("").erase(0, 1).toString());
-        assertEquals("", new ByteRope("0123").erase(0, 4).toString());
-        assertEquals("0", new ByteRope("0123").erase(1, 4).toString());
-        assertEquals("01", new ByteRope("0123").erase(2, 4).toString());
-        assertEquals("013", new ByteRope("0123").erase(2, 3).toString());
-        assertEquals("03", new ByteRope("0123").erase(1, 3).toString());
-        assertEquals("3", new ByteRope("0123").erase(0, 3).toString());
-        assertEquals("23", new ByteRope("0123").erase(0, 2).toString());
+        try (var tmp = PooledMutableRope.get()) {
+            assertEquals("",    tmp.clear().append("")    .erase(0, 0).toString());
+            assertEquals("",    tmp.clear().append("")    .erase(0, 1).toString());
+            assertEquals("",    tmp.clear().append("0123").erase(0, 4).toString());
+            assertEquals("0",   tmp.clear().append("0123").erase(1, 4).toString());
+            assertEquals("01",  tmp.clear().append("0123").erase(2, 4).toString());
+            assertEquals("013", tmp.clear().append("0123").erase(2, 3).toString());
+            assertEquals("03",  tmp.clear().append("0123").erase(1, 3).toString());
+            assertEquals("3",   tmp.clear().append("0123").erase(0, 3).toString());
+            assertEquals("23",  tmp.clear().append("0123").erase(0, 2).toString());
+        }
     }
 
     @Test void testReplace() {
-        //empty string
-        assertEquals("", new ByteRope("").replace('0', 'x').toString());
+        try (var tmp = PooledMutableRope.get()) {
+            //empty string
+            assertEquals("", tmp.clear().append("").replace('0', 'x').toString());
 
-        //replace on short strings (no vectorization)
-        assertEquals("x", new ByteRope("0").replace('0', 'x').toString());
-        assertEquals("0x2", new ByteRope("012").replace('1', 'x').toString());
-        assertEquals("x12", new ByteRope("012").replace('0', 'x').toString());
-        assertEquals("01x", new ByteRope("012").replace('2', 'x').toString());
-        assertEquals("x1x", new ByteRope("010").replace('0', 'x').toString());
-        assertEquals("0x0", new ByteRope("010").replace('1', 'x').toString());
+            //replace on short strings (no vectorization)
+            assertEquals("x", tmp.clear().append("0").replace('0', 'x').toString());
+            assertEquals("0x2", tmp.clear().append("012").replace('1', 'x').toString());
+            assertEquals("x12", tmp.clear().append("012").replace('0', 'x').toString());
+            assertEquals("01x", tmp.clear().append("012").replace('2', 'x').toString());
+            assertEquals("x1x", tmp.clear().append("010").replace('0', 'x').toString());
+            assertEquals("0x0", tmp.clear().append("010").replace('1', 'x').toString());
 
 
-        var strings = List.of("012345678901234567890123456789012",
-                              "01234567890123456789012345678900123456789012345678901234567890123");
-        for (String string : strings) {
-            for (char digit = '0'; digit <= '9'; digit++) {
-                var ex = string.replace(digit, 'x');
-                var ctx = "digit=" + digit + ", string=" + string;
-                assertEquals(ex, new ByteRope(string).replace(digit, 'x').toString(), ctx);
+            var strings = List.of("012345678901234567890123456789012",
+                    "01234567890123456789012345678900123456789012345678901234567890123");
+            for (String string : strings) {
+                for (char digit = '0'; digit <= '9'; digit++) {
+                    var ex = string.replace(digit, 'x');
+                    var ctx = "digit=" + digit + ", string=" + string;
+                    assertEquals(ex, tmp.clear().append(string).replace(digit, 'x').toString(), ctx);
+                }
             }
         }
     }

@@ -1,23 +1,27 @@
 package com.github.alexishuf.fastersparql.operators.row;
 
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class BatchBindingTest {
+
+    private static final List<TermBatch> BATCHES = new ArrayList<>();
 
     @SuppressWarnings("unused") static Stream<Arguments> test() {
         record D(Vars vars, List<Term> terms) {}
@@ -38,13 +42,22 @@ class BatchBindingTest {
 
         );
         return list.stream().map(d -> {
-            TermBatch b = TermBatchType.TERM.create(d.vars.size());
+            TermBatch b = TERM.create(d.vars.size()).takeOwnership(BatchBindingTest.class);
+            BATCHES.add(b);
             b.beginPut();
             for (int i = 0; i < d.vars.size(); i++) b.putTerm(i, (Term)null);
             b.commitPut();
             b.putRow(d.terms);
             return arguments(d.vars, b);
         });
+    }
+
+    @AfterAll static void afterAll() {
+        for (TermBatch b : BATCHES) {
+            if (b != null && b.isOwner(BatchBindingTest.class))
+                b.recycle(BatchBindingTest.class);
+        }
+        BATCHES.clear();
     }
 
     @ParameterizedTest @MethodSource("test")
@@ -54,7 +67,7 @@ class BatchBindingTest {
             assertEquals(batch.get(1, c), b.get(c), "c="+c);
             assertEquals(batch.get(1, c), b.get(vars.get(c)), "c="+c);
         }
-        assertNull(b.get(SegmentRope.of("outside")));
+        assertNull(b.get(FinalSegmentRope.asFinal("outside")));
         assertNull(b.get(Term.valueOf("?outside")));
         if (b.size() > 0) {
             assertThrows(IndexOutOfBoundsException.class, () -> b.get(-1));

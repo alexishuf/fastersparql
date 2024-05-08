@@ -6,11 +6,13 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.ByteRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -25,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.FSProperties.*;
 import static java.lang.invoke.MethodHandles.lookup;
 
 /**
@@ -107,8 +110,8 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
      * <p>This method should be called when one of the following happens:</p>
      * <ul>
      *     <li>The source that feeds this {@link BIt} has been exhausted (e.g., a thread calling
-     *         {@link CallbackBIt#offer(Batch)} has completed or threw {@code cause})</li>
-     *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#nextBatch(B)} {@code == null}</li>
+     *         {@link CallbackBIt#offer(Orphan)} has completed or threw {@code cause})</li>
+     *     <li>The {@link BIt} was fully consumed (i.e., {@link BIt#nextBatch(Orphan)} {@code == null}</li>
      *     <li>{@link BIt#close()} was called ({@code cause} will be
      *         a {@link BItCancelledException})</li>
      * </ul>
@@ -185,17 +188,19 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
      */
     protected void updatedBatchConstraints() {}
 
-    protected final void onNextBatch(@Nullable B b) {
-        if (b == null) return;
-        var m = metrics;
-        int batchRows = STATS_ENABLED || m != null ? b.totalRows() : 0;
-        if (STATS_ENABLED) {
-            ++batches;
-            rows += batchRows;
+    protected final @Nullable Orphan<B> onNextBatch(@Nullable Orphan<B> b) {
+        if (b != null) {
+            var m = metrics;
+            int batchRows = STATS_ENABLED || m != null ? Batch.peekTotalRows(b) : 0;
+            if (STATS_ENABLED) {
+                ++batches;
+                rows += batchRows;
+            }
+            if (m != null)
+                m.batch(batchRows);
+            eager = false;
         }
-        if (m != null)
-            m.batch(batchRows);
-        eager = false;
+        return b;
     }
 
     /**
@@ -244,10 +249,10 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
 
     @Override public BIt<B> preferred() {
         needsStartTime = true;
-        minWaitNs = FSProperties.batchMinWait(TimeUnit.NANOSECONDS);
-        maxWaitNs = FSProperties.batchMaxWait(TimeUnit.NANOSECONDS);
-        minBatch  = FSProperties.batchMinSize();
-        maxBatch = Math.max(minBatch, batchType.preferredRowsPerBatch(vars));
+        minWaitNs = batchMinWait(TimeUnit.NANOSECONDS);
+        maxWaitNs = batchMaxWait(TimeUnit.NANOSECONDS);
+        minBatch  = Math.max(1, (int)(batchMinWeight()*batchType.preferredRowsPerBatch(nColumns)));
+        maxBatch  = Math.max(minBatch, batchType.preferredRowsPerBatch(vars));
         updatedBatchConstraints();
         return this;
     }
@@ -394,11 +399,13 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
             return toStringNoArgs()+"()";
         if (n == 1)
             return toStringNoArgs()+"("+operands.iterator().next()+")";
-        var sb = new ByteRope(512).append(toStringNoArgs()).append('(');
-        for (var i = operands.iterator(); sb.length() < 508 && i.hasNext(); ++taken)
-            sb.append("\n  ").append(i.next());
-        if (taken < n)
-            sb.append("\n  ...");
-        return sb.append("\n)").toString();
+        try (var sb = PooledMutableRope.getWithCapacity(512)) {
+            sb.append(toStringNoArgs()).append('(');
+            for (var i = operands.iterator(); sb.length() < 508 && i.hasNext(); ++taken)
+                sb.append("\n  ").append(i.next());
+            if (taken < n)
+                sb.append("\n  ...");
+            return sb.append("\n)").toString();
+        }
     }
 }

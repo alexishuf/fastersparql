@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 
@@ -19,6 +20,18 @@ public class EmitterStats {
 
     public static EmitterStats createIfEnabled() { return ENABLED ? new EmitterStats() : null; }
 
+    public void onBatchDelivered(@Nullable Orphan<? extends Batch<?>> orphan) {
+        ++deliveredBatches;
+        if (orphan == null) {
+            ++deliveredNullBatches;
+        } else {
+            int totalRows = Batch.peekTotalRows(orphan), rows = Batch.peekRows(orphan);
+            if (rows == 1 && totalRows == 1)
+                ++deliveredSingleRowBatches;
+            deliveredRows += totalRows;
+        }
+    }
+
     public void onBatchDelivered(@Nullable Batch<?> b) {
         ++deliveredBatches;
         if (b == null) {
@@ -27,6 +40,18 @@ public class EmitterStats {
             if (b.rows == 1 && b.next == null)
                 ++deliveredSingleRowBatches;
             deliveredRows += b.totalRows();
+        }
+    }
+
+    public void onBatchReceived(@Nullable Orphan<? extends Batch<?>> orphan) {
+        ++receivedBatches;
+        if (orphan == null) {
+            ++receivedNullBatches;
+        } else {
+            int rows = Batch.peekRows(orphan), totalRows = Batch.peekTotalRows(orphan);
+            if (rows == 1 && totalRows == 1)
+                ++receivedSingleRowBatches;
+            receivedRows += totalRows;
         }
     }
 
@@ -39,6 +64,23 @@ public class EmitterStats {
                 ++receivedSingleRowBatches;
             receivedRows += b.totalRows();
         }
+    }
+
+    public void revertOnBatchReceived(@Nullable Orphan<? extends Batch<?>> b) {
+        --receivedBatches;
+        if (b == null) {
+            --receivedNullBatches;
+        } else {
+            int rows = Batch.peekRows(b), totalRows = Batch.peekTotalRows(b);
+            if (rows == 1 && totalRows == 1)
+                --receivedSingleRowBatches;
+            receivedRows -= totalRows;
+        }
+    }
+
+    public void onBatchPassThrough(@Nullable Orphan<? extends Batch<?>> orphan) {
+        onBatchReceived(orphan);
+        onBatchDelivered(orphan);
     }
     public void onBatchPassThrough(@Nullable Batch<?> b) {
         onBatchReceived(b);
