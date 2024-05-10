@@ -295,6 +295,12 @@ public class DebugJournal {
             return ((JournalNamed)o).journalName();
         }
     };
+    private static final ObjRenderer THREAD_OBJ_RENDERER = new ObjRenderer(Thread.class) {
+        @Override protected String render(Object o) {
+            Thread thread = (Thread) o;
+            return "T"+thread.threadId()+':'+thread.getName();
+        }
+    };
 
 
     public static class DefaultRenderer implements Renderer {
@@ -305,6 +311,7 @@ public class DebugJournal {
             objRenderers.add(ID_OBJ_RENDERER);
             objRenderers.add(THROWABLE_OBJ_RENDERER);
             objRenderers.add(JOURNAL_NAMED_OBJ_RENDERER);
+            objRenderers.add(THREAD_OBJ_RENDERER);
         }
 
         public void addObjRenderer(ObjRenderer renderer) { objRenderers.add(renderer); }
