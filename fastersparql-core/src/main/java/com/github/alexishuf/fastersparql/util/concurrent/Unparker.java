@@ -48,6 +48,8 @@ public class Unparker {
     }
 
     public static void unpark(Thread thread) {
+        if (thread == null)
+            return; // nop
         if (!unparkQueue.offer(thread))
             LockSupport.unpark(thread);
     }
