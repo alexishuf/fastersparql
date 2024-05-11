@@ -236,6 +236,7 @@ public class QueryBench {
     }
 
     @Setup(Level.Trial) public void trialSetup() throws IOException {
+//        SegmentRope.ALT = alt;
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
         setProperty(OP_WEAKEN_DISTINCT, Boolean.toString(weakenDistinct));
         FSProperties.refresh();
@@ -315,7 +316,6 @@ public class QueryBench {
 
     @Setup(Level.Iteration) public void iterationSetup(BenchmarkParams opts) throws IOException {
         journal("iterationSetup", iterationNumber);
-        //CompressedBatchType.ALT = alt;
         lastBenchResult = -1;
         BackgroundTasks.sync();
         IOUtils.fsync(500_000); // generous timeout because there should be no I/O

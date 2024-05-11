@@ -721,11 +721,13 @@ public abstract class SegmentRope extends PlainRope {
         int n = Math.min(lLen, rLen);
         if (diff == 0) {
             for (; i+8 < n; i += 8) {
-                if (U.getLong(lBase, lOff+i) != U.getLong(rBase, rOff+i)) break;
+                if (U.getLong(lBase, lOff+i) != U.getLong(rBase, rOff+i))
+                    break;
             }
         }
         for (; i < n; ++i) {
-            if ((diff = U.getByte(lBase, lOff+i) - U.getByte(rBase, rOff+i)) != 0) return diff;
+            if ((diff = U.getByte(lBase, lOff+i) - U.getByte(rBase, rOff+i)) != 0)
+                return diff;
         }
         return lLen-rLen;
     }
