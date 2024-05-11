@@ -1,6 +1,9 @@
 package com.github.alexishuf.fastersparql.store.index.dict;
 
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.PlainRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
@@ -117,13 +120,24 @@ public class LocalityStandaloneDict extends Dict {
                 byte[] rBase = s.utf8;
                 long rOff = s.segment.address() + s.offset;
                 int rLen = s.len;
-                while (id <= nStrings) {
-                    long off = dict.readOffUnsafe(id - 1);
-                    int diff = compare1_1(null, dict.valBase + off,
-                            (int)(dict.readOffUnsafe(id) - off),
-                            rBase, rOff, rLen);
-                    if (diff == 0) return id;
-                    id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
+                if (dict.offShift == 3) {
+                    while (id <= nStrings) {
+                        long off = dict.readOffUnsafeL(id - 1);
+                        int diff = compare1_1(null, dict.valBase + off,
+                                (int)(dict.readOffUnsafeL(id) - off),
+                                rBase, rOff, rLen);
+                        if (diff == 0) return id;
+                        id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
+                    }
+                } else {
+                    while (id <= nStrings) {
+                        long off = dict.readOffUnsafeI(id - 1);
+                        int diff = compare1_1(null, dict.valBase + off,
+                                (int)(dict.readOffUnsafeI(id) - off),
+                                rBase, rOff, rLen);
+                        if (diff == 0) return id;
+                        id = (id << 1) + (diff >>> 31); // = rope < tmp ? 2*id : 2*id + 1
+                    }
                 }
             } else {
                 TwoSegmentRope tsr = (TwoSegmentRope) rope;

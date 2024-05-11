@@ -179,6 +179,14 @@ public abstract class OffsetMappedLEValues implements AutoCloseable {
         return offShift == 3 ? U.getLong(addr) : U.getInt(addr) & INT_MASK;
     }
 
+    protected long readOffUnsafeL(long index) {
+        return U.getLong(offBase + (index<<3));
+    }
+
+    protected long readOffUnsafeI(long index) {
+        return INT_MASK & U.getInt(offBase + (index<<2));
+    }
+
     /**
      * Read the value at the {@code offset}-th byte of the {@code mmap()}ed file.
      *

@@ -266,19 +266,35 @@ public class LocalityCompositeDict extends Dict {
             long id = 1;
             if (local instanceof SegmentRope s) {
                 byte[] rBase = s.utf8; //(byte[]) s.segment.array().orElse(null);
-                long rAddr = s.segment.address() + s.offset;
-                while (id <= d.nStrings) {
-                    long off = d.readOffUnsafe(id - 1);
-                    int offerFlShId = (int) ((off & FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
-                    int diff = offerFlShId - flShId;
-                    if (diff == 0) {
-                        off &= OFF_MASK;
-                        diff = (int) ((d.readOffUnsafe(id) & OFF_MASK) - off);
-                        diff = compare1_1(null, d.valBase + off, diff, rBase, rAddr, s.len);
-                        if (diff == 0)
-                            return id;
+                long rAddr = s.segment.address() + s.offset;//(byte[]) s.segment.array().orElse(null);
+                if (d.offShift == 3) {
+                    while (id <= d.nStrings) {
+                        long off = d.readOffUnsafeL(id - 1);
+                        int offerFlShId = (int)((off&FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
+                        int diff = offerFlShId - flShId;
+                        if (diff == 0) {
+                            off &= OFF_MASK;
+                            diff = (int)((d.readOffUnsafeL(id)&OFF_MASK) - off);
+                            diff = compare1_1(null, d.valBase+off, diff, rBase, rAddr, s.len);
+                            if (diff == 0)
+                                return id;
+                        }
+                        id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
                     }
-                    id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
+                } else {
+                    while (id <= d.nStrings) {
+                        long off = d.readOffUnsafeI(id - 1);
+                        int offerFlShId = (int)((off&FLAGGED_SH_ID_MASK) >>> SH_ID_BIT);
+                        int diff = offerFlShId - flShId;
+                        if (diff == 0) {
+                            off &= OFF_MASK;
+                            diff = (int)((d.readOffUnsafeI(id)&OFF_MASK) - off);
+                            diff = compare1_1(null, d.valBase+off, diff, rBase, rAddr, s.len);
+                            if (diff == 0)
+                                return id;
+                        }
+                        id = (id << 1) + (diff >>> 31); // = shId#local < candidate ? 2*id : 2*id + 1
+                    }
                 }
             } else {
                 TwoSegmentRope tsr = (TwoSegmentRope) local;
