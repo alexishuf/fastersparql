@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.util.owned;
 
 import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
 import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
+import com.github.alexishuf.fastersparql.util.owned.SpecialOwner.Recycled;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -19,19 +20,17 @@ public interface Owned<O extends Owned<O>> extends JournalNamed {
     @This O requireOwner(Object owner) throws OwnershipException;
 
     /**
-     * Whether {@link #requireOwner(Object)} with {@code owner} would  <strong>NOT</strong>
-     * throw a {@link OwnershipException}.
-     *
-     * @param owner the expected owner of {@code this}
-     * @return {@code false} if {@code requireOwnership(owner)} would throw, else {@code true}.
+     * If ownership is being marked (each {@link Owned} keeps a reference to its owner),
+     * returns whether the current owner of {@code this} is {@code owner}. Else,
+     * return {@code true}.
      */
-    boolean isOwner(Object owner);
+    boolean isOwnerOrNotMarking(Object owner);
 
     /**
      * Get an object which directly or indirectly owns {@code this} and has no owner itself.
      *
      * <p>Since the owner reported by this method may be an indirect owner,
-     * {@link #isOwner(Object)} may return false when fed the output of this method.</p>
+     * {@link #requireOwner(Object)} may fail when fed the output of this method.</p>
      *
      * @return an object, which ows {@code this} or indirectly owns the owner of {@code this}
      */
@@ -56,10 +55,37 @@ public interface Owned<O extends Owned<O>> extends JournalNamed {
     void requireAlive() throws OwnershipException ;
 
     /**
-     * Whether {@link #requireAlive()} would <strong>NOT</strong> throw a {@link OwnershipException}.
-     * @return {@code false} if {@link #requireAlive()} would throw, else {@code true}.
+     * If ownership is being marked ({@code this} holds a reference to its current owner), return
+     * whether the current owner of {@code this} is not a {@link Recycled} special owner. If not
+     * marking, just return {@code false}
+     *
+     * <p>Note that owner marking is, by default, only enabled when assertions are enabled.</p>
+     * @return {@code true} if ownership marking is disabled or it {@link #recycle(Object)}
+     *         has not yet been called for {@code this}
      */
-    boolean isAlive();
+    boolean isAliveAndMarking();
+
+    /**
+     * If ownership is being marked ({@code this} holds a reference to its current owner), return
+     * whether the current owner of {@code this} is not a {@link Recycled} special owner. If not
+     * marking, just return {@code true}
+     *
+     * <p>Note that owner marking is, by default, only enabled when assertions are enabled.</p>
+     * @return {@code true} if ownership marking is <strong>disabled</strong> or if
+     *         {@code this} has not been {@link #recycle(Object)} yet
+     */
+    boolean isAliveOrNotMarking();
+
+    /**
+     * If ownership is being marked ({@code this} holds a reference to its current owner), return
+     * whether the current owner of {@code this} is a {@link Recycled} special owner. If not
+     * marking, just return {@code false}
+     *
+     * <p>Note that owner marking is, by default, only enabled when assertions are enabled.</p>
+     * @return {@code true} if ownership marking is enabled and {@code this} has already
+     *         been recycled
+     */
+    boolean isNotAliveAndMarking();
 
     /**
      * Release ownership of this object, if it is owned by {@code currentOwner}.

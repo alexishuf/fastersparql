@@ -30,7 +30,7 @@ public sealed class Guard<O extends Owned<O>> implements AutoCloseable {
         if (newOwned != null)
             newOwned.requireOwner(owner);
         O old = this.owned;
-        if (old != newOwned && old != null && old.isOwner(owner))
+        if (old != newOwned && old != null)
             old.recycle(owner);
         this.owned = newOwned;
         return newOwned;
@@ -65,7 +65,7 @@ public sealed class Guard<O extends Owned<O>> implements AutoCloseable {
 
     @Override public void close() {
         O owned = this.owned;
-        if (owned != null && owned.isOwner(owner))
+        if (owned != null)
             owned.recycle(owner);
     }
 

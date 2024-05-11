@@ -17,14 +17,16 @@ import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.CONSTANT
 public class PrefixAssigner extends AbstractOwned<PrefixAssigner> {
     public static final PrefixAssigner NOP;
     public static final PrefixAssigner CANON;
-    protected static final RopeArrayMap DEFAULT_PREFIX_2_NAME;
+    protected static final RopeArrayMap GARBAGE_PREFIX2NAME;
+    protected static final RopeArrayMap DEFAULT_PREFIX2NAME;
 
     static {
-        DEFAULT_PREFIX_2_NAME = RopeArrayMap.create().takeOwnership(CONSTANT);
+        GARBAGE_PREFIX2NAME = RopeArrayMap.create().takeOwnership(CONSTANT);
+        DEFAULT_PREFIX2NAME = RopeArrayMap.create().takeOwnership(CONSTANT);
         var xsd = RopeFactory.make(XSD.len-1).add(XSD, 0, XSD.len-1).take();
         var rdf = RopeFactory.make(RDF.len-1).add(RDF, 0, RDF.len-1).take();
-        DEFAULT_PREFIX_2_NAME.put(xsd, PrefixMap.XSD_NAME);
-        DEFAULT_PREFIX_2_NAME.put(rdf, PrefixMap.RDF_NAME);
+        DEFAULT_PREFIX2NAME.put(xsd, PrefixMap.XSD_NAME);
+        DEFAULT_PREFIX2NAME.put(rdf, PrefixMap.RDF_NAME);
         Concrete canon = new PrefixAssigner.Concrete(RopeArrayMap.create()) {
             @Override public String toString() {return "CANON";}
         };
@@ -52,16 +54,16 @@ public class PrefixAssigner extends AbstractOwned<PrefixAssigner> {
 
     @Override protected @Nullable PrefixAssigner internalMarkGarbage(Object currentOwner) {
         super.internalMarkGarbage(currentOwner);
-        if (prefix2name.isOwner(this))
+        if (prefix2name != GARBAGE_PREFIX2NAME)
             prefix2name.recycle(this);
-        prefix2name = CANON.prefix2name;
+        prefix2name = GARBAGE_PREFIX2NAME;
         return null;
     }
 
     public void reset() {
-        if (!prefix2name.isOwner(this))
+        if (prefix2name == GARBAGE_PREFIX2NAME)
             prefix2name = RopeArrayMap.create().takeOwnership(this);
-        prefix2name.resetToCopy(DEFAULT_PREFIX_2_NAME);
+        prefix2name.resetToCopy(DEFAULT_PREFIX2NAME);
     }
 
     public @Nullable Rope nameFor(SegmentRope prefix) {

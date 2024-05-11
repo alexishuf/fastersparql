@@ -110,7 +110,8 @@ public class LeakDetector implements BackgroundTask {
         public LeakState(Owned<?> owned, @Nullable OwnershipHistory history) {
             this.ownedIfNoTrace = STACK_TRACE ? null : render(owned);
             this.history = history;
-            this.leak = owned != null && owned.isAlive();
+            this.leak = true;
+            this.leak = owned != null && owned.isAliveAndMarking();
         }
 
         public final void update(@Nullable Object newOwner) {

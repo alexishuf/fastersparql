@@ -99,12 +99,12 @@ class StoreBatchTest {
         @Override public void close() {
             for (int i = 0, n = batches.size(); i < n; i++) {
                 StoreBatch b = batches.get(i);
-                if (b != null && b.isOwner(this))
+                if (b != null)
                     batches.set(i, b.recycle(this));
             }
             for (int i = 0, n = guarded.size(); i < n; i++) {
                 var o = guarded.get(i);
-                if (o != null && o.isOwner(this))
+                if (o != null)
                     guarded.set(i, o.recycle(this));
             }
         }
@@ -123,7 +123,7 @@ class StoreBatchTest {
         public StoreBatch set(int idx, @Nullable StoreBatch b) {
             while (batches.size() <= idx) batches.add(null);
             StoreBatch old = batches.get(idx);
-            if (old != null && old != b && old.isOwner(this))
+            if (old != null && old != b)
                 old.recycle(this);
             batches.set(idx, b);
             return b;

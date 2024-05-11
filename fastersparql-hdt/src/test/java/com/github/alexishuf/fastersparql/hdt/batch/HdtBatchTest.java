@@ -55,12 +55,12 @@ class HdtBatchTest {
         @Override public void close() {
             for (int i = 0, n = batches.size(); i < n; i++) {
                 HdtBatch b = batches.get(i);
-                if (b != null && b.isOwner(this))
+                if (b != null)
                     batches.set(i, b.recycle(this));
             }
             for (int i = 0, n = guarded.size(); i < n; i++) {
                 var o = guarded.get(i);
-                if (o != null && o.isOwner(this))
+                if (o != null)
                     guarded.set(i, o.recycle(this));
             }
         }
@@ -79,7 +79,7 @@ class HdtBatchTest {
         public HdtBatch set(int idx, @Nullable HdtBatch b) {
             while (batches.size() <= idx) batches.add(null);
             HdtBatch old = batches.get(idx);
-            if (old != null && old != b && old.isOwner(this))
+            if (old != null && old != b)
                 old.recycle(this);
             batches.set(idx, b);
             return b;

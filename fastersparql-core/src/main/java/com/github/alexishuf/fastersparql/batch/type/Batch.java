@@ -197,7 +197,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             return false;
         if (!hasCapacity(rows*cols, localBytesUsed()))
             return false;
-        if (!isAlive())
+        if (isNotAliveAndMarking())
             return false; //pooled or garbage is not valid
         if (tail == this && next != null)
             return false; // tail has successors

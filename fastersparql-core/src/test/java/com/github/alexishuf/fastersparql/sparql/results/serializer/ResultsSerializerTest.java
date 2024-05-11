@@ -171,7 +171,7 @@ class ResultsSerializerTest {
                 serializer.serialize(b, this, out); // must not change b
                 serializer.serializeTrailer(out);
                 assertEquals(expected, out.toString(), "i="+i);
-                assertTrue(b.isOwner(this)); // ownership unchanged/restored
+                assertTrue(b.isOwnerOrNotMarking(this)); // ownership unchanged/restored
             }
 
             // serialize a sequence of singleton batches

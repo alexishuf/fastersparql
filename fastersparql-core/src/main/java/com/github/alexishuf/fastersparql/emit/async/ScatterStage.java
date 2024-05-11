@@ -39,9 +39,11 @@ public class ScatterStage<B extends Batch<B>>
             throw new ExceptionInInitializerError(e);
         }
     }
-    private static final int CLOGGED       = 0x80000000;
+    private static final int CLOGGED   = 0x80000000;
+    private static final int RECYCLED  = 0x40000000;
     private static final Flags SCATTER_FLAGS = Flags.DEFAULT.toBuilder()
             .flag(CLOGGED, "CLOGGED")
+            .flag(RECYCLED, "RECYCLED")
             .build();
     private static final int CLOG_SHIFT = 1;
 
@@ -74,12 +76,12 @@ public class ScatterStage<B extends Batch<B>>
     }
 
     private void onConnectorRecycled() {
-        lock();
+        int st = lock();
         try {
-            if (!isAlive())
+            if ((st&RECYCLED) != 0)
                 return; // already recycled
             for (int i = 0; i < connectorsCount; i++) {
-                if (connectors[i].isAlive())
+                if (!connectors[i].recycled)
                     return; // alive connector, do not recycle ScatterStage
             }
             recycle(vars);
@@ -218,6 +220,7 @@ public class ScatterStage<B extends Batch<B>>
         private final ScatterStage<B> p;
         private Receiver<B> downstream;
         private final int index;
+        private boolean recycled;
 
         protected Connector(ScatterStage<B> parent, int index) {
             this.p = parent;
@@ -233,6 +236,7 @@ public class ScatterStage<B extends Batch<B>>
 
         @Override public @Nullable Connector<B> recycle(Object currentOwner) {
             internalMarkGarbage(currentOwner);
+            recycled = true;
             p.onConnectorRecycled();
             return null;
         }

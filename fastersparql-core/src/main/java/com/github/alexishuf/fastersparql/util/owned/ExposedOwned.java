@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.util.owned;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
+import com.github.alexishuf.fastersparql.util.owned.SpecialOwner.Recycled;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
@@ -38,30 +39,54 @@ public interface ExposedOwned<O extends Owned<O>> extends Owned<O> {
 
     @SuppressWarnings("unchecked") @Override
     default @This O requireOwner(Object expectedOwner) throws OwnershipException {
-        Object actual = unsafeInternalOwner0();
-        if (actual != expectedOwner) {
-            throw new OwnershipException(this, expectedOwner, actual,
-                                         unsafeInternalLastOwnershipHistory() );
+        if (ExposedOwnerSupport.MARK) {
+            Object actual = unsafeInternalOwner0();
+            if (actual != expectedOwner) {
+                throw new OwnershipException(this, expectedOwner, actual,
+                        unsafeInternalLastOwnershipHistory() );
+            }
         }
         return (O) this;
     }
-
-    @Override default boolean isOwner(Object owner) {return unsafeInternalOwner0() == owner;}
 
     @Override @Nullable default Object rootOwner() {
         Object owner = unsafeInternalOwner0();
         return owner instanceof Owned<?> o ? o.rootOwner() : owner;
     }
 
+    @Override default boolean isOwnerOrNotMarking(Object owner) {
+        if (ExposedOwnerSupport.MARK)
+            return unsafeInternalOwner0() == owner;
+        return true;
+    }
+
     @Override default void requireAlive() throws OwnershipException {
-        Object owner = unsafeInternalOwner0();
-        if (owner instanceof SpecialOwner.Recycled)
-            throw new OwnershipException(this, owner, unsafeInternalLastOwnershipHistory());
+        if (ExposedOwnerSupport.MARK) {
+            Object owner = unsafeInternalOwner0();
+            if (owner instanceof Recycled)
+                throw new OwnershipException(this, owner, unsafeInternalLastOwnershipHistory());
+        }
     }
 
-    @Override default boolean isAlive() {
-        Object owner = unsafeInternalOwner0();
-        return !(owner instanceof SpecialOwner.Recycled);
+    @Override default boolean isNotAliveAndMarking() {
+        if (ExposedOwnerSupport.MARK)
+            return unsafeInternalOwner0() instanceof Recycled;
+        return false;
     }
 
+    @Override default boolean isAliveOrNotMarking() {
+        if (ExposedOwnerSupport.MARK)
+            return !(unsafeInternalOwner0() instanceof Recycled);
+        return true;
+    }
+
+    @Override default boolean isAliveAndMarking() {
+        if (ExposedOwnerSupport.MARK)
+            return !(unsafeInternalOwner0() instanceof Recycled);
+        return false;
+    }
+}
+
+class ExposedOwnerSupport {
+    static final boolean MARK = FSProperties.ownedMark();
 }

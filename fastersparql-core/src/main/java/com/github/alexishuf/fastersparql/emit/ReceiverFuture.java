@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
@@ -21,6 +22,7 @@ import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.GARBAGE;
 public abstract class ReceiverFuture<T, B extends Batch<B>, R extends ReceiverFuture<T, B, R>>
         extends CompletableFuture<T>
         implements ExposedOwned<R>, Receiver<B> {
+    private static final boolean MARK         = FSProperties.ownedMark();
     private static final boolean TRACE        = OwnershipHistory.ENABLED;
     private static final boolean DETECT_LEAKS = LeakDetector.ENABLED;
     protected @Nullable Emitter<B, ?> upstream;
@@ -41,42 +43,50 @@ public abstract class ReceiverFuture<T, B extends Batch<B>, R extends ReceiverFu
     /* --- --- --- Owned --- --- --- */
 
     @SuppressWarnings("unchecked") protected R takeOwnership0(Object newOwner) {
-        unsafeUntracedExchangeOwner0(null, newOwner);
-        if (TRACE && history != null)
-            history.taken(this, newOwner);
-        if (DETECT_LEAKS && leakState != null)
-            leakState.update(newOwner);
+        if (MARK) {
+            unsafeUntracedExchangeOwner0(null, newOwner);
+            if (TRACE && history != null)
+                history.taken(this, newOwner);
+            if (DETECT_LEAKS && leakState != null)
+                leakState.update(newOwner);
+        }
         return (R)this;
     }
 
     @Override public @Nullable R recycle(Object currentOwner) {
-        unsafeUntracedExchangeOwner0(currentOwner, GARBAGE);
-        if (TRACE && history != null)
-            history.recycled(this);
-        if (DETECT_LEAKS && leakState != null)
-            leakState.update(GARBAGE);
-        assert upstream != null;
-        Owned.recycle(upstream, this);
+        if (MARK) {
+            unsafeUntracedExchangeOwner0(currentOwner, GARBAGE);
+            if (TRACE && history != null)
+                history.recycled(this);
+            if (DETECT_LEAKS && leakState != null)
+                leakState.update(GARBAGE);
+            assert upstream != null;
+            Owned.recycle(upstream, this);
+        }
         return null;
     }
 
     @SuppressWarnings("unchecked") @Override
     public Orphan<R> releaseOwnership(Object currentOwner) {
-        unsafeUntracedExchangeOwner0(currentOwner, null );
-        if (TRACE && history != null)
-            history.released(this);
-        if (DETECT_LEAKS && leakState != null)
-            leakState.update(null);
+        if (MARK) {
+            unsafeUntracedExchangeOwner0(currentOwner, null);
+            if (TRACE && history != null)
+                history.released(this);
+            if (DETECT_LEAKS && leakState != null)
+                leakState.update(null);
+        }
         return (Orphan<R>)this;
     }
 
     @SuppressWarnings("unchecked") @Override
     public @This R transferOwnership(Object currentOwner, Object newOwner) {
-        unsafeUntracedExchangeOwner0(currentOwner, newOwner);
-        if (TRACE && history != null)
-            history.transfer(this, newOwner);
-        if (DETECT_LEAKS && leakState != null)
-            leakState.update(newOwner);
+        if (MARK) {
+            unsafeUntracedExchangeOwner0(currentOwner, newOwner);
+            if (TRACE && history != null)
+                history.transfer(this, newOwner);
+            if (DETECT_LEAKS && leakState != null)
+                leakState.update(newOwner);
+        }
         return (R)this;
     }
 
@@ -86,9 +96,11 @@ public abstract class ReceiverFuture<T, B extends Batch<B>, R extends ReceiverFu
     }
     @Override public void unsafeUntracedExchangeOwner0(@Nullable Object expected,
                                                        @Nullable Object newOwner) {
-        if (owner != expected)
-            throw new OwnershipException(this, expected, owner, history);
-        owner = newOwner;
+        if (MARK) {
+            if (owner != expected)
+                throw new OwnershipException(this, expected, owner, history);
+            owner = newOwner;
+        }
     }
 
     /**

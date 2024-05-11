@@ -42,6 +42,7 @@ public class FSProperties {
     public static final String CLIENT_CONN_TIMEOUT_MS    = "fastersparql.client.conn.timeout-ms";
     public static final String CLIENT_SO_TIMEOUT_MS      = "fastersparql.client.so.timeout-ms";
     public static final String CLIENT_CONN_RETRY_WAIT_MS = "fastersparql.client.conn.retry.wait-ms";
+    public static final String OWNED_MARK                = "fastersparql.owned.mark";
     public static final String OWNED_TRACE               = "fastersparql.owned.trace";
     public static final String OWNED_STACK_TRACE         = "fastersparql.owned.stack-trace";
     public static final String OWNED_TRACE_MAX           = "fastersparql.owned.trace-max";
@@ -101,6 +102,7 @@ public class FSProperties {
     public static final boolean DEF_EMIT_STATS_LOG            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
     public static final boolean DEF_STORE_PREFER_IDS          = true;
+    public static final boolean DEF_OWNED_MARK                = FSProperties.class.desiredAssertionStatus();
     public static final boolean DEF_OWNED_TRACE               = FSProperties.class.desiredAssertionStatus();
     public static final boolean DEF_OWNED_STACK_TRACE         = false;
     public static final boolean DEF_OWNED_DETECT_LEAKS        = FSProperties.class.desiredAssertionStatus();
@@ -137,6 +139,7 @@ public class FSProperties {
     private static Boolean CACHE_EMIT_STATS_LOG         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
     private static Boolean CACHE_STORE_PREFER_IDS       = null;
+    private static Boolean CACHE_OWNED_MARK             = null;
     private static Boolean CACHE_OWNED_TRACE            = null;
     private static Boolean CACHE_OWNED_STACK_TRACE      = null;
     private static Boolean CACHE_OWNED_DETECT_LEAKS     = null;
@@ -255,6 +258,7 @@ public class FSProperties {
         CACHE_IT_STATS                  = null;
         CACHE_EMIT_STATS                = null;
         CACHE_EMIT_STATS_LOG            = null;
+        CACHE_OWNED_MARK                = null;
         CACHE_OWNED_TRACE               = null;
         CACHE_OWNED_STACK_TRACE         = null;
         CACHE_OWNED_DETECT_LEAKS        = null;
@@ -513,6 +517,25 @@ public class FSProperties {
         if (ms < 0)
             CACHE_BATCH_MAX_WAIT_US = ms = readPositiveInt(BATCH_MAX_WAIT_US, DEF_BATCH_MAX_WAIT_US);
         return timeUnit.convert(ms, TimeUnit.MICROSECONDS);
+    }
+
+    /**
+     * Whether {@link Owned} objects should always hold a reference to their owner.
+     *
+     * <p>This is enabled by default when assertions are enabled and helps detect unintended
+     * sharing (leading to races) and use-after-free bugs. Without assertions the default is
+     * {@code false} because each ownership change triggers a write, which increases cache line
+     * invalidations on other cores, specially when the {@link Owned} object is pooled.</p>
+     */
+    public static boolean ownedMark() {
+        Boolean v = CACHE_OWNED_MARK;
+        if (v == null) {
+            boolean mark = readBoolean(OWNED_MARK, DEF_OWNED_MARK);
+            boolean trace = ownedTrace();
+            boolean leaks = ownedDetectLeaks();
+            CACHE_OWNED_MARK = v = mark || trace || leaks;
+        }
+        return v;
     }
 
     /**

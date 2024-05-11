@@ -283,8 +283,8 @@ class AsyncStageTest {
             consumer = consumerG.set((Orphan<C<B>>)new C<>(root.releaseOwnership(this), slow));
             consumer.check(rows*producers, fail);
         }
-        assertFalse(consumer.isAlive());
-        assertFalse(root.isAlive());
+        assertFalse(consumer.isAliveAndMarking());
+        assertFalse(root.isAliveAndMarking());
     }
 
 }

@@ -38,6 +38,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
@@ -219,13 +220,19 @@ class BatchTest {
             assertEquals(b.type(), type);
             return ((B)b).releaseOwnership(this);
         }
+        public <B extends Batch<B>> @Nullable B get(int i, BatchType<B> type) {
+            @SuppressWarnings("unchecked") B b = (B)batches.get(i);
+            if (b != null)
+                assertEquals(type, b.type());
+            return b;
+        }
         public <B extends Batch<B>> B set(int i, @Nullable B b) {
             if (b != null)
                 b.requireOwner(this);
             while (batches.size() <= i)
                 batches.add(null);
             Batch<?> old = batches.get(i);
-            if (old != null && old != b && old.isOwner(this))
+            if (old != null && old != b)
                 old.recycle(this);
             batches.set(i, b);
             return b;
@@ -528,7 +535,7 @@ class BatchTest {
             for (var ln = left; ln != null; ln = ln.next) {
                 if (ln == rn) return;
             }
-            assertFalse(rn.isAlive());
+            assertFalse(rn.isAliveAndMarking());
         }
     }
 
@@ -744,6 +751,7 @@ class BatchTest {
                     assertBatchesEquals(origSndHalf, t2, ctx);
                     b = set(nextId-3, Batch.quickAppend(b, this, take(nextId-2, type)));
                     checkPooledOrAppended(concurrent, b, t1);
+                    b = take(nextId-3, type).takeOwnership(this);
                     b = set(nextId-3, Batch.quickAppend(b, this, take(nextId-1, type)));
                     batches.add(b);
                     checkPooledOrAppended(concurrent, b, t2);
@@ -766,7 +774,8 @@ class BatchTest {
                         b.linkedPutRow(origFull, r);
                     assertBatchesEquals(origFstHalf, b,   ctx);
                     assertBatchesEquals(origSndHalf, tmp, ctx);
-                    b = set(nextId-2, Batch.quickAppend(b, this, take(nextId-1, type)));
+                    b = take(nextId-2, type).takeOwnership(this);
+                    b = set(nextId-2, quickAppend(b, this, take(nextId-1, type)));
                     batches.add(b);
                     checkPooledOrAppended(concurrent, b, tmp);
                 }
@@ -786,7 +795,8 @@ class BatchTest {
                     B b = set(bId, (B)null);
                     for (int r = 0; r < size.rows; r++) {
                         B tmp = set(tmpId, origFull.linkedDupRow(r));
-                        b = set(bId, Batch.quickAppend(b, this, take(tmpId, type)));
+                        b = b == null ? null : take(bId, type).takeOwnership(this);
+                        b = set(bId, quickAppend(b, this, take(tmpId, type)));
                         if (r == 0)
                             batches.add(b);
                         checkPooledOrAppended(concurrent, b, tmp);
@@ -1134,7 +1144,7 @@ class BatchTest {
                                             : filter(type.filter(out, in, rowFilter));
                 B inPlace = set(3, filter.filterInPlace(take(0, type)));
                 if (inPlace != full)
-                    assertFalse(full.isAlive());
+                    assertFalse(full.isAliveAndMarking());
                 assertBatchesEquals(expected, inPlace, ctx);
             }
         });

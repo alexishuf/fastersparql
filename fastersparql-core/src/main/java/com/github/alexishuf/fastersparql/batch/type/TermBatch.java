@@ -175,7 +175,7 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
             return false;
         if (!hasCapacity(rows*cols, localBytesUsed()))
             return false;
-        return isAlive();
+        return isAliveOrNotMarking();
     }
 
     /* --- --- --- batch accessors --- --- --- */
@@ -397,6 +397,8 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
         if (tail.offerRowBase < 0) throw new IllegalStateException();
         ++tail.rows;
         tail.offerRowBase = -1;
+        if (!tail.validate())
+            System.out.println("##");
         assert tail.validate();
     }
 

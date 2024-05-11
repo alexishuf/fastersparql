@@ -143,10 +143,10 @@ class ScatterStageTest {
                 // recycling of receivers must cause recycling of scatter
             }
             // recycling of receivers must cause recycling of scatter
-            assertFalse(scatter.isAlive());
-            for (long d = nanoTime()+1_000_000_000; producer.isAlive() && nanoTime() < d; )
+            assertFalse(scatter.isAliveAndMarking());
+            for (long d = nanoTime()+1_000_000_000; producer.isAliveAndMarking() && nanoTime() < d; )
                 Thread.yield();
-            assertFalse(producer.isAlive());
+            assertFalse(producer.isAliveAndMarking());
         }
 
         private Orphan<CompressedBatch> makeExpected() {

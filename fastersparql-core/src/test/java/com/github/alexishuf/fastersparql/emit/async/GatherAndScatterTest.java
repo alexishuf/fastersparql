@@ -329,12 +329,10 @@ class GatherAndScatterTest {
                     c.recycle(this);
                 if (consumers.isEmpty())
                     scatter.recycle(this);
-                if (gather.isOwner(this))
-                    gather.recycle(this);
             }
             assertCleanProducers(producers);
-            assertFalse(scatter.isAlive()); // c.recycle() on all consumers must have recycled scatter
-            assertFalse(gather.isAlive());  // must be recycled by scatter
+            assertFalse(scatter.isAliveAndMarking()); // c.recycle() on all consumers must have recycled scatter
+            assertFalse(gather.isAliveAndMarking());  // must be recycled by scatter
         }
 
         private <B extends Batch<B>> void assertTerminationStatus(ConsumerBarrier<B> barrier) {

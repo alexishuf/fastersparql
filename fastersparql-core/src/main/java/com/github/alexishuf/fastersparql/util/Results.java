@@ -692,7 +692,7 @@ public final class Results {
             c = g.set(checker(emitter));
             c.assertNoError();
         }
-        assert !c.isAlive();
+        assert !c.isAliveAndMarking();
     }
 
     private <B extends Batch<B>> void check(List<List<Term>> acList,

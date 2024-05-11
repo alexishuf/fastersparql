@@ -131,7 +131,7 @@ class SPSCBItTest extends CallbackBItTest {
             var offer = TERM.create(1).takeOwnership(this);
             assertSame(b1, b1Guard.set(it.nextBatch(offer.releaseOwnership(this))));
             assertEquals(ex1, b1);
-            assertFalse(offer.isAlive());
+            assertFalse(offer.isAliveAndMarking());
 
             assertSame(b2, b2Guard.set(it.nextBatch(null)));
             assertEquals(ex23456, b2);
@@ -159,11 +159,11 @@ class SPSCBItTest extends CallbackBItTest {
 
             Orphan<TermBatch> offer = intsBatch(23);
             assertSame(snd, sndG.set(it.nextBatch(offer)));
-            assertFalse(((TermBatch)offer).isAlive());
+            assertFalse(((TermBatch)offer).isAliveAndMarking());
 
             it.complete(null);
             assertNull(it.nextBatch(offer = intsBatch(27)));
-            assertFalse(((TermBatch)offer).isAlive());
+            assertFalse(((TermBatch)offer).isAliveAndMarking());
             assertNull(it.nextBatch(null));
         }
     }
@@ -177,7 +177,7 @@ class SPSCBItTest extends CallbackBItTest {
             it.complete(ex);
             assertSame(b1, it.nextBatch(null));
             assertThrows(TerminatedException.class, () -> it.offer(b1));
-            assertFalse(((Batch<?>)b1).isAlive()); // recycled by offer()
+            assertFalse(((Batch<?>)b1).isAliveAndMarking()); // recycled by offer()
 
             try {
                 it.nextBatch(null);

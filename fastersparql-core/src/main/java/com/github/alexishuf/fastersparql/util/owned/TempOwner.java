@@ -43,9 +43,6 @@ public class TempOwner<O extends Owned<O>> implements AutoCloseable {
     }
 
     @Override public void close() {
-        if (owned.isOwner(thread))
-            owned.transferOwnership(thread, oldOwner);
-        else
-            owned.requireOwner(oldOwner);
+        owned.transferOwnership(thread, oldOwner);
     }
 }

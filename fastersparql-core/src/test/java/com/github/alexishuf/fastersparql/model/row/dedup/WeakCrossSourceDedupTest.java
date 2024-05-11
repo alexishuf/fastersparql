@@ -50,7 +50,6 @@ class WeakCrossSourceDedupTest {
                 for (int source = 1; source < 32; source++)
                     assertTrue(table.isDuplicate(batch, 0, source));
                 assertTrue(table.isDuplicate(batch, 0, 0));
-                assertTrue(batch.isOwner(this));
             }
         }
     }

@@ -54,7 +54,7 @@ class BatchBindingTest {
 
     @AfterAll static void afterAll() {
         for (TermBatch b : BATCHES) {
-            if (b != null && b.isOwner(BatchBindingTest.class))
+            if (b != null && b.isOwnerOrNotMarking(BatchBindingTest.class))
                 b.recycle(BatchBindingTest.class);
         }
         BATCHES.clear();
