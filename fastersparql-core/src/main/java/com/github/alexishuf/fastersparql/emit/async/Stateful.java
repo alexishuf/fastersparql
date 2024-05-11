@@ -432,14 +432,12 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      * @return the current state, with {@link #LOCKED_MASK} set
      */
     public int lock() {
-        int st = (int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK);
-        if ((st&LOCKED_MASK) != 0) {
+        for (int i = 0, st; i < 8; i++) {
+            if (((st=(int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK))&LOCKED_MASK) == 0)
+                return st|LOCKED_MASK;
             onSpinWait();
-            st = (int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK);
-            if ((st&LOCKED_MASK) != 0)
-                return lockContended();
         }
-        return st|LOCKED_MASK;
+        return lockContended();
     }
 
     private int lockContended() {
