@@ -17,7 +17,6 @@ import java.nio.ByteBuffer;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Integer.numberOfTrailingZeros;
-import static java.lang.Integer.rotateLeft;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
@@ -718,15 +717,15 @@ public abstract class SegmentRope extends PlainRope {
             lOff += U8_BASE;
         if (rBase != null)
             rOff += U8_BASE;
-        long lEnd = lOff + Math.min(lLen, rLen);
-        int diff = (int)((lOff|rOff)&7);
+        int i = 0, diff = (int)((lOff|rOff)&7);
+        int n = Math.min(lLen, rLen);
         if (diff == 0) {
-            for (; lOff+8 < lEnd; lOff += 8, rOff += 8) {
-                if (U.getLong(lBase, lOff) != U.getLong(rBase, rOff)) break;
+            for (; i+8 < n; i += 8) {
+                if (U.getLong(lBase, lOff+i) != U.getLong(rBase, rOff+i)) break;
             }
         }
-        for (; lOff < lEnd; ++lOff, ++rOff) {
-            if ((diff = U.getByte(lBase, lOff) - U.getByte(rBase, rOff)) != 0) return diff;
+        for (; i < n; ++i) {
+            if ((diff = U.getByte(lBase, lOff+i) - U.getByte(rBase, rOff+i)) != 0) return diff;
         }
         return lLen-rLen;
     }
