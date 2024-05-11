@@ -119,7 +119,7 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
 
     protected final @Nullable O internalMarkRecycled(Object currentOwner) {
         Object actual = owner;
-        if (owner != currentOwner)
+        if (actual != currentOwner)
             throw new OwnershipException(this, currentOwner, actual, history);
         owner = RECYCLED;
         if (TRACE && history != null)
