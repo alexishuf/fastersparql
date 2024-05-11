@@ -17,6 +17,7 @@ import java.nio.ByteBuffer;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Integer.numberOfTrailingZeros;
+import static java.lang.Integer.rotateLeft;
 import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
@@ -721,12 +722,7 @@ public abstract class SegmentRope extends PlainRope {
         int diff = (int)((lOff|rOff)&7);
         if (diff == 0) {
             for (; lOff+8 < lEnd; lOff += 8, rOff += 8) {
-                if (U.getLong(lBase, lOff) != U.getLong(rBase, rOff)) { diff = -1; break; }
-            }
-        }
-        if ((diff&3) == 0) {
-            for (; lOff+4 < lEnd; lOff += 4, rOff += 4) {
-                if (U.getInt(lBase, lOff) != U.getInt(rBase, rOff)) break;
+                if (U.getLong(lBase, lOff) != U.getLong(rBase, rOff)) break;
             }
         }
         for (; lOff < lEnd; ++lOff, ++rOff) {
