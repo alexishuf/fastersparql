@@ -30,11 +30,10 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
 public class ScatterStage<B extends Batch<B>>
         extends Stateful<ScatterStage<B>>
         implements Receiver<B> {
-    private static final VarHandle REQ, OLDEST;
+    private static final VarHandle REQ;
     static {
         try {
             REQ    = MethodHandles.lookup().findVarHandle(ScatterStage.class, "plainReq", long.class);
-            OLDEST = MethodHandles.lookup().findVarHandle(ScatterStage.class, "plainOldest", long.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -52,7 +51,7 @@ public class ScatterStage<B extends Batch<B>>
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[12];
     private final BatchType<B> batchType;
     private long delivered;
-    @SuppressWarnings("unused") private long plainOldest;
+    private volatile long oldest;
     @SuppressWarnings("unused") private long plainReq;
     private final int maxDelta;
     private long[] clocks = new long[12];
@@ -127,7 +126,7 @@ public class ScatterStage<B extends Batch<B>>
             state = setFlagsRelease(CLOGGED);
         else if (!clogged && (state&CLOGGED) != 0)
             state = clearFlagsRelease(CLOGGED);
-        OLDEST.setRelease(this, min);
+        oldest = min;
         return state;
     }
 
@@ -263,7 +262,7 @@ public class ScatterStage<B extends Batch<B>>
             if (type.showState()) {
                 sb.append(" state=").append(p.flags.render(p.state()));
                 StreamNodeDOT.appendRequested(sb.append(" requested="), p.plainReq);
-                sb.append(" now=").append(p.delivered).append(" oldest=").append(p.plainOldest);
+                sb.append(" now=").append(p.delivered).append(" oldest=").append(p.oldest);
                 sb.append(" clock=").append(p.clocks[index]);
             }
             if (type.showStats() && p.stats != null)
@@ -292,7 +291,7 @@ public class ScatterStage<B extends Batch<B>>
                 p.delivered = 0;
                 Arrays.fill(p.clocks, 0, p.connectorsCount, 0L);
                 REQ.setRelease(p, 0L);
-                OLDEST.setRelease(p, 0L);
+                p.oldest = 0L;
                 if (p.upstream == null)
                     throw new NoUpstreamException(p);
                 p.upstream.rebind(binding);
@@ -337,7 +336,7 @@ public class ScatterStage<B extends Batch<B>>
                 state = p.onFirstRequest(state);
             if ((state&IS_TERM) != 0)
                 return;
-            long now, oldest = (long)OLDEST.getAcquire(p);
+            long now, oldest = p.oldest;
             boolean wasOldest = clocks[index] <= oldest;
             boolean added     = maxAcquire(REQ, p, rows);
             clocks[index]     = now = p.delivered; // onBatch() wrote this before REQ.release

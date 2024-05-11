@@ -25,10 +25,9 @@ import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTE
 public abstract sealed class AsyncStage<B extends Batch<B>>
         extends TaskEmitter<B, AsyncStage<B>>
         implements Stage<B, B, AsyncStage<B>> {
-    private static final VarHandle TERMINATION, QUEUE;
+    private static final VarHandle QUEUE;
     static {
         try {
-            TERMINATION = MethodHandles.lookup().findVarHandle(AsyncStage.class, "plainTermination", int.class);
             QUEUE       = MethodHandles.lookup().findVarHandle(AsyncStage.class, "plainQueue",       Batch.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
@@ -41,7 +40,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     private final Emitter<B, ?> up;
     @SuppressWarnings("unused") private @Nullable B plainQueue;
-    @SuppressWarnings("unused") private int plainTermination;
+    private volatile int termination;
 
     public static <B extends Batch<B>> Orphan<AsyncStage<B>>
     create(Orphan<? extends Emitter<B, ?>> upstream) {
@@ -88,7 +87,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
     @Override public void rebind(BatchBinding b) {
         resetForRebind(0, 0);
         Batch.safeRecycle((Batch<?>)QUEUE.getAndSetAcquire(this, (Batch<?>)null), this);
-        TERMINATION.setRelease(this, 0);
+        termination = 0;
         up.rebind(b);
     }
 
@@ -153,7 +152,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((st&IS_ASYNC) == 0) {
             deliverTermination(st, COMPLETED);
         } else {
-            TERMINATION.setRelease(this, COMPLETED);
+            termination = COMPLETED;
             awake();
         }
     }
@@ -163,7 +162,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((st&IS_ASYNC) == 0) {
             deliverTermination(st, CANCELLED);
         } else {
-            TERMINATION.setRelease(this, CANCELLED);
+            termination = CANCELLED;
             awake();
         }
     }
@@ -174,7 +173,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((st&IS_ASYNC) == 0) {
             deliverTermination(st, FAILED);
         } else {
-            TERMINATION.setRelease(this, FAILED);
+            termination = FAILED;
             awake();
         }
     }
@@ -189,7 +188,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
     @Override protected void resume() { up.request(requested()); }
 
     @Override protected boolean mustAwake() {
-        return plainTermination != 0 || plainQueue != null;
+        return termination != 0 || plainQueue != null;
     }
 
     @Override protected int produceAndDeliver(int state) {
@@ -197,7 +196,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         B queue = (B)QUEUE.getAndSetAcquire(this, null);
         if (queue != null)
             deliver(queue.releaseOwnership(this));
-        int termState = (int)TERMINATION.getAcquire(this);
+        int termState = termination;
         return plainQueue != null || termState == 0 ? state : termState;
     }
 }

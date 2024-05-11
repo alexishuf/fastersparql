@@ -63,8 +63,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -784,16 +782,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //    }
 
     private static abstract sealed class PrefetchTask extends EmitterService.Task<PrefetchTask> {
-        private static final byte CHUNK_ROWS = 8;
-        private static final VarHandle ASYNC_DONE, ASYNC_BOTTOM;
-        static {
-            try {
-                ASYNC_DONE   = MethodHandles.lookup().findVarHandle(PrefetchTask.class, "plainAsyncDone",   int.class);
-                ASYNC_BOTTOM = MethodHandles.lookup().findVarHandle(PrefetchTask.class, "plainAsyncBottom", int.class);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
+        private static final byte CHUNK_ROWS = 32;
 
 //        private static final VarHandle REQUEST, NEXT_ROW;
 //        static {
@@ -807,7 +796,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         private Batch<?> requestedBindingBatch;
         private BatchBinding binding;
-        @SuppressWarnings("unused") private volatile int plainAsyncDone, plainAsyncBottom;
+        private volatile int asyncDone, asyncBottom;
         private final short dictId;
         byte unsrcIdsCols, sOutCol, pOutCol, oOutCol;
         private byte sInCol, pInCol, oInCol, rowSkelCols;
@@ -892,8 +881,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
                 this.requestedBindingBatch = bb;
                 this.binding               = binding;
-                plainAsyncDone = rows;
-                ASYNC_BOTTOM.setRelease(this, bottom);
+                asyncDone = rows;
+                asyncBottom = bottom;
             } finally {
                 if (!allowRun(snapshot) && rows >= CHUNK_ROWS>>1)
                     awake();
@@ -904,10 +893,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
             short row = binding.row;
             Batch<?> batch = binding.batch;
             if (this.binding == binding && requestedBindingBatch == batch) {
-                ASYNC_BOTTOM.setRelease(this, row+1);
+                asyncBottom = row+1;
                 if (batch != null && row == batch.rows-1)
                     allowRun(disallowRun());
-                if ((int)ASYNC_DONE.getAcquire(this) <= row)
+                if (asyncDone <= row)
                     return row; // row fetched asynchronously
             } else {
                 request(binding);
@@ -920,7 +909,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             short snapshot        = disallowRun();
             binding               = null;
             requestedBindingBatch = null;
-            ASYNC_BOTTOM.setRelease(this, Integer.MAX_VALUE);
+            asyncBottom = Integer.MAX_VALUE;
             return snapshot;
         }
 
@@ -970,7 +959,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override protected void task(int threadId) {
-            short r = (short)((int)ASYNC_DONE.getAcquire(this)-1);
+            short r = (short)(asyncDone-1);
             var b = this.binding;
             if (b == null || r < 0)
                 return;
@@ -981,7 +970,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             byte outCols = this.unsrcIdsCols;
             short base = (short)(r*outCols);
             byte rowSkelCols = this.rowSkelCols, i = 0;
-            for (; i < CHUNK_ROWS && r >= (int)ASYNC_BOTTOM.getAcquire(this); ++i, base-=outCols) {
+            for (; i < CHUNK_ROWS && r >= asyncBottom; ++i, base-=outCols) {
                 if (sInCol >= 0)
                     unsrcIds[base+sOutCol] = toUnsourcedId(sInCol, r, b, asyncLookup, asyncView);
                 if (pInCol >= 0)
@@ -997,9 +986,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                 : source(toUnsourcedId(bc, r, b, asyncLookup, asyncView), dictId);
                     }
                 }
-                ASYNC_DONE.setRelease(this, r--);
+                asyncDone = r--;
             }
-            if (r >= plainAsyncBottom) {
+            if (r >= asyncBottom) {
                 avoidWorker(tpEmitter);
                 awake();
             }
