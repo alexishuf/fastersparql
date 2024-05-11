@@ -88,6 +88,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private @Nullable B lb;
     private short lr = -1;
     private final short leftChunk;
+    private int lbTotalRows;
     private int leftPending;
     private long requested;
     private BatchBinding intBinding, nextIntBinding;
@@ -183,6 +184,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         rightRecv.upstream.cancel();
         lr = -1;
         lb = Batch.safeRecycle(lb, this);
+        lbTotalRows = 0;
         if (intBinding != null) {
             intBinding.remainder = null;
             intBinding.attach(null, 0);
@@ -218,7 +220,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         appendRequested(sb.append("\nrequested=" ), requested);
         appendRequested(sb.append(" leftPending="), leftPending);
         B lb = this.lb;
-        int lQueued = (lb        == null ? 0 :        lb.totalRows() - lr);
+        int lQueued = (lb == null ? 0 : lbTotalRows -lr);
         appendRequested(sb.append(" leftQueued="), lQueued);
         sb.append(" state=").append(flags.render(state()));
     }
@@ -246,8 +248,11 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         lock();
         head = lb; // rightRecv might have consumed from lb between last load and end of lock()
         try {
-            if ((tail = detachDistinctTail(head)) != null && EmitterStats.ENABLED && stats != null)
-                stats.revertOnBatchReceived(tail);
+            if ((tail=detachDistinctTail(head)) != null) {
+                lbTotalRows -= Batch.peekTotalRows(tail);
+                if (EmitterStats.ENABLED && stats != null)
+                    stats.revertOnBatchReceived(tail);
+            }
         } finally { unlock(); }
         return tail;
     }
@@ -271,8 +276,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 state = lock();
                 head = lb; // might have changed while unlocked
             }
-            lb                 = Batch.quickAppend(head, this, orphan);
-            leftPending       -= rows;
+            lb           = Batch.quickAppend(head, this, orphan);
+            lbTotalRows += rows;
+            leftPending -= rows;
             scheduleRebindTask = (state&CAN_BIND_MASK) == LEFT_CAN_BIND;
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
@@ -299,7 +305,8 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             tail.copy(batch);
             Orphan<B> tailOrphan = tail.releaseOwnership(this);
             state = lock();
-            lb = Batch.quickAppend(lb, this, tailOrphan);
+            lb           = Batch.quickAppend(lb, this, tailOrphan);
+            lbTotalRows += rows;
             leftPending -= rows;
             scheduleRebindTask = (state&CAN_BIND_MASK) == LEFT_CAN_BIND;
         } finally {
@@ -358,8 +365,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
 
     private void dropLeftQueued() {
         rightRecv.upstream.rebindPrefetchEnd();
-        lr = -1;
-        lb = Batch.recycle(lb, this);
+        lr          = -1;
+        lb          = Batch.recycle(lb, this);
+        lbTotalRows = 0;
     }
 
     protected Vars          intBindingVars() { return intBinding.vars;    }
@@ -488,7 +496,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private void maybeRequestLeft() {
         B lb = this.lb;
         // count queued left rows into LEFT_REQUESTED_MAX limit
-        int queued = (lb == null ? 0 : lb.totalRows()-lr);
+        int queued = (lb == null ? 0 : lbTotalRows-lr);
         if (requested > Math.max(0, leftPending)+queued && leftPending < leftChunk>>1) {
             int n = (int)Math.min(requested, leftChunk);
             leftPending = n;
@@ -578,7 +586,8 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         var oldIntBinding   = this.intBinding;
         this.intBinding     = this.nextIntBinding;
         this.nextIntBinding = oldIntBinding;
-        this.lb = lb = lb.dropHead(this);
+        this.lbTotalRows   -= lb.rows;
+        this.lb             = lb = lb.dropHead(this);
         return lb;
     }
 
