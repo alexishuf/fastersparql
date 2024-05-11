@@ -109,7 +109,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
 
     @Override
     public void subscribe(Receiver<B> receiver) throws RegisterAfterStartException, MultipleRegistrationUnsupportedException {
-        int st = lock(statePlain());
+        int st = lock();
         try {
             if ((st & IS_INIT) == 0)
                 throw new RegisterAfterStartException(this);
@@ -122,7 +122,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
             downstreamHFB = receiver instanceof HasFillingBatch<?> hfb
                           ? (HasFillingBatch<B>)hfb : null;
         } finally {
-            unlock(st);
+            unlock();
         }
         if (ThreadJournal.ENABLED)
             ThreadJournal.journal("subscribed", receiver, "to", this);

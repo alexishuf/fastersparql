@@ -105,8 +105,10 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((state&IS_ASYNC) == 0) {
             long deadline = Timestamp.nextTick(2);
             deliver(orphan);
-            if (Timestamp.nanoTime() > deadline)
-                unlock(lock(state), 0, IS_ASYNC);
+            if (Timestamp.nanoTime() > deadline) {
+                lock();
+                unlock(0, IS_ASYNC);
+            }
         } else if ((state&IS_TERM) == 0) {
             B queue = (B)QUEUE.getAndSetAcquire(this, null);
             B tail = Batch.detachDistinctTail(queue, this);
@@ -130,8 +132,10 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((state&IS_ASYNC) == 0) {
             long deadline = Timestamp.nextTick(2);
             deliverByCopy(batch);
-            if (Timestamp.nanoTime() > deadline)
-                unlock(setFlagsRelease(IS_ASYNC));
+            if (Timestamp.nanoTime() > deadline) {
+                setFlagsRelease(IS_ASYNC);
+                unlock();
+            }
         } else {
             if ((state&IS_TERM) == 0) {//noinspection unchecked
                 B queue = (B)QUEUE.getAndSetAcquire(this, null);

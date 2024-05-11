@@ -105,7 +105,7 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
 
     @Override
     public void subscribe(Receiver<B> receiver) throws RegisterAfterStartException, MultipleRegistrationUnsupportedException {
-        int st = lock(statePlain());
+        int st = lock();
         try {
             if ((st&IS_INIT) == 0)
                 throw new RegisterAfterStartException(this);
@@ -114,7 +114,7 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
             if (downstream != null && downstream != receiver)
                 throw new MultipleRegistrationUnsupportedException(this);
             downstream = receiver;
-        } finally { unlock(st); }
+        } finally { unlock(); }
         journal("subscribed", receiver, "to", this);
     }
 

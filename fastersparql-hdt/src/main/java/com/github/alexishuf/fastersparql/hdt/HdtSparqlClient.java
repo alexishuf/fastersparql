@@ -311,7 +311,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
                 search.setObject   (findId(oInCol, binding, OBJECT,    search.getObject()));
                 it = triples.search(search);
             } finally {
-                unlock(st);
+                unlock();
             }
         }
 

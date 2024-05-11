@@ -276,6 +276,7 @@ public class EmitterService {
         private final short threadId;
         private final EmitterService parent;
 
+
         public Worker(ThreadGroup group, short i) {
             super(group, "EmitterService-"+EmitterService.this.id+"-"+i);
             this.id = i;

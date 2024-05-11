@@ -74,7 +74,7 @@ public class ScatterStage<B extends Batch<B>>
     }
 
     private void onConnectorRecycled() {
-        int st = lock(statePlain());
+        lock();
         try {
             if (!isAlive())
                 return; // already recycled
@@ -83,12 +83,12 @@ public class ScatterStage<B extends Batch<B>>
                     return; // alive connector, do not recycle ScatterStage
             }
             recycle(vars);
-        } finally { unlock(st); }
+        } finally { unlock(); }
     }
 
     public Orphan<Connector<B>> createConnector() {
         requireAlive();
-        int st = lock(statePlain());
+        int st = lock();
         try {
             if ((st&IS_INIT) == 0)
                 throw new RegisterAfterStartException(this);
@@ -100,7 +100,7 @@ public class ScatterStage<B extends Batch<B>>
             connectors[((Connector<B>)orphan).index] = orphan;
             return orphan;
         } finally {
-            unlock(st);
+            unlock();
         }
     }
 
@@ -276,7 +276,7 @@ public class ScatterStage<B extends Batch<B>>
         @Override public Vars bindableVars()                 { return p.upstream.bindableVars(); }
 
         @Override public void rebind(BatchBinding binding)   {
-            int st = p.resetForRebind(0, LOCKED_MASK);
+            p.resetForRebind(0, LOCKED_MASK);
             try {
                 if (binding.sequence == p.lastRebindSeq)
                     return; // duplicate rebind() due to diamond in emitter graph
@@ -293,7 +293,7 @@ public class ScatterStage<B extends Batch<B>>
                     throw new NoUpstreamException(p);
                 p.upstream.rebind(binding);
             } finally {
-                p.unlock(st);
+                p.unlock();
             }
         }
 

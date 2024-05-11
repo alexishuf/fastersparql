@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindReleasedException
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindStateException;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
+import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -18,12 +19,12 @@ import static com.github.alexishuf.fastersparql.util.concurrent.LongRenderer.HEX
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.ENABLED;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.*;
+import static java.lang.Thread.onSpinWait;
 import static java.util.Arrays.copyOf;
 
 @SuppressWarnings("PointlessBitwiseExpression")
 public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     private static final Logger log = LoggerFactory.getLogger(Stateful.class);
-    protected static final boolean IS_DEBUG = Stateful.class.desiredAssertionStatus();
     private static final VarHandle S;
     static {
         try {
@@ -55,7 +56,7 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     protected static final int SUB_STATE_MASK = -1 >>> -GRP_BIT;
     protected static final int FLAGS_MASK     = ~STATE_MASK;
 
-    /** A non-reentrant lock. See {@link #lock(int)}/{@link #unlock(int)} */
+    /** A non-reentrant lock. See {@link #lock()}/{@link #unlock()} */
     protected static final int LOCKED_MASK         = 0x00000100;
     private   static final int UNLOCKED_MASK       = ~LOCKED_MASK;
     private   static final int UNLOCKED_FLAGS_MASK = FLAGS_MASK&UNLOCKED_MASK;
@@ -122,6 +123,7 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
 
     @SuppressWarnings("FieldMayBeFinal") private int plainState;
     protected final Flags flags;
+    @SuppressWarnings("unused") private @Nullable Object plainParked;
 
     protected Stateful(int initState, Flags flags) {
         this.plainState = initState;
@@ -256,24 +258,30 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      *         successor of the current state.
      */
     protected boolean moveStateRelease(int current, int nextState) {
+        boolean spinning = false, transitioned = false;
+        int n, a, e = current&UNLOCKED_MASK;
         nextState &= STATE_MASK;
-        int updated;
-        while (true){
-            if ((current&LOCKED_MASK) != 0) {
-                Thread.onSpinWait();
-                current = (int)S.getOpaque(this);
-            } else if (isSuccessor(current, nextState)) {
-                int ex = current&UNLOCKED_MASK;
-                updated = (current&UNLOCKED_FLAGS_MASK)|nextState;
-                if ((current=(int)S.compareAndExchangeRelease(this, ex, updated)) == ex)
-                    break;
+        while (isSuccessor(e, nextState)) {
+            n = (e&FLAGS_MASK)|nextState;
+            if ((a=(int)S.compareAndExchangeRelease(this, e, n)) == e) {
+                transitioned = true;
+                break;
+            } else if ((a&LOCKED_MASK) != 0) {
+                if (spinning) {
+                    backOff();
+                } else {
+                    spinning = true;
+                    EmitterService.beginSpin();
+                }
             } else {
-                return false;
+                e = a;
             }
         }
-        if (ENABLED)
-            journal("trans", updated, flags, "on", this);
-        return true;
+        if (spinning)
+            EmitterService.endSpin();
+        if (ENABLED && transitioned)
+            journal("trans", n, flags, "on", this);
+        return transitioned;
     }
 
     /**
@@ -317,7 +325,7 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     }
 
     protected int resetForRebind(int clearFlags, int setFlags) {
-        int st = lock(plainState);
+        int st = lock();
         try {
             if ((st&(IS_INIT|IS_TERM)) == 0)
                 throw new RebindStateException(this);
@@ -390,10 +398,9 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      * @return {@code true} iff the bit was seen unset and this call did set it in {@link #state()}.
      */
     public boolean compareAndSetFlagRelease(int flag) {
-        int a = plainState, e;
-        while ((a=(int)S.compareAndExchangeRelease(this, e=a&~flag, a|flag)) != e) {
-            if ((a&flag) == flag) return false; // already set
-        }
+        int a;
+        if (((a=(int)S.getAndBitwiseOrRelease(this, flag))&flag) == flag)
+            return false; // already set
         if (ENABLED)
             journal("CAS", flag, flags, "on", a, flags, "on", this);
         return true;
@@ -408,10 +415,9 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      *         call did set them in {@link #state()}
      */
     public boolean compareAndSetFlagAcquire(int flag) {
-        int a = plainState, e;
-        while ((a=(int)S.compareAndExchangeAcquire(this, e=a&~flag, a|flag)) != e) {
-            if ((a&flag) == flag) return false; // already set
-        }
+        int a;
+        if (((a=(int)S.getAndBitwiseOrAcquire(this, flag))&flag) == flag)
+            return false; // already set
         if (ENABLED)
             journal("CAS", flag, flags, "on", a, flags, "on", this);
         return true;
@@ -423,53 +429,48 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      * Atomically sets the {@link #LOCKED_MASK} bit in {@link #state()} if such bit is unset,
      * else retry. This implements a <strong>non-reentrant</strong> lock.
      *
-     * @param current the likely current value of {@link #state()}
      * @return the current state, with {@link #LOCKED_MASK} set
      */
-    public int lock(int current) {
-        int e = current&UNLOCKED_MASK;
-        if ((current=(int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK)) != e) {
-            e = current&UNLOCKED_MASK;
-            if ((int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) != e)
-                current = lockCold();
+    public int lock() {
+        int st = (int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK);
+        if ((st&LOCKED_MASK) != 0) {
+            onSpinWait();
+            st = (int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK);
+            if ((st&LOCKED_MASK) != 0)
+                return lockContended();
         }
-        return current|LOCKED_MASK;
+        return st|LOCKED_MASK;
     }
 
-    private int lockCold() {
-        journal("lockCold st=", plainState, "on", this);
-        int e;
+    private int lockContended() {
         EmitterService.beginSpin();
-        do {
-            Thread.yield();
-            e = (int)S.getOpaque(this)&UNLOCKED_MASK;
-        } while ((int)S.compareAndExchangeAcquire(this, e, e|LOCKED_MASK) != e);
+        int st;
+        while (((st=(int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK))&LOCKED_MASK) != 0)
+            backOff();
         EmitterService.endSpin();
-        return e;
+        return st|LOCKED_MASK;
+    }
+
+    private static void backOff() {
+        if (!Unparker.volunteer())
+            Thread.yield();
     }
 
     /**
      * Atomically clears the {@link #LOCKED_MASK} bit from {@link #state()}, if set
      *
      * <p><strong>Important:</strong>This must be called <strong>exactly</strong> once per
-     * {@link #lock(int)} call by the same thread that called
-     * {@link #lock(int)}. These constraints are NOT checked at runtime.</p>
+     * {@link #lock()} call by the same thread that called
+     * {@link #lock()}. These constraints are NOT checked at runtime.</p>
      *
-     * @param current the likely current value for the field at {@code holder} or the value
-     *                returned by {@link #lock(int)}. There is no need to
-     *                {@code |LOCKED_MASK}
      * @return the updated {@link #state()}
      * @throws IllegalStateException If assertions are enabled and the locked bit was not set
      */
-    public int unlock(int current) {
-        if (IS_DEBUG && (state() & LOCKED_MASK) == 0)
-            throw new IllegalStateException("not locked");
-        int ex = current|LOCKED_MASK;
-        while ((current=(int)S.compareAndExchangeRelease(this, ex, ex&UNLOCKED_MASK)) != ex)
-            ex = current;
-        current = ex&UNLOCKED_MASK;
-        //if (ENABLED) journal("unlckd, next=", current, flags, "now=", state(), flags, "on", this);
-        return current;
+    public int unlock() {
+        int st = (int)S.getAndBitwiseAndRelease(this, UNLOCKED_MASK);
+        if ((st&LOCKED_MASK) == 0)
+            throw new NotLocked(this);
+        return st&UNLOCKED_MASK;
     }
 
     /**
@@ -477,27 +478,29 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      * and sets any bits set in {@code set}.
      *
      * <p><strong>Important:</strong>This must be called <strong>exactly</strong> once per
-     * {@link #lock(int)} call by the same thread that called
-     * {@link #lock(int)}. These constraints are NOT checked at runtime.</p>
+     * {@link #lock()} call by the same thread that called
+     * {@link #lock()}. These constraints are NOT checked at runtime.</p>
      *
-     * @param current the likely current value for the field at {@code holder} or the value
-     *                returned by {@link #lock(int)}. There is no need to
-     *                {@code |LOCKED_MASK}
      * @param clear Bitset whose set bits will be cleared in {@code holder}'s {@code int} field
      * @param set Bitset whose set bits will be set in {@code holder}'s {@code int} field
      */
-    public int unlock(int current, int clear, int set) {
-        if (IS_DEBUG && (state()&LOCKED_MASK) == 0)
-            throw new IllegalStateException("not locked");
+    public int unlock(int clear, int set) {
         if (ENABLED && (clear|set) != 0)
             journal("unlck cl=", clear, flags, "set=", set, flags, "on", this);
-        int e = current|LOCKED_MASK;
-        int mask = ~(clear|LOCKED_MASK), next;
-        while ((current=(int)S.compareAndExchangeRelease(this, e, next=(e&mask)|set)) != e)
-            e = current;
-        return next;
+        int a, e = plainState, n, mask = ~(clear|LOCKED_MASK);
+        while ((a=(int)S.compareAndExchangeRelease(this, e, n=(e&mask)|set)) != e)
+            e = a;
+        if ((e&LOCKED_MASK) == 0)
+            throw new NotLocked(this);
+        return n;
     }
 
+    public static final class NotLocked extends IllegalStateException {
+        public NotLocked(Stateful<?> s) {
+            super("Attempt to unlock not locked "+s.journalName()+", st="+
+                  s.flags.render(s.state()));
+        }
+    }
 
     /* --- --- --- state flags customization --- --- --- */
 

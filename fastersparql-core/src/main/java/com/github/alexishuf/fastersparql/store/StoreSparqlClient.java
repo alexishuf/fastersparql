@@ -1064,17 +1064,17 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public boolean cancel() {
             boolean cancelled;
-            int st = lock(statePlain());
+            lock();
             try {
                 rebindPrefetchEnd();
             } finally {
-                unlock(st);
+                unlock();
                 cancelled = super.cancel();
             }
             return cancelled;
         }
 
-        private int bindingVarsChanged(Vars bindingVars) {
+        private void bindingVarsChanged(Vars bindingVars) {
             if (ENABLED)
                 journal("bindingVarsChanged bindingVars", bindingVars, "em=", this);
             lastBindingsVars = bindingVars;
@@ -1108,8 +1108,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (o1 != -1 && o1 != o0            ) ++colsSet;
                 if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
                 pref.setupBindSkel(colsSet < cols, vars, bindingVars);
-                return colsSet < cols ?   setFlagsRelease(HAS_UNSET_OUT)
-                                      : clearFlagsRelease(HAS_UNSET_OUT);
+                if (colsSet < cols)
+                    setFlagsRelease(HAS_UNSET_OUT);
+                else
+                    clearFlagsRelease(HAS_UNSET_OUT);
             } finally {
                 pref.allowRun(snapshot);
             }
@@ -1120,14 +1122,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override public void rebindPrefetch(BatchBinding binding) {
-            int st = lock(statePlain());
+            int st = lock();
             try {
                 if ((st&STATE_MASK) != CREATED && (st & IS_TERM) == 0)
                     return; // not rebind()able
                 if (!binding.vars.equals(lastBindingsVars))
-                    st = bindingVarsChanged(binding.vars);
+                    bindingVarsChanged(binding.vars);
                 pref.request(binding);
-            } finally { unlock(st); }
+            } finally { unlock(); }
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -1139,11 +1141,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (bb == null || bRow >= bb.rows)
                 throw new IllegalArgumentException("invalid binding");
             Vars bVars = binding.vars;
-            int st = resetForRebind(0, LOCKED_MASK);
+            resetForRebind(0, LOCKED_MASK);
             try {
                 if (EmitterStats.ENABLED && stats != null) stats.onRebind(binding);
                 if (ResultJournal.ENABLED)                 rebindEmitter(this, binding);
-                if (!bVars.equals(lastBindingsVars))       st = bindingVarsChanged(bVars);
+                if (!bVars.equals(lastBindingsVars))       bindingVarsChanged(bVars);
 
                 int dstRow = pref.awaitRow(binding);
                 int base = pref.unsrcIdsCols*dstRow;
@@ -1164,7 +1166,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     case SUB_PRE_OBJ_BITS -> spo.scan   (      (Triples.ScanIt  )it);
                 }
             } finally {
-                unlock(st);
+                unlock();
             }
         }
 

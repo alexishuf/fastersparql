@@ -47,6 +47,14 @@ public class Unparker {
         @Override public String toString() {return "DrainUnparkQueue";}
     }
 
+    public static boolean volunteer() {
+        Thread thread = unparkQueue.poll();
+        if (thread == null)
+            return false;
+        LockSupport.unpark(thread);
+        return true;
+    }
+
     public static void unpark(Thread thread) {
         if (thread == null)
             return; // nop

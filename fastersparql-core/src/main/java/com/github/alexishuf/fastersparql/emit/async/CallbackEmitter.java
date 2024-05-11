@@ -63,7 +63,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTi
  *      <li>If the emitter thread observes the cancel before {@link #startProducer()} gets called,
  *          {@link #earlyCancelProducer()} is called. {@link #startProducer()}/
  *          {@link #resumeProducer(long)}/{@link #pauseProducer()} will not be called</li>
- *      <li>If the emiter thread observes tha cancel after {@link #startProducer()} got called,
+ *      <li>If the emitter thread observes tha cancel after {@link #startProducer()} got called,
  *          {@link #cancelProducer()} will be called. There will be no
  *          {@link #resumeProducer(long)}/{@link #pauseProducer()} calls.</li>
  *  </ul>
@@ -77,7 +77,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTi
  *  Remember that {@link #rebind(BatchBinding)} always happens after entry into
  *  {@link Receiver#onComplete()}/{@link Receiver#onCancelled()}/{@link Receiver#onError(Throwable)}
  *  and thus after all {@code *Producer()} methods except for {@link #releaseProducer()}. Also
- *  note that {@link #rebind(BatchBinding)} resets the emitter state, allowin a new
+ *  note that {@link #rebind(BatchBinding)} resets the emitter state, allowing a new
  *  {@link #startProducer()} call which restarts the lifecycle described above.
  *
  * @param <B>
@@ -201,11 +201,11 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
      */
     @SuppressWarnings("unused") protected void dropAllQueued() {
         B q;
-        int st = lock(statePlain());
+        lock();
         try {
             q     = queue;
             queue = null;
-        } finally { unlock(st); }
+        } finally { unlock(); }
         Batch.recycle(q, this);
     }
 
@@ -237,9 +237,9 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override public boolean cancel() {
         boolean first;
-        int st = lock(statePlain());
+        int st = lock();
         first = (st&GOT_CANCEL_REQ) == 0;
-        st = unlock(st, 0, GOT_CANCEL_REQ);
+        st = unlock(0, GOT_CANCEL_REQ);
         if (first)
             awake();
         return (st&IS_TERM) == 0;
@@ -258,11 +258,11 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override public @Nullable Orphan<B> pollFillingBatch() {
         Orphan<B> tail;
-        int st = lock(statePlain());
+        lock();
         try {
             if ((tail=detachDistinctTail(queue)) != null && EmitterStats.ENABLED && stats != null)
                 stats.revertOnBatchReceived(tail);
-        } finally { unlock(st); }
+        } finally { unlock(); }
         return tail;
     }
 
@@ -279,15 +279,15 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             Orphan.recycle(offer);
             return;
         }
-        int st = lock(statePlain());
+        int st = lock();
         try {
             if ((st&(IS_TERM|IS_CANCEL_REQ|GOT_CANCEL_REQ)) == 0) {
                 B tail = detachDistinctTail(queue, this);
                 if (tail != null) {
-                    st = unlock(st);
+                    unlock();
                     tail.append(offer);
                     offer = tail.releaseOwnership(this);
-                    st = lock(st);
+                    lock();
                 }
                 queue = Batch.quickAppend(queue, this, offer);
             } else {
@@ -297,20 +297,20 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                 else
                     throw TerminatedException.INSTANCE;
             }
-        } finally { unlock(st); }
+        } finally { unlock(); }
         awake();
     }
 
     @Override protected void task(int threadId) {
         this.threadId = (short)threadId;
-        int st = lock(state()), termState = 0;
+        int st = lock(), termState = 0;
         try {
             if ((st&(GOT_CANCEL_REQ|DONE_CANCEL)) == GOT_CANCEL_REQ)
                 st = doCancel(st);
             if ((st&(IS_LIVE|PROD_LIVE|GOT_CANCEL_REQ)) == IS_LIVE)
                 st = doStartProducer(st);
             if ((st&(IS_LIVE|DO_RESUME|GOT_CANCEL_REQ)) == (IS_LIVE|DO_RESUME))
-                st = doResume(st);
+                st = doResume();
             if ((st&(IS_TERM_DELIVERED|IS_INIT)) != 0)
                 return; // no work to do
             long deadline = Timestamp.nextTick(1);
@@ -319,14 +319,14 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                 queue = null;
                 if (b == null)
                     break;
-                st = unlock(st);
+                st = unlock();
                 if (b.rows == 0) {
                     b.recycle(this);
                 } else {
                     avgRows = ((avgRows<<4) - avgRows + b.rows) >> 4;
                     deliver(b.releaseOwnership(this));
                 }
-                st = lock(st);
+                st = lock();
             }
             if (queue != null)
                 awake();
@@ -337,7 +337,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                               : ((st&IS_PENDING_TERM) != 0 ? (st&~IS_PENDING_TERM)|IS_TERM : 0);
                 if (termState != 0) {
                     if ((st&LOCKED_MASK) != 0)
-                        st = unlock(st);
+                        st = unlock();
                     deliverTermination(st, termState);
                 }
             }
@@ -345,48 +345,48 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             if (termState != 0 || (st&IS_TERM) != 0)
                 throw t;
             if ((st&LOCKED_MASK) != 0)
-                st = unlock(st);
+                st = unlock();
             if (error == UNSET_ERROR)
                 error = t;
             deliverTermination(st, FAILED);
         } finally {
             if ((st&LOCKED_MASK) != 0)
-                unlock(st);
+                unlock();
         }
     }
 
     private int doCancel(int st) {
         if ((st&DONE_CANCEL) != 0)
             return st;
-        st = unlock(st, 0, DONE_CANCEL);
+        st = unlock(0, DONE_CANCEL);
         try {
             if ((st&PROD_LIVE) == 0) {
                 earlyCancelProducer();
-                if (moveStateRelease(st, CANCEL_REQUESTED))
-                    st = (st&FLAGS_MASK) | CANCEL_REQUESTED;
+                moveStateRelease(st, CANCEL_REQUESTED);
             } else {
                 cancelProducer(); // producer will call cancel(true) or complete(cause)
             }
-        } finally { st = lock(st); }
+        } finally { st = lock(); }
         return st;
     }
 
     private int doStartProducer(int st) {
         assert (st&PROD_LIVE) == 0 : "producer already started";
-        st = unlock(st, 0, PROD_LIVE);
+        unlock(0, PROD_LIVE);
         try {
             startProducer();
-        } finally { st = lock(st); }
+        } finally { st = lock(); }
         return st;
     }
 
-    private int doResume(int st) {
-        st = unlock(st, DO_RESUME, 0);
+    private int doResume() {
+        int st;
+        unlock(DO_RESUME, 0);
         try {
             long n = requested();
             if (n > 0)
                 resumeProducer(n);
-        } finally { st = lock(st); }
+        } finally { st = lock(); }
         return st;
     }
 

@@ -361,12 +361,12 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public void onConnected(Channel ch, NettyHandler handler) {
             lastCh = ch;
             boolean abort;
-            int st = lock(statePlain());
+            int st = lock();
             try {
                 abort = (st&GOT_CANCEL_REQ) != 0;
                 this.handler = handler;
                 handler.attach(this);
-            } finally { unlock(st); }
+            } finally { unlock(); }
             if (abort)
                 throw NettyHttpClient.ABORT_REQUEST; // recycle ch
         }
@@ -375,8 +375,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public NettyHttpClient httpClient()                { return netty; }
 
         @Override public void onStarted(NettyHandler handler, int cookie) {
-            int st = lock(statePlain());
-            try { this.cookie = cookie; } finally { unlock(st); }
+            lock();
+            try { this.cookie = cookie; } finally { unlock(); }
         }
 
         /* --- --- --- CallbackEmitter producer actions --- --- --- */
@@ -394,10 +394,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override protected void cancelProducer() {
-            int st = lock(statePlain());
+            lock();
             try {
                 if (handler != null) handler.cancel(cookie);
-            } finally { unlock(st); }
+            } finally { unlock(); }
         }
 
         @Override protected void earlyCancelProducer() {}
@@ -428,7 +428,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
-            int st = resetForRebind(CLEAR_ON_REBIND, LOCKED_MASK);
+            resetForRebind(CLEAR_ON_REBIND, LOCKED_MASK);
             try {
                 boundQuery = originalQuery.bound(binding);
                 var freeVars = boundQuery.publicVars();
@@ -448,7 +448,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
                     this.boundRequest = null;
                 }
             } finally {
-                unlock(st);
+                unlock();
             }
         }
 
