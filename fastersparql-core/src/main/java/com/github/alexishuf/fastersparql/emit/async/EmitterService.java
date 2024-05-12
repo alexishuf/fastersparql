@@ -662,9 +662,9 @@ public class EmitterService {
         boolean got = false;
         byte unpark = -1;
         for (int i = 0; i < 16; i++) {
-            got = (int) MD.compareAndExchangeAcquire(md, lockIdx, 0, 1) == 0;
-            if (got || i == 7 && md[(((task.preferredWorker +1)&threadsMask) << MD_BITS) + MD_SIZE] == 0)
-                break; // got spinlock or next worker has an empty queue
+            got = MD.weakCompareAndSetAcquire(md, lockIdx, 0, 1);
+            if (got)
+                break;
             onSpinWait();
         }
         if (!got)
