@@ -956,8 +956,6 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     private void beginPut0() {
         offerNextLocals = localsLen;
         short begin = (short)(rows*cols), end = (short)(begin+cols);
-        var shared = this.shared;
-        var slices = this.slices;
         for (int i = begin                  ; i < end ; i++) shared[i] = null;
         for (int i = begin<<1, end2 = end<<1; i < end2; i++) slices[i] = 0;
     }
