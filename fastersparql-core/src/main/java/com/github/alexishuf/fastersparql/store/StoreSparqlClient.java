@@ -1329,7 +1329,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     if (t.fstLen == 0 || t.sndLen == 0) yield FinalSegmentRope.EMPTY;
                     int slot = (int)(t.fstOff & PREFIXES_MASK);
                     var cached = prefixes[slot];
-                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst) {
+                    if (cached == null || cached.offset != t.fstOff) {
                         cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
                         prefixes[slot] = cached;
                     }
@@ -2529,7 +2529,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     if (t.fstLen == 0 || t.sndLen == 0) yield FinalSegmentRope.EMPTY;
                     int slot = (int)(t.fstOff & PREFIXES_MASK);
                     var cached = prefixes[slot];
-                    if (cached == null || cached.offset != t.fstOff || cached.segment != t.fst) {
+                    if (cached == null || cached.offset != t.fstOff) {
                         cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
                         prefixes[slot] = cached;
                     }
