@@ -44,15 +44,15 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     public static <B extends Batch<B>> Orphan<AsyncStage<B>>
     create(Orphan<? extends Emitter<B, ?>> upstream) {
-        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR), EMITTER_SVC, RR_WORKER);
+        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR), EMITTER_SVC);
     }
     public static <B extends Batch<B>> Orphan<AsyncStage<B>>
-    create(Orphan<? extends Emitter<B, ?>> upstream, EmitterService runner, int worker) {
-        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR), runner, worker);
+    create(Orphan<? extends Emitter<B, ?>> upstream, EmitterService runner) {
+        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR), runner);
     }
 
-    private AsyncStage(Emitter<B, ?> upstream, EmitterService runner, int worker) {
-        super(upstream.batchType(), upstream.vars(), runner, worker, CREATED, ASYNC_FLAGS);
+    private AsyncStage(Emitter<B, ?> upstream, EmitterService runner) {
+        super(upstream.batchType(), upstream.vars(), runner, CREATED, ASYNC_FLAGS);
         this.up = upstream.transferOwnership(CONSTRUCTOR, this);
         upstream.subscribe(this);
     }
@@ -65,8 +65,8 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     private static final class Concrete<B extends Batch<B>>
             extends AsyncStage<B> implements Orphan<AsyncStage<B>> {
-        public Concrete(Emitter<B, ?> upstream, EmitterService runner, int worker) {
-            super(upstream, runner, worker);
+        public Concrete(Emitter<B, ?> upstream, EmitterService runner) {
+            super(upstream, runner);
         }
         @Override public AsyncStage<B> takeOwnership(Object o) {return takeOwnership0(o);}
     }
@@ -118,7 +118,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
                 queue = (B)QUEUE.getAndSetAcquire(this, null);
             }
             QUEUE.setRelease(this, Batch.quickAppend(queue, this, orphan));
-            awake();
+            awakeParallel();
         } else {
             Orphan.recycle(orphan);
         }
@@ -142,7 +142,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
                     queue = bt.create(batch.cols).takeOwnership(this);
                 queue.copy(batch);
                 QUEUE.setRelease(this, queue);
-                awake();
+                awakeParallel();
             }
         }
     }
@@ -153,7 +153,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             deliverTermination(st, COMPLETED);
         } else {
             termination = COMPLETED;
-            awake();
+            awake(true);
         }
     }
 
@@ -163,7 +163,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             deliverTermination(st, CANCELLED);
         } else {
             termination = CANCELLED;
-            awake();
+            awake(true);
         }
     }
 
@@ -174,7 +174,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             deliverTermination(st, FAILED);
         } else {
             termination = FAILED;
-            awake();
+            awake(true);
         }
     }
 

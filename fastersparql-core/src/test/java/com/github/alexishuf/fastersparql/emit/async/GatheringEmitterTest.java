@@ -64,7 +64,7 @@ class GatheringEmitterTest {
         private final int cancelAt, failAt;
 
         public P(@NonNull CompressedBatch expected, int cancelAt, int failAt) {
-            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(COMPRESSED, X, EMITTER_SVC, CREATED, TASK_FLAGS);
             assert expected.validate(Batch.Validation.CHEAP);
             this.current = expected;
             this.failAt = failAt;

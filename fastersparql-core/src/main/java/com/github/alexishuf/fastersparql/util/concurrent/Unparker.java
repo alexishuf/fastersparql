@@ -47,6 +47,7 @@ public class Unparker {
         @Override public String toString() {return "DrainUnparkQueue";}
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean volunteer() {
         Thread thread = unparkQueue.poll();
         if (thread == null)

@@ -1122,7 +1122,7 @@ public class NettySparqlServer implements AutoCloseable{
                 extends CallbackEmitter<CompressedBatch, BindingsCallback>
                 implements Orphan<BindingsCallback> {
             public BindingsCallback(Vars vars) {
-                super(COMPRESSED, vars, EMITTER_SVC, RR_WORKER, CREATED, CB_FLAGS);
+                super(COMPRESSED, vars, EMITTER_SVC, CREATED, CB_FLAGS);
                 if (ResultJournal.ENABLED)
                     ResultJournal.initEmitter(this, vars);
             }

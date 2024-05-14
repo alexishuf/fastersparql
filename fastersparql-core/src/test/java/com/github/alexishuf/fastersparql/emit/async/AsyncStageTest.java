@@ -51,7 +51,7 @@ class AsyncStageTest {
         private final MutableRope nt = new MutableRope(12);
 
         public P(BatchType<B> batchType, int begin, int end, @Nullable RuntimeException failCause) {
-            super(batchType, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(batchType, X, EMITTER_SVC, CREATED, TASK_FLAGS);
             this.begin = begin;
             this.nextRow = begin;
             this.end = end;

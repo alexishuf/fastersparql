@@ -79,7 +79,7 @@ class GatherAndScatterTest {
 
             public P(BatchType<B> batchType, Vars vars, EmitterService runner,
                      int id, int begin, int failAt) {
-                super(batchType, vars, runner, RR_WORKER, CREATED, TASK_FLAGS);
+                super(batchType, vars, runner, CREATED, TASK_FLAGS);
                 this.id     = id;
                 this.next   = begin;
                 this.end    = begin+height;
@@ -112,7 +112,7 @@ class GatherAndScatterTest {
                 if (failAt >= next && failAt < next + n) {
                     throw new DummyException(id, next);
                 } else {
-                    B b = bt.createForThread(preferredWorker, 1).takeOwnership(this);
+                    B b = bt.createForThread(threadId, 1).takeOwnership(this);
                     for (long e = Math.min(end, next+n); next < e; next++) {
                         b.beginPut();
                         nt.clear().append('"').append(next);

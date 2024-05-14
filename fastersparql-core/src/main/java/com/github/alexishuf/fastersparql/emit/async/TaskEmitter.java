@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.*;
+import com.github.alexishuf.fastersparql.emit.async.EmitterService.Task;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
@@ -25,7 +26,7 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
 public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E>>
-        extends EmitterService.Task<E>
+        extends Task<E>
         implements Emitter<B, E> {
     private static final Logger log = LoggerFactory.getLogger(TaskEmitter.class);
     private static final VarHandle REQ;
@@ -47,9 +48,9 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     protected Throwable error = UNSET_ERROR;
 
     protected TaskEmitter(BatchType<B> batchType, Vars vars,
-                          EmitterService runner, int worker,
+                          EmitterService runner,
                           int initState, Flags flags) {
-        super(runner, worker, initState, flags);
+        super(runner, initState, flags);
         this.vars = vars;
         this.bt = batchType;
         int ouCols = vars.size();
@@ -103,7 +104,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
         boolean done = false;
         int st = statePlain();
         if ((st&IS_CANCEL_REQ) != 0 || (done=moveStateRelease(st, CANCEL_REQUESTING)))
-            awake();
+            awake(true);
         return done;
     }
 
@@ -130,7 +131,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
 
     public long requested() { return (long)REQ.getOpaque(this); }
 
-    @Override public void request(long rows) throws NoReceiverException {
+    @Override public void request(long rows) {
         if (rows <= 0)
             return;
         boolean grown = Async.maxRelease(REQ, this, rows);
@@ -144,13 +145,15 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
         moveStateRelease(statePlain(), ACTIVE);
     }
 
-    protected void resume() { awake(); }
+    protected void resume() {
+        awake(false);
+    }
 
     protected abstract int produceAndDeliver(int state);
 
     protected boolean mustAwake() { return (long)REQ.getOpaque(this) > 0; }
 
-    @Override protected void task(int threadId) {
+    @Override protected void task(EmitterService.Worker worker, int threadId) {
         this.threadId = (short)threadId;
         int st = state(), termState;
         if ((st&IS_PENDING_TERM) != 0) {
@@ -171,7 +174,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
         if ((termState&IS_TERM) != 0)
             deliverTermination(st, termState);
         else if (mustAwake())
-            awake();
+            awake(worker);
     }
 
     protected final Orphan<B> beforeDelivery(Orphan<B> orphan) {

@@ -210,7 +210,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
-            super(HDT, outVars, EmitterService.EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
+            super(HDT, outVars, EmitterService.EMITTER_SVC, CREATED, FLAGS);
             int cols = outVars.size();
             int sOutCol = outVars.indexOf(tp.s);
             int pOutCol = outVars.indexOf(tp.p);

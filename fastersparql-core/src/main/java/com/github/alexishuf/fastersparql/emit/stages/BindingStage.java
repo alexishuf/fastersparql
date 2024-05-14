@@ -33,7 +33,6 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.detachDistinctTail;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.currentWorker;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.MINIMAL;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
@@ -581,6 +580,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     /* --- --- --- right-side processing --- --- --- */
 
     private @Nullable B advanceLB(B lb) {
+        rightRecv.upstream.rebindPrefetchEnd();
         nextIntBinding.sequence = intBinding.sequence; // sync bindings sequence number
         // swap intBinding and nextIntBinding
         var oldIntBinding   = this.intBinding;
@@ -606,7 +606,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             if ((st&IS_CANCEL_REQ) == 0)
                 maybeRequestLeft();
             if (lb == null) {
-                rightRecv.upstream.rebindPrefetchEnd();
                 if ((st & LEFT_TERM) == 0) st = unlock(0, RIGHT_STARVED);
                 else                       st = terminateStage(st);
             } else {
@@ -672,7 +671,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         private final BindingStage<?, ?> bs;
 
         private RebindTask(BindingStage<?, ?> bs) {
-            super(EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(EMITTER_SVC, CREATED, TASK_FLAGS);
             this.bs = bs;
         }
 
@@ -681,13 +680,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             @Override public RebindTask takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
-        public void schedule() {
-            preferredWorker = currentWorker();
-            runner.requireStealer();
-            awake();
-        }
+        public void schedule() { awakeParallel(); }
 
-        @Override protected void task(int threadId) {
+        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
             int st = bs.lock();
             try {
                 if ((st&CAN_BIND_MASK) == LEFT_CAN_BIND)

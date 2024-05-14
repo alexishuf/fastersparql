@@ -782,7 +782,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //    }
 
     private static abstract sealed class PrefetchTask extends EmitterService.Task<PrefetchTask> {
-        private static final byte CHUNK_ROWS = 32;
+        private static final int STOP_SENTINEL = Integer.MAX_VALUE;
+        private static final byte CHUNK_ROWS = 8;
 
 //        private static final VarHandle REQUEST, NEXT_ROW;
 //        static {
@@ -794,32 +795,35 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //            }
 //        }
 
+        private final TwoSegmentRope syncV;
+        private BatchBinding requestedBinding;
         private Batch<?> requestedBindingBatch;
-        private BatchBinding binding;
-        private volatile int asyncDone, asyncBottom;
+        long[] unsrcIds;
+        private short[] skelCol2InCol = EMPTY_SHORT;
+        private long [] rowSkels      = EMPTY_LONG;
+        private volatile int asyncDone;
+        private volatile int asyncBottom;
         private final short dictId;
         byte unsrcIdsCols, sOutCol, pOutCol, oOutCol;
         private byte sInCol, pInCol, oInCol, rowSkelCols;
         final long sId, pId, oId;
-        private final LocalityCompositeDict.Lookup syncLookup, asyncLookup;
-        private final TwoSegmentRope syncView, asyncView;
-        long[] unsrcIds;
+        private BatchBinding asyncBinding;
+        private final LocalityCompositeDict.Lookup syncL, asyncL;
+        private final TwoSegmentRope asyncV;
         private final TPEmitter tpEmitter;
-        private short[] skelCol2InCol = EMPTY_SHORT;
-        private long [] rowSkels      = EMPTY_LONG;
 
         private PrefetchTask(short dictId, LocalityCompositeDict dict, TPEmitter tpEmitter) {
-            super(EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(EMITTER_SVC, CREATED, TASK_FLAGS);
             this.dictId       = dictId;
-            this.syncLookup   = dict.lookup().takeOwnership(this);
-            this.asyncLookup  = dict.lookup().takeOwnership(this);
-            this.syncView     = new TwoSegmentRope();
-            this.asyncView    = new TwoSegmentRope();
+            this.syncL        = dict.lookup().takeOwnership(this);
+            this.syncV        = new TwoSegmentRope();
             this.unsrcIds     = longsAtLeast(TYPE.preferredTermsPerBatch()>>1);
             this.tpEmitter    = tpEmitter;
-            this.sId          = asyncLookup.find(tpEmitter.tp.s);
-            this.pId          = asyncLookup.find(tpEmitter.tp.p);
-            this.oId          = asyncLookup.find(tpEmitter.tp.o);
+            this.sId          = syncL.find(tpEmitter.tp.s);
+            this.pId          = syncL.find(tpEmitter.tp.p);
+            this.oId          = syncL.find(tpEmitter.tp.o);
+            this.asyncL       = dict.lookup().takeOwnership(this);
+            this.asyncV       = new TwoSegmentRope();
         }
 
         private static final class Concrete extends PrefetchTask implements Orphan<PrefetchTask> {
@@ -830,9 +834,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override protected void doRelease() {
-            binding   = null;
-            syncLookup .recycle(this);
-            asyncLookup.recycle(this);
+            requestedBinding = null;
+            requestedBindingBatch = null;
+            asyncBottom = STOP_SENTINEL;
+            asyncBinding = null;
+            syncL.recycle(this);
+            asyncL.recycle(this);
             unsrcIds      = recycleLongsAndGetEmpty(unsrcIds);
             rowSkels      = recycleLongsAndGetEmpty(rowSkels);
             skelCol2InCol = recycleShortsAndGetEmpty(skelCol2InCol);
@@ -846,13 +853,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
         void setInCols(int sInCol, int pInCol, int oInCol) {
             if (sInCol > 0x7f || pInCol > 0x7f || oInCol > 0x7f)
                 throw new IllegalArgumentException("Too many input columns");
-            this.sInCol = (byte) sInCol;
-            this.pInCol = (byte) pInCol;
-            this.oInCol = (byte) oInCol;
+            stop();
             byte cols = 0;
-            this.sOutCol = sInCol < 0 ? -1 : cols++;
-            this.pOutCol = pInCol < 0 ? -1 : cols++;
-            this.oOutCol = oInCol < 0 ? -1 : cols++;
+            this.sInCol       = (byte)sInCol;
+            this.pInCol       = (byte)pInCol;
+            this.oInCol       = (byte)oInCol;
+            this.sOutCol      = sInCol < 0 ? -1 : cols++;
+            this.pOutCol      = pInCol < 0 ? -1 : cols++;
+            this.oOutCol      = oInCol < 0 ? -1 : cols++;
             this.unsrcIdsCols = cols;
         }
 
@@ -873,65 +881,69 @@ public class StoreSparqlClient extends AbstractSparqlClient
             short bottom = (short) max(1, binding.row);
             Batch<?> bb = binding.batch;
             short rows = bb == null ? 0 : bb.rows;
-            short snapshot = stop();
-            try {
-                if (rows*unsrcIdsCols > unsrcIds.length)
-                    unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
-                if (rows*rowSkelCols > rowSkels.length)
-                    rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
-                this.requestedBindingBatch = bb;
-                this.binding               = binding;
-                asyncDone = rows;
-                asyncBottom = bottom;
-            } finally {
-                if (!allowRun(snapshot) && rows >= CHUNK_ROWS>>1)
-                    awake();
-            }
+            stop();
+            if (rows*unsrcIdsCols > unsrcIds.length)
+                unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
+            if (rows*rowSkelCols > rowSkels.length)
+                rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
+            requestedBindingBatch = bb;
+            requestedBinding      = binding;
+            asyncBinding          = binding;
+            asyncDone             = rows;
+            // asyncBottom must be last write. a rogue task() call is allowed after stop(),
+            // but is harmless so long asyncBottom == STOP_SENTINEL. By writing to asyncBottom,
+            // task() is allowed to do useful work and volatile semantics ensure previous writes
+            // by this thread are visible to task()
+            asyncBottom           = bottom;
+            if (rows-bottom >= CHUNK_ROWS)
+                awakeParallel();
         }
 
         int awaitRow(BatchBinding binding) {
-            short row = binding.row;
-            Batch<?> batch = binding.batch;
-            if (this.binding == binding && requestedBindingBatch == batch) {
+            if (requestedBinding == binding && requestedBindingBatch == binding.batch) {
+                short row = binding.row;
                 asyncBottom = row+1;
-                if (batch != null && row == batch.rows-1)
-                    allowRun(disallowRun());
+                if (row == requireNonNull(binding.batch).rows-1)
+                    stop();
                 if (asyncDone <= row)
                     return row; // row fetched asynchronously
             } else {
                 request(binding);
             }
-            fetchRow(row);
-            return 0;
+            fetchRowSync(binding); // first row or prefetch is not ready
+            return 0;              // fetchRow() always stores results on first row slots
         }
 
-        short stop() {
-            short snapshot        = disallowRun();
-            binding               = null;
-            requestedBindingBatch = null;
-            asyncBottom = Integer.MAX_VALUE;
-            return snapshot;
+        void stop() {
+            asyncBottom = STOP_SENTINEL; // causes task() to exit, if running on entering
+            if ((stateAcquire()&IS_RUNNING) != 0)
+                spinUntilStopped();
+            asyncBinding = null; // defensive, but must be after waiting for !IS_RUNNING
         }
 
-        @Override protected void onPendingRelease() {
-            short snapshot = stop();
-            try {
-                if (moveStateRelease(statePlain(), COMPLETED))
-                    markDelivered(COMPLETED);
-            } finally {
-                allowRun(snapshot);
+        private void spinUntilStopped() {
+            var currentThread = Thread.currentThread();
+            for (int i = 0; (stateAcquire()&IS_RUNNING) != 0; i++) {
+                if ((i&0xf) == 0xf) EmitterService.yieldWorker(currentThread);
+                else                Thread.onSpinWait();
             }
         }
 
-        @SuppressWarnings("DataFlowIssue")
-        private long toUnsourcedId(int col, int row, BatchBinding binding,
-                                   LocalityCompositeDict.Lookup lookup, TwoSegmentRope view) {
-            Batch<?> batch = binding.batch;
-            int cols = batch.cols;
-            while (col >= cols) {
+        @Override protected void onPendingRelease() {
+            stop();
+            if (moveStateRelease(statePlain(), COMPLETED))
+                markDelivered(COMPLETED);
+        }
+
+        private  long toUnsourcedId(int col, int row, BatchBinding binding,
+                                    LocalityCompositeDict.Lookup lookup, TwoSegmentRope view) {
+            Batch<?> batch = requireNonNull(binding.batch);
+            int cols;
+            while (col >= (cols=batch.cols)) {
                 col -= cols;
-                row  = (binding = binding.remainder).row;
-                cols = (batch   = binding.batch    ).cols;
+                binding = requireNonNull(binding.remainder);
+                batch   = requireNonNull(binding.batch);
+                row     = binding.row;
             }
             if (batch instanceof StoreBatch sb)
                 return translate(sb.arr[cols*row+col], dictId, lookup);
@@ -940,58 +952,57 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return NOT_FOUND;
         }
 
-        private void fetchRow(int r) {
-            BatchBinding b = this.binding;
-            if (sInCol >= 0)
-                unsrcIds[sOutCol] = toUnsourcedId(sInCol, r, b, syncLookup, syncView);
-            if (pInCol >= 0)
-                unsrcIds[pOutCol] = toUnsourcedId(pInCol, r, b, syncLookup, syncView);
-            if (oInCol >= 0)
-                unsrcIds[oOutCol] = toUnsourcedId(oInCol, r, b, syncLookup, syncView);
+        private void fetchRowSync(BatchBinding b) {
+            short r = b.row;
+            if (sInCol >= 0) unsrcIds[sOutCol] = toUnsourcedId(sInCol, r, b, syncL, syncV);
+            if (pInCol >= 0) unsrcIds[pOutCol] = toUnsourcedId(pInCol, r, b, syncL, syncV);
+            if (oInCol >= 0) unsrcIds[oOutCol] = toUnsourcedId(oInCol, r, b, syncL, syncV);
+            final byte rowSkelCols = this.rowSkelCols;
             if (rowSkelCols != 0) {
-                short[] skelCol2InCol = this.skelCol2InCol;
+                final short[] skelCol2InCol = this.skelCol2InCol;
                 for (int c = 0; c < rowSkelCols; c++) {
                     int bc = skelCol2InCol[c];
                     rowSkels[c] = bc < 0 ? NOT_FOUND
-                            : source(toUnsourcedId(bc, r, b, syncLookup, syncView), dictId);
+                            : source(toUnsourcedId(bc, r, b, syncL, syncV), dictId);
                 }
             }
         }
 
-        @Override protected void task(int threadId) {
-            short r = (short)(asyncDone-1);
-            var b = this.binding;
-            if (b == null || r < 0)
-                return;
+        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+            final var b = this.asyncBinding; // compiler should copy reference to stack
             long[] rowSkels = this.rowSkels;
             long[] unsrcIds = this.unsrcIds;
+            short r = (short)(asyncDone-1), base;
+            if (b == null || r < 0 || asyncBottom == STOP_SENTINEL)
+                return;
+            if (worker != null)
+                worker.expelRelaxed(tpEmitter);
             byte  sInCol = this. sInCol,  pInCol = this. pInCol,  oInCol = this. oInCol;
             byte sOutCol = this.sOutCol, pOutCol = this.pOutCol, oOutCol = this.oOutCol;
             byte outCols = this.unsrcIdsCols;
-            short base = (short)(r*outCols);
             byte rowSkelCols = this.rowSkelCols, i = 0;
-            for (; i < CHUNK_ROWS && r >= asyncBottom; ++i, base-=outCols) {
+            boolean notEnd = false;
+            base = (short)(r*outCols);
+            for (; i < CHUNK_ROWS && (notEnd=r>=asyncBottom); ++i, base-=outCols) {
                 if (sInCol >= 0)
-                    unsrcIds[base+sOutCol] = toUnsourcedId(sInCol, r, b, asyncLookup, asyncView);
+                    unsrcIds[base+sOutCol] = toUnsourcedId(sInCol, r, b, asyncL, asyncV);
                 if (pInCol >= 0)
-                    unsrcIds[base+pOutCol] = toUnsourcedId(pInCol, r, b, asyncLookup, asyncView);
+                    unsrcIds[base+pOutCol] = toUnsourcedId(pInCol, r, b, asyncL, asyncV);
                 if (oInCol >= 0)
-                    unsrcIds[base+oOutCol] = toUnsourcedId(oInCol, r, b, asyncLookup, asyncView);
+                    unsrcIds[base+oOutCol] = toUnsourcedId(oInCol, r, b, asyncL, asyncV);
                 if (rowSkelCols > 0) {
                     int rsBase = r*rowSkelCols;
                     short[] skelCol2InCol = this.skelCol2InCol;
                     for (int c = 0; c < rowSkelCols; c++) {
                         int bc = skelCol2InCol[c];
                         rowSkels[rsBase+c] = bc < 0 ? NOT_FOUND
-                                : source(toUnsourcedId(bc, r, b, asyncLookup, asyncView), dictId);
+                                : source(toUnsourcedId(bc, r, b, asyncL, asyncV), dictId);
                     }
                 }
                 asyncDone = r--;
             }
-            if (r >= asyncBottom) {
-                avoidWorker(tpEmitter);
-                awake();
-            }
+            if (notEnd)
+                awake(worker);
         }
     }
 
@@ -1021,7 +1032,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
-            super(TYPE, outVars, EMITTER_SVC, RR_WORKER, CREATED, FLAGS);
+            super(TYPE, outVars, EMITTER_SVC, CREATED, FLAGS);
             int cols = outVars.size();
             if (cols > 127)
                 throw new IllegalArgumentException("Too many output columns");
@@ -1072,43 +1083,36 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (tp.s.isVar() && (sInCol = bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
             if (tp.p.isVar() && (pInCol = bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
             if (tp.o.isVar() && (oInCol = bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
-            short snapshot = pref.stop();
-            try {
-                pref.setInCols(sInCol, pInCol, oInCol);
-                byte sc = (byte)vars.indexOf(tp.s);
-                byte pc = (byte)vars.indexOf(tp.p);
-                byte oc = (byte)vars.indexOf(tp.o);
-                byte o0 = -1, o1 = -1, o2 = -1;
-                switch (freeRoles) {
-                    case       EMPTY_BITS ->  it = FALSE;
-                    case         OBJ_BITS -> {it = spo.makeValuesIt(); o0 = oc;}
-                    case         PRE_BITS -> {it = spo.makeSubKeyIt(); o0 = pc;}
-                    case     PRE_OBJ_BITS -> {it = spo.makePairIt();   o0 = pc; o1 = oc;}
-                    case         SUB_BITS -> {it = ops.makeValuesIt(); o0 = sc;}
-                    case     SUB_OBJ_BITS -> {it = pso.makePairIt();   o0 = sc; o1 = oc;}
-                    case     SUB_PRE_BITS -> {it = ops.makePairIt();   o0 = pc; o1 = sc;}
-                    case SUB_PRE_OBJ_BITS -> {it = spo.scan();         o0 = sc; o1 = pc; o2 = oc;}
-                }
-                outCol0 = o0;
-                outCol1 = o1;
-                outCol2 = o2;
-                int colsSet = 0;
-                if (o0 != -1                        ) ++colsSet;
-                if (o1 != -1 && o1 != o0            ) ++colsSet;
-                if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
-                pref.setupBindSkel(colsSet < cols, vars, bindingVars);
-                if (colsSet < cols)
-                    setFlagsRelease(HAS_UNSET_OUT);
-                else
-                    clearFlagsRelease(HAS_UNSET_OUT);
-            } finally {
-                pref.allowRun(snapshot);
+            pref.setInCols(sInCol, pInCol, oInCol);
+            byte sc = (byte)vars.indexOf(tp.s);
+            byte pc = (byte)vars.indexOf(tp.p);
+            byte oc = (byte)vars.indexOf(tp.o);
+            byte o0 = -1, o1 = -1, o2 = -1;
+            switch (freeRoles) {
+                case       EMPTY_BITS ->  it = FALSE;
+                case         OBJ_BITS -> {it = spo.makeValuesIt(); o0 = oc;}
+                case         PRE_BITS -> {it = spo.makeSubKeyIt(); o0 = pc;}
+                case     PRE_OBJ_BITS -> {it = spo.makePairIt();   o0 = pc; o1 = oc;}
+                case         SUB_BITS -> {it = ops.makeValuesIt(); o0 = sc;}
+                case     SUB_OBJ_BITS -> {it = pso.makePairIt();   o0 = sc; o1 = oc;}
+                case     SUB_PRE_BITS -> {it = ops.makePairIt();   o0 = pc; o1 = sc;}
+                case SUB_PRE_OBJ_BITS -> {it = spo.scan();         o0 = sc; o1 = pc; o2 = oc;}
             }
+            outCol0 = o0;
+            outCol1 = o1;
+            outCol2 = o2;
+            int colsSet = 0;
+            if (o0 != -1                        ) ++colsSet;
+            if (o1 != -1 && o1 != o0            ) ++colsSet;
+            if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
+            pref.setupBindSkel(colsSet < cols, vars, bindingVars);
+            if (colsSet < cols)
+                setFlagsRelease(HAS_UNSET_OUT);
+            else
+                clearFlagsRelease(HAS_UNSET_OUT);
         }
 
-        @Override public void rebindPrefetchEnd() {
-            pref.allowRun(pref.stop());
-        }
+        @Override public void rebindPrefetchEnd() { pref.stop(); }
 
         @Override public void rebindPrefetch(BatchBinding binding) {
             int st = lock();
@@ -1117,6 +1121,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     return; // not rebind()able
                 if (!binding.vars.equals(lastBindingsVars))
                     bindingVarsChanged(binding.vars);
+                if (requireNonNull(binding.batch).rows > PrefetchTask.CHUNK_ROWS)
+                    emitterSvc.unparkStealer();
                 pref.request(binding);
             } finally { unlock(); }
         }
@@ -1136,10 +1142,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (ResultJournal.ENABLED)                 rebindEmitter(this, binding);
                 if (!bVars.equals(lastBindingsVars))       bindingVarsChanged(bVars);
 
-                int dstRow = pref.awaitRow(binding);
-                int base = pref.unsrcIdsCols*dstRow;
+                int fetchedRow = pref.awaitRow(binding), base = pref.unsrcIdsCols*fetchedRow;
                 rowSkels     = pref.rowSkels;
-                rowSkelBegin = cols*dstRow;
+                rowSkelBegin = cols*fetchedRow;
                 long[] unsourcedIds = pref.unsrcIds;
                 long s = pref.sOutCol < 0 ? pref.sId : unsourcedIds[base+pref.sOutCol];
                 long p = pref.pOutCol < 0 ? pref.pId : unsourcedIds[base+pref.pOutCol];
@@ -1165,6 +1170,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
             StoreSparqlClient.appendToSimpleLabel(out, endpoint, tp);
+        }
+
+        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+            if (worker != null)
+                worker.expelRelaxed(pref);
+            super.task(worker, threadId);
         }
 
         @Override protected int produceAndDeliver(int state) {

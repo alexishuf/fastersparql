@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -117,7 +118,7 @@ class StatefulTest {
         private final int[] counter;
         private final CompletableFuture<?> result = new CompletableFuture<>();
         private RaceTask(S s, int rounds, int[] counter) {
-            super(EmitterService.EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(EmitterService.EMITTER_SVC, CREATED, TASK_FLAGS);
             this.s       = s;
             this.rounds  = rounds;
             this.counter = counter;
@@ -148,7 +149,7 @@ class StatefulTest {
             }
         }
 
-        @Override protected void task(int threadId) {
+        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
             try {
                 for (int i = 0; i < rounds; i++) {
                     s.lock();
@@ -178,7 +179,7 @@ class StatefulTest {
             for (int i = 0; i < tasks.length; i++)
                 tasks[i] = RaceTask.create(s, rounds, counter);
             for (RaceTask task : tasks)
-                task.awake();
+                task.awakeParallel();
             for (RaceTask task : tasks)
                 task.await();
             int st = s.lock();

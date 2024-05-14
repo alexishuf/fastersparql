@@ -332,12 +332,10 @@ public abstract sealed class GatheringEmitter<B extends Batch<B>>
     }
 
     private void lockCold(Thread me) {
-        EmitterService.beginSpin();
         for (int i = 0; OWNER.compareAndExchangeAcquire(this, NO_OWNER, me) != NO_OWNER; ++i) {
-            if ((i&15) == 0) Thread.yield();
-            else             Thread.onSpinWait();
+            if ((i&7) == 7) EmitterService.yieldWorker(me);
+            else            Thread.onSpinWait();
         }
-        EmitterService.endSpin();
     }
 
     /**
@@ -539,7 +537,7 @@ public abstract sealed class GatheringEmitter<B extends Batch<B>>
 
         @SuppressWarnings("unchecked") private void onBatchLoop(Orphan<B> orphan) {
             B f, b = orphan.takeOwnership(down);
-            boolean spinNotified = false;
+            Thread self = null;
             while (true) {
                 if (down.tryBeginDelivery()) {
                     try {
@@ -551,18 +549,17 @@ public abstract sealed class GatheringEmitter<B extends Batch<B>>
                     if (down.tryBeginDelivery())  // else: thread owning LOCK will deliver
                         down.endDelivery();
                     break;
-                } else if (!spinNotified) {
-                    spinNotified = true;
-                    EmitterService.beginSpin();
                 } else if ((f=(B)FILLING.getAndSetAcquire(down, null)) != null) {
                     f.requireOwner(down);
                     f.append(b.releaseOwnership(down));
                     f.requireOwner(down);
                     b = f; // continue, trying to deliver the combined batch
+                } else if (self == null) {
+                    self = Thread.currentThread();
+                } else {
+                    EmitterService.yieldWorker(self);
                 }
             }
-            if (spinNotified)
-                EmitterService.endSpin();
         }
 
         @SuppressWarnings("unchecked") @Override public void onBatchByCopy(B b) {

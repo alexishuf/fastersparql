@@ -241,8 +241,8 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         private final List<List<Term>> actualBindings = new ArrayList<>();
 
         public ResultsEmitter(Plan parsedQuery) {
-            super(TermBatchType.TERM, parsedQuery.publicVars(), EMITTER_SVC, RR_WORKER,
-                  CREATED, TASK_FLAGS);
+            super(TermBatchType.TERM, parsedQuery.publicVars(), EMITTER_SVC,
+                    CREATED, TASK_FLAGS);
             this.parsedQuery = parsedQuery;
             this.expected = qry2emitResults.getOrDefault(parsedQuery, null);
             if (ResultJournal.ENABLED)

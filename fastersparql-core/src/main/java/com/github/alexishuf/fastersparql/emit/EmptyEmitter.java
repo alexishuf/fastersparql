@@ -20,7 +20,7 @@ public abstract sealed class EmptyEmitter<B extends Batch<B>> extends TaskEmitte
     }
 
     protected EmptyEmitter(BatchType<B> batchType, Vars vars, @Nullable Throwable error) {
-        super(batchType, vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+        super(batchType, vars, EMITTER_SVC, CREATED, TASK_FLAGS);
         this.error = error == null ? UNSET_ERROR : error;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);

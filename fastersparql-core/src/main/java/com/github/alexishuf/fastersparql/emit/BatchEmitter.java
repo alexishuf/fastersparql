@@ -21,7 +21,7 @@ public abstract sealed class BatchEmitter<B extends Batch<B>> extends TaskEmitte
     }
 
     protected BatchEmitter(Vars vars, Orphan<B> batch) {
-        super(Batch.peekType(batch), vars, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+        super(Batch.peekType(batch), vars, EMITTER_SVC, CREATED, TASK_FLAGS);
         this.batch = batch.takeOwnership(this);
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);

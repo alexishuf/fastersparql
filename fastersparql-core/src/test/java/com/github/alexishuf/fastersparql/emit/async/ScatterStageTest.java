@@ -60,7 +60,7 @@ class ScatterStageTest {
 
         public P(Orphan<CompressedBatch> expected, boolean injectCancel,
                  @Nullable RuntimeException injectFail) {
-            super(COMPRESSED, XY, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(COMPRESSED, XY, EMITTER_SVC, CREATED, TASK_FLAGS);
             this.current = expected.takeOwnership(this);
             assert current.validate(Batch.Validation.CHEAP);
             this.totalRows = current.totalRows();

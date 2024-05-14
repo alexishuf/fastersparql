@@ -287,7 +287,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         public QueryEmitter(BatchType<B> batchType, SparqlQuery query) {
             super(batchType, query.publicVars(), EmitterService.EMITTER_SVC,
-                  RR_WORKER, CREATED, CB_FLAGS);
+                    CREATED, CB_FLAGS);
             this.originalQuery = query;
             this.boundQuery    = query;
             acquireRef();

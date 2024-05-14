@@ -879,7 +879,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
                          @Nullable EmitBindQuery<B> bindQuery) {
-            super(batchType, outVars, EMITTER_SVC, RR_WORKER, CREATED, CB_FLAGS);
+            super(batchType, outVars, EMITTER_SVC, CREATED, CB_FLAGS);
             this.h         = new WsHandler<>(new EmitWsParser(bindQuery), this, bindQuery);
             this.query     = query;
             this.bindQuery = bindQuery;

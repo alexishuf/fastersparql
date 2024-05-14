@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindReleasedException
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindStateException;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -258,27 +257,24 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      *         successor of the current state.
      */
     protected boolean moveStateRelease(int current, int nextState) {
-        boolean spinning = false, transitioned = false;
-        int n, a, e = current&UNLOCKED_MASK;
+        boolean transitioned = false;
+        int n = 0, a, e = current&UNLOCKED_MASK;
         nextState &= STATE_MASK;
+        Thread self = null;
         while (isSuccessor(e, nextState)) {
             n = (e&FLAGS_MASK)|nextState;
             if ((a=(int)S.compareAndExchangeRelease(this, e, n)) == e) {
                 transitioned = true;
                 break;
             } else if ((a&LOCKED_MASK) != 0) {
-                if (spinning) {
-                    backOff();
-                } else {
-                    spinning = true;
-                    EmitterService.beginSpin();
-                }
+                if (self == null)
+                    self = Thread.currentThread();
+                else
+                    EmitterService.yieldWorker(self);
             } else {
                 e = a;
             }
         }
-        if (spinning)
-            EmitterService.endSpin();
         if (ENABLED && transitioned)
             journal("trans", n, flags, "on", this);
         return transitioned;
@@ -440,18 +436,21 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
         return lockContended();
     }
 
-    private int lockContended() {
-        EmitterService.beginSpin();
-        int st;
-        while (((st=(int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK))&LOCKED_MASK) != 0)
-            backOff();
-        EmitterService.endSpin();
-        return st|LOCKED_MASK;
+
+    /**
+     * Tries to acquire the lock with absolute minimal effort
+     * @return {@code true} if the lock was acquired, requiring a future {@link #unlock()}.
+     */
+    protected boolean tryLock() {
+        return ((int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK)&LOCKED_MASK) == 0;
     }
 
-    private static void backOff() {
-        if (!Unparker.volunteer())
-            Thread.yield();
+    private int lockContended() {
+        Thread self = Thread.currentThread();
+        int st;
+        while (((st=(int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK))&LOCKED_MASK) != 0)
+            EmitterService.yieldWorker(self);
+        return st|LOCKED_MASK;
     }
 
     /**

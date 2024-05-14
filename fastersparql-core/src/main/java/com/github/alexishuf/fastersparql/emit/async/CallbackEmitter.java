@@ -104,9 +104,9 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
     private @Nullable B queue;
     private int avgRows;
 
-    public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner, int worker,
+    public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner,
                            int initState, Flags flags) {
-        super(batchType, vars, runner, worker, initState, flags);
+        super(batchType, vars, runner, initState, flags);
         assert flags.contains(CB_FLAGS) : "missing CB_FLAGS";
     }
 
@@ -222,7 +222,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             tgt = PENDING_FAILED;
         }
         if (moveStateRelease(st, tgt)) {
-            awake();
+            awakeParallel();
             return true;
         } else {
             journal("move to ", tgt, flags, "from", statePlain(), flags, "rejected for", this);
@@ -232,7 +232,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override protected final void resume() {
         setFlagsRelease(DO_RESUME);
-        awake();
+        awake(false);
     }
 
     @Override public boolean cancel() {
@@ -241,7 +241,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
         first = (st&GOT_CANCEL_REQ) == 0;
         st = unlock(0, GOT_CANCEL_REQ);
         if (first)
-            awake();
+            awake(true);
         return (st&IS_TERM) == 0;
     }
 
@@ -249,7 +249,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
         if (ack) {
             boolean done = moveStateRelease(statePlain(), CANCEL_REQUESTING);
             if (done)
-                awake();
+                awakeParallel();
             return done;
         } else {
             return cancel();
@@ -298,10 +298,10 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                     throw TerminatedException.INSTANCE;
             }
         } finally { unlock(); }
-        awake();
+        awakeParallel();
     }
 
-    @Override protected void task(int threadId) {
+    @Override protected void task(EmitterService.Worker worker, int threadId) {
         this.threadId = (short)threadId;
         int st = lock(), termState = 0;
         try {
@@ -329,7 +329,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                 st = lock();
             }
             if (queue != null)
-                awake();
+                awake(worker);
             if (requested() <= 0 && (st&(GOT_CANCEL_REQ)) != 0)
                 pauseProducer();
             if (queue == null) {

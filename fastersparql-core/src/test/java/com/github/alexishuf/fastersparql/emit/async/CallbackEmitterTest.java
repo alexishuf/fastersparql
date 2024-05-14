@@ -57,7 +57,7 @@ class CallbackEmitterTest {
             return new Concrete(expected, fail, selfCancel);
         }
         protected Cb(Orphan<CompressedBatch> expected, boolean fail, boolean selfCancel) {
-            super(COMPRESSED, X, EMITTER_SVC, RR_WORKER, CREATED, CB_FLAGS);
+            super(COMPRESSED, X, EMITTER_SVC, CREATED, CB_FLAGS);
             this.expected = expected.takeOwnership(this);
             this.fail     = fail;
             this.selfCancel = selfCancel;
@@ -195,7 +195,7 @@ class CallbackEmitterTest {
                             assertFalse(terminated.get());
                             if (stats != null) stats.onBatchPassThrough(orphan);
                             cb.request(1);
-                            actual.set(Batch.quickAppend(actual.get(), owner, orphan));
+                            actual.set(Batch.quickAppend(actual.detach(), owner, orphan));
                         } finally {
                             concurrentEvents.compareAndExchangeRelease(1, 0);
                         }

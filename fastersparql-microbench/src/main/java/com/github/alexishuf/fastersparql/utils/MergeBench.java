@@ -159,7 +159,7 @@ public class MergeBench {
         private int row;
 
         public SourceProducer(BatchType<B> type, @NonNull B source) {
-            super(type, X, EMITTER_SVC, RR_WORKER, CREATED, TASK_FLAGS);
+            super(type, X, EMITTER_SVC, CREATED, TASK_FLAGS);
             this.current = source;
         }
 
