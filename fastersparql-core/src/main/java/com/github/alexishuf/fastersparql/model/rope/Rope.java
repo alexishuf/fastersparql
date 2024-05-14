@@ -429,7 +429,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     /** Equivalent to {@code skipUntilLast(begin, end, c0, c0)}. */
-    public int skipUntilLast(int begin, int end, char c0) {
+    public int skipUntilLast(int begin, int end, byte c0) {
         return skipUntilLast(begin, end, c0, c0);
     }
 
@@ -437,14 +437,14 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * Similar to {@link Rope#skipUntil(int, int, char, char)} but finds the
      * <strong>LAST</strong> {@code i}.
      */
-    public abstract int skipUntilLast(int begin, int end, char c0, char c1);
+    public abstract int skipUntilLast(int begin, int end, byte c0, byte c1);
 
     /**
      * Similar to {@link Rope#skipUntil(int, int, byte[])} but finds the
      * <strong>LAST</strong> {@code i}.
      */
     public final int skipUntilLast(int begin, int end, byte[] sequence) {
-        char first = (char)(sequence[0]&0xff);
+        byte first = sequence[0];
         int notFound = end;
         for (int i; end-begin > sequence.length; end = i) {
             i = skipUntilLast(begin, end, first);
@@ -459,7 +459,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * <strong>LAST</strong> {@code i}.
      */
     public final int skipUntilLast(int begin, int end, Rope sequence) {
-        char first = (char)(sequence.get(0)&0xff);
+        byte first = sequence.get(0);
         int notFound = end;
         for (int i, len = sequence.len(); end-begin > len; end = i) {
             i = skipUntilLast(begin, end, first);

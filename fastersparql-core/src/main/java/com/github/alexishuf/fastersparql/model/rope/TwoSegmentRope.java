@@ -209,32 +209,32 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, byte c0) {
         checkRange(begin, end);
         int e = end-fstLen, i = Math.max(0, begin-fstLen);
         if (e > 0) {
-            i = (int)(SegmentRope.skipUntilLast(snd, sndOff+i, sndOff+e, c0)-sndOff);
+            i = (int)(SegmentRope.skipUntilLast(snd, sndU8, sndOff+i, sndOff+e, c0)-sndOff);
             if (i < e) return fstLen+i;
         }
         if (begin < fstLen) {
             e = Math.min(fstLen, end);
-            i = (int)(SegmentRope.skipUntilLast(fst, fstOff+begin, fstOff+e, c0)-fstOff);
+            i = (int)(SegmentRope.skipUntilLast(fst, fstU8, fstOff+begin, fstOff+e, c0)-fstOff);
             if (i < e) return i;
         }
         return end;
     }
 
 
-    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, byte c0, byte c1) {
         checkRange(begin, end);
         int e = end-fstLen, i = Math.max(0, begin-fstLen);
         if (e > 0) {
-            i = (int)(SegmentRope.skipUntilLast(snd, sndOff+i, sndOff+e, c0, c1)-sndOff);
+            i = (int)(SegmentRope.skipUntilLast(snd, sndU8, sndOff+i, sndOff+e, c0, c1)-sndOff);
             if (i < e) return fstLen+i;
         }
         if (begin < fstLen) {
             e = Math.min(fstLen, end);
-            i = (int)(SegmentRope.skipUntilLast(fst, fstOff+begin, fstOff+e, c0, c1)-fstOff);
+            i = (int)(SegmentRope.skipUntilLast(fst, fstU8, fstOff+begin, fstOff+e, c0, c1)-fstOff);
             if (i < e) return i;
         }
         return end;

@@ -208,7 +208,7 @@ class RopeTest {
                                       rope.toArray(i, i+1));
                     assertEquals(0, rope.toArray(i, i).length);
                     byte[] array = new byte[2];
-                    array[0] = (byte) 0xff;
+                    array[0] = (byte)0xff;
                     rope.copy(i, i+1, array, 1);
                     assertArrayEquals(new byte[] {(byte)0xff, (byte)(0xff&sb.charAt(i))}, array);
                 }
@@ -291,7 +291,7 @@ class RopeTest {
                 assertEquals(string.charAt(i), rope.sub(i, i+1).get(0));
 
                 assertEquals(string.substring(i, i+1), rope.sub(i, i+1).toString());
-                byte bVal = (byte) (0xff & string.charAt(i));
+                byte bVal = (byte)(0xff & string.charAt(i));
                 assertTrue(rope.has(i, new byte[]{bVal}));
                 assertTrue(rope.hasAnyCase(i, new byte[]{bVal}));
                 assertTrue(rope.hasAnyCase(i, new byte[]{(byte)toUpperCase(string.charAt(i))}));
@@ -337,10 +337,10 @@ class RopeTest {
                 for (Rope r : iriWrap(fac, bfr, "<http://dbpedia.org/resource/Bob>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off+28;
-                    assertEquals(expected, r.skipUntilLast(off, end, '/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '/', 'x'));
-                    assertEquals(expected, r.skipUntilLast(off, end, 'x', '/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '/', '#'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'x'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'x', (byte)'/'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
                     assertEquals(expected, r.skipUntilLast(off, end, "/".getBytes(UTF_8)));
                     assertEquals(expected, r.skipUntilLast(off, end, "/Bob".getBytes(UTF_8)));
                     assertEquals(end, r.skipUntilLast(off, end, "/Alice".getBytes(UTF_8)));
@@ -348,10 +348,10 @@ class RopeTest {
                 for (Rope r : iriWrap(fac, bfr, "<http://dbpedia"+FILLER+".org/resource/Bob>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off + FL + 28;
-                    assertEquals(expected, r.skipUntilLast(off, end, '/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '/', 'a'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '/', '#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '#', '/'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'a'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'/'));
                     assertEquals(expected, r.skipUntilLast(off, end, "/".getBytes(UTF_8)));
                     assertEquals(expected, r.skipUntilLast(off, end, "/Bob".getBytes(UTF_8)));
                     assertEquals(end, r.skipUntilLast(off, end, "/Alice".getBytes(UTF_8)));
@@ -359,10 +359,10 @@ class RopeTest {
                 for (Rope r : iriWrap(fac, bfr, "<http://example.org/ns#Alice>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off + 22;
-                    assertEquals(expected, r.skipUntilLast(off, end, '#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '#', 'o'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '/', '#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '#', '/'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'o'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'/'));
                     assertEquals(expected, r.skipUntilLast(off, end, "#".getBytes(UTF_8)));
                     assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
                     assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
@@ -375,10 +375,10 @@ class RopeTest {
                 for (Rope r : iriWrap(fac, bfr, "<http://example.org/"+FILLER+"ns#Alice>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off + FL + 22;
-                    assertEquals(expected, r.skipUntilLast(off, end, '#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '#', 'o'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '/', '#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, '#', '/'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'o'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'/'));
                     assertEquals(expected, r.skipUntilLast(off, end, "#".getBytes(UTF_8)));
                     assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
                     assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
@@ -390,7 +390,7 @@ class RopeTest {
             }
         }
         for (Rope r : fac.create("<http://www.example.org/ns#abcdefghijklmnopqrstuvxwyzABCDE000>")) {
-            assertEquals(26, r.skipUntilLast(0, r.len(), '/', '#'));
+            assertEquals(26, r.skipUntilLast(0, r.len(), (byte)'/', (byte)'#'));
         }
     }
 

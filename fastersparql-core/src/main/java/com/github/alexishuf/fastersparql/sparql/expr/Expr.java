@@ -1218,7 +1218,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     if (ignoreCase)
                         local = (SegmentRope)local.toAsciiUpperCase();
                     List<byte[]> branches = new ArrayList<>();
-                    int end = local.skipUntilLast(1, local.len, '"');
+                    int end = local.skipUntilLast(1, local.len, (byte)'"');
                     for (int i = 1, j; i < end; i = j + 1) {
                         j = local.skipUntilUnescaped(i, end, '|');
                         branches.add(local.toArray(i, j));

@@ -319,7 +319,7 @@ public class SharedRopes {
 
     /** Statically-bound version of {@link #internDatatypeOf(PlainRope, int, int)} to help JIT */
     public FinalSegmentRope internDatatypeOf(SegmentRope r, int begin, int end) {
-        int endLex = r.skipUntilLast(begin, end, '"');
+        int endLex = r.skipUntilLast(begin, end, (byte)'"');
         if (end-endLex < MIN_INTERNED_LEN) return FinalSegmentRope.EMPTY;
         return intern(r, endLex, end, SKIP_INTERNED_DTYPE_BEGIN);
     }
@@ -332,14 +332,14 @@ public class SharedRopes {
      *         {@link SegmentRope} with the datatype suffix segments copied to a safe location.
      * */
     public FinalSegmentRope internDatatypeOf(PlainRope r, int begin, int end) {
-        int endLex = r.skipUntilLast(begin, end, '"');
+        int endLex = r.skipUntilLast(begin, end, (byte)'"');
         if (end-endLex < MIN_INTERNED_LEN) return FinalSegmentRope.EMPTY;
         return intern(r, endLex, end, SKIP_INTERNED_DTYPE_BEGIN);
     }
 
     /** Statically bound version of {@link #internPrefixOf(PlainRope, int, int)} to help the JIT. */
     public FinalSegmentRope internPrefixOf(SegmentRope r, int begin, int end) {
-        int i = 1+r.skipUntilLast(begin, end, '/', '#');
+        int i = 1+r.skipUntilLast(begin, end, (byte)'/', (byte)'#');
         if (i > end || i-begin < MIN_INTERNED_LEN)
             return FinalSegmentRope.EMPTY;
         return intern(r, begin, i, SKIP_INTERNED_IRI_BEGIN);
@@ -356,7 +356,7 @@ public class SharedRopes {
      *         of {@code r}.
      */
     public FinalSegmentRope internPrefixOf(PlainRope r, int begin, int end) {
-        int i = 1+r.skipUntilLast(begin, end, '/', '#');
+        int i = 1+r.skipUntilLast(begin, end, (byte)'/', (byte)'#');
         if (i > end || i-begin < MIN_INTERNED_LEN)
             return FinalSegmentRope.EMPTY;
         return intern(r, begin, i, SKIP_INTERNED_IRI_BEGIN);

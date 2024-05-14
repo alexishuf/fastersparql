@@ -127,8 +127,8 @@ class SharedRopesTest {
 
         TwoSegmentRope tsr = new TwoSegmentRope();
         List<Long> mids = List.of(builtin.offset + builtin.len / 2,
-                builtin.offset + builtin.skipUntilLast(0, builtin.len, '/', '#'),
-                builtin.offset + builtin.skipUntilLast(0, builtin.len, '"'));
+                builtin.offset + builtin.skipUntilLast(0, builtin.len, (byte)'/', (byte)'#'),
+                builtin.offset + builtin.skipUntilLast(0, builtin.len, (byte)'"'));
         for (long mid : mids) {
             tsr.wrapFirst(builtin.segment, builtin.utf8, builtin.offset, (int)(mid-builtin.offset));
             tsr.wrapSecond(builtin.segment, builtin.utf8, mid, (int)(builtin.offset+builtin.len-mid));
@@ -157,7 +157,7 @@ class SharedRopesTest {
             int half = r.len / 2;
             tsr0.wrapFirst(r.segment, r.utf8, r.offset, half);
             tsr0.wrapSecond(r.segment, r.utf8, r.offset + half, r.len - half);
-            half = r.skipUntilLast(0, r.len, '/', '#');
+            half = r.skipUntilLast(0, r.len, (byte)'/', (byte)'#');
             tsr1.wrapFirst(r.segment, r.utf8, r.offset, half);
             tsr1.wrapSecond(r.segment, r.utf8, r.offset + half, r.len - half);
 
@@ -190,7 +190,7 @@ class SharedRopesTest {
             TwoSegmentRope tsr0 = new TwoSegmentRope(), tsr1 = new TwoSegmentRope();
             tsr0.wrapFirst(r.segment, r.utf8, r.offset, r.len / 2);
             tsr0.wrapSecond(r.segment, r.utf8, r.offset + r.len / 2, r.len);
-            int mid = r.skipUntilLast(0, r.len, '"');
+            int mid = r.skipUntilLast(0, r.len, (byte)'"');
             tsr1.wrapFirst(r.segment, r.utf8, r.offset, mid);
             tsr1.wrapSecond(r.segment, r.utf8, r.offset + mid, r.len - mid);
 

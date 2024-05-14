@@ -113,7 +113,7 @@ public class FileScanner implements AutoCloseable {
                     if (t.len > 0) { // if read something or has leftover
                         int trimmedLen = t.len, partialLen = 0;
                         if (readBytes > 0) { // if read additional bytes
-                            trimmedLen = t.skipUntilLast(0, t.len, '\n');
+                            trimmedLen = t.skipUntilLast(0, t.len, (byte)'\n');
                             if (trimmedLen < t.len)
                                 ++trimmedLen; // include trailing newline in this chunk
                             partialLen = t.len-trimmedLen;

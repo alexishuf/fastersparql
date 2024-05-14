@@ -547,7 +547,7 @@ public class GrepNetty implements Callable<Void> {
                     int partialLen = 0, len = c.len, read = ch.read(c.recvBuffer());
                     if (read > 0) { // if read additional bytes, trim partial line at end
                         c.len = len += read;
-                        int eol = c.skipUntilLast(0, len, '\n');
+                        int eol = c.skipUntilLast(0, len, (byte)'\n');
                         if (eol < len) { // has newline
                             ++eol; // newline is part of the line
                             partialLen = len - eol;

@@ -871,7 +871,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     }
 
 
-    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0) {
+    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, byte c0) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
@@ -884,7 +884,8 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return end;
     }
 
-    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, char c0, char c1) {
+    @SuppressWarnings("unused")
+    @Override public int skipUntilLast(int begin, int end, byte c0, byte c1) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;

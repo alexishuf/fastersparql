@@ -174,14 +174,14 @@ public class Splitter extends AbstractOwned<Splitter> {
         suffixBegin = 0;
         return sharedSide = switch (len == 0 ? 0 : str.get(0)) {
             case '"' -> {
-                int i = str.skipUntilLast(0, len, '"');
+                int i = str.skipUntilLast(0, len, (byte)'"');
                 if (i >= len-1)
                     yield SharedSide.NONE;
                 suffixBegin = i;
                 yield SharedSide.SUFFIX;
             }
             case '<' -> {
-                int i = str.skipUntilLast(0, len, '/', '#');
+                int i = str.skipUntilLast(0, len, (byte)'/', (byte)'#');
                 if (i >= len)
                     yield SharedSide.NONE;
                 switch (mode) {
@@ -191,7 +191,7 @@ public class Splitter extends AbstractOwned<Splitter> {
                     case PENULTIMATE -> {
                         //                  ..../22601/name>
                         //                       ^    i      // ^ marks the updated value of i
-                        int j = str.skipUntilLast(0, i, '/', '#');
+                        int j = str.skipUntilLast(0, i, (byte)'/', (byte)'#');
                         i = (j < 8 ? i : j)+1; // do not create http:// and https:// shared strings
                     }
                     case PROLONG -> {

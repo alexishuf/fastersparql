@@ -213,7 +213,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         OpaqueSparqlQuery build(boolean dropModifiers) {
             int end = sparql.len();
             if (dropModifiers)
-                end = Math.min(end, sparql.skipUntilLast(consumed, end, '}')+1);
+                end = Math.min(end, sparql.skipUntilLast(consumed, end, (byte)'}')+1);
             // copy last stretch of sparql that has no vars in it
             var nQuery = b.append(sparql, consumed, end).take();
             b.close();
