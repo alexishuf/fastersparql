@@ -121,18 +121,20 @@ public class ByteBufSink implements ByteSink<ByteBufSink, ByteBuf> {
             int fstLen;
             if (rope instanceof TwoSegmentRope t) {
                 fst = t.fst; fstU8 = t.fstU8; fstOff = t.fstOff; fstLen = t.fstLen;
-                snd = t.snd; sndU8 = t.sndU8;
+                snd = t.snd; sndU8 = t.sndU8; sndOff = t.sndOff;
             } else if (rope instanceof Term t) {
                 SegmentRope fr = t.first(), sr = t.second();
                 fst = fr.segment; fstU8 = fr.utf8; fstOff = fr.offset; fstLen = fr.len;
-                snd = sr.segment; sndU8 = sr.utf8;
+                snd = sr.segment; sndU8 = sr.utf8; sndOff = sr.offset;
             } else {
                 throw new UnsupportedOperationException("Unsupported Rope type: "+rope.getClass());
             }
-            fstOff += begin;
-            sndOff = Math.max(0, begin-fstLen);
-            fstLen = Math.max(0, Math.min(fstLen, end)-begin);
-            append(fst, fstU8, fstOff, fstLen);
+            if (begin < fstLen) {
+                append(fst, fstU8, fstOff+begin, fstLen-=begin);
+            } else {
+                sndOff += begin-fstLen;
+                fstLen = 0;
+            }
             append(snd, sndU8, sndOff, len-fstLen);
         }
         return this;
