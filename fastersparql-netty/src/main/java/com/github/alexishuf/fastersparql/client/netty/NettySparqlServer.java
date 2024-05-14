@@ -821,8 +821,7 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override protected void releaseResources() {
             super.releaseResources();
-            if (serializer != null)
-                Owned.safeRecycle(serializer, this);
+            serializer = Owned.safeRecycle(serializer, this);
         }
 
         @Override protected void serialize(CompressedBatch batch) {
