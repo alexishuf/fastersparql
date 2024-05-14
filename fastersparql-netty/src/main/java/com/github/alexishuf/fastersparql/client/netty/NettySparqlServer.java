@@ -819,6 +819,12 @@ public class NettySparqlServer implements AutoCloseable{
 
         private @MonotonicNonNull ResultsSerializer<?> serializer;
 
+        @Override protected void releaseResources() {
+            super.releaseResources();
+            if (serializer != null)
+                Owned.safeRecycle(serializer, this);
+        }
+
         @Override protected void serialize(CompressedBatch batch) {
             serializer.serialize(batch.releaseOwnership(this), bbSink.touch(), REC_MAX_FRAME_LEN,
                                  BATCH_RECYCLER, this);
