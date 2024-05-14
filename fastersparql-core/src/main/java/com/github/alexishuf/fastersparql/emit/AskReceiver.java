@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,7 @@ public abstract class AskReceiver<B extends Batch<B>>
     @Override public @Nullable AskReceiver<B> recycle(Object currentOwner) {
         internalMarkGarbage(currentOwner);
         up.cancel();
+        Owned.safeRecycle(up, this);
         return null;
     }
 
