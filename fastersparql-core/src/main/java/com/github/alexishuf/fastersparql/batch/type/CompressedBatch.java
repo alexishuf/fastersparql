@@ -564,7 +564,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         var sh = shared[row*cols+col];
         if (sh != null && sh.len > 1)  {
             if (sh.get(1) == '@') return Term.RDF_LANGSTRING;
-            return Term.splitAndWrap(sh.sub(3/*"^^*/, sh.len));
+            return Term.valueOf(sh, 3/*"^^*/, sh.len);
         }
         int off = slices[slBase+SL_OFF], end = off+len;
         if (locals[off] != '"')

@@ -330,6 +330,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     }
 
     private static FinalTerm internXsd(SegmentRope local, int begin, int end) {
+        int len = end-begin;
         byte c1 = begin+1 < end ? local.get(begin+1) : (byte)'\0';
         FinalTerm candidate = switch (local.get(begin)) {
             case '>' -> XSD;
@@ -341,7 +342,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 default -> null;
             };
             case 'd' -> switch (c1) {
-                case 'a' -> local.len > 5 /*date>*/ ? XSD_DATETIME : XSD_DATE;
+                case 'a' -> len > 5 /*date>*/ ? XSD_DATETIME : XSD_DATE;
                 case 'e' -> XSD_DECIMAL;
                 case 'o' -> XSD_DOUBLE;
                 case 'u' -> XSD_DURATION;
@@ -350,12 +351,12 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
             case 'f' -> XSD_FLOAT;
             case 'g' -> switch (c1) {
                 case 'd' -> XSD_GDAY;
-                case 'm' -> local.len > 7 /*gMonth>*/ ? XSD_GMONTHDAY : XSD_GMONTH;
-                case 'y' -> local.len > 6 /*gYear>*/ ? XSD_GYEARMONTH : XSD_GYEAR;
+                case 'm' -> len > 7 /*gMonth>*/ ? XSD_GMONTHDAY : XSD_GMONTH;
+                case 'y' -> len > 6 /*gYear>*/ ? XSD_GYEARMONTH : XSD_GYEAR;
                 default -> null;
             };
             case 'h' -> XSD_HEXBINARY;
-            case 'i' -> local.len > 4 /*int>*/ ? XSD_INTEGER : XSD_INT;
+            case 'i' -> len > 4 /*int>*/ ? XSD_INTEGER : XSD_INT;
             case 'l' -> switch (c1) {
                 case 'a' -> XSD_LANGUAGE;
                 case 'o' -> XSD_LONG;
@@ -381,7 +382,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 case 'o' -> XSD_TOKEN;
                 default -> null;
             };
-            case 'u' -> switch (local.len > 8 ? local.get(8) : 0) {
+            case 'u' -> switch (len > 8 ? local.get(8) : 0) {
                 case 'B' -> XSD_UNSIGNEDBYTE;
                 case 'I' -> XSD_UNSIGNEDINT;
                 case 'L' -> XSD_UNSIGNEDLONG;
