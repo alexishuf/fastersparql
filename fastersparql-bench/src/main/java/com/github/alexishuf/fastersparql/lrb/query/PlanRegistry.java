@@ -5,10 +5,11 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.fed.Federation;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Empty;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
-import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.google.gson.*;
 
 import java.io.*;
@@ -113,7 +114,7 @@ public final class PlanRegistry {
             }
         }
 
-        private Plan  left() { return operands.get(0).createPlan(); }
+        private Plan  left() { return operands.getFirst().createPlan(); }
         private Plan right() { return operands.get(1).createPlan(); }
 
         private Plan[] operandsArr() {
@@ -167,7 +168,7 @@ public final class PlanRegistry {
                    Object queryObj = (params.get("query"));
                    if (queryObj == null)
                        throw new IllegalArgumentException("No query param");
-                   var qry = new OpaqueSparqlQuery(queryObj.toString());
+                   var qry = SparqlParser.parse(FinalSegmentRope.asFinal(queryObj));
                    yield new Query(qry, client);
                }
                default -> throw new UnsupportedOperationException("Unknown operator "+operator);
