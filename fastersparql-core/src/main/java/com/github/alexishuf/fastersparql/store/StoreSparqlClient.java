@@ -796,6 +796,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //        }
 
         private final TwoSegmentRope syncV;
+        private final LocalityCompositeDict.Lookup syncL;
         private BatchBinding requestedBinding;
         private Batch<?> requestedBindingBatch;
         long[] unsrcIds;
@@ -808,13 +809,17 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private byte sInCol, pInCol, oInCol, rowSkelCols;
         final long sId, pId, oId;
         private BatchBinding asyncBinding;
-        private final LocalityCompositeDict.Lookup syncL, asyncL;
-        private final TwoSegmentRope asyncV;
+        private LocalityCompositeDict.Lookup asyncL;
+        private TwoSegmentRope asyncV;
         private final TPEmitter tpEmitter;
+        private final LocalityCompositeDict dict;
 
         private PrefetchTask(short dictId, LocalityCompositeDict dict, TPEmitter tpEmitter) {
             super(EMITTER_SVC, CREATED, TASK_FLAGS);
+            this.dict         = dict;
             this.dictId       = dictId;
+            this.asyncBottom  = STOP_SENTINEL;
+            this.asyncDone    = STOP_SENTINEL;
             this.syncL        = dict.lookup().takeOwnership(this);
             this.syncV        = new TwoSegmentRope();
             this.unsrcIds     = longsAtLeast(TYPE.preferredTermsPerBatch()>>1);
@@ -822,8 +827,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.sId          = syncL.find(tpEmitter.tp.s);
             this.pId          = syncL.find(tpEmitter.tp.p);
             this.oId          = syncL.find(tpEmitter.tp.o);
-            this.asyncL       = dict.lookup().takeOwnership(this);
-            this.asyncV       = new TwoSegmentRope();
         }
 
         private static final class Concrete extends PrefetchTask implements Orphan<PrefetchTask> {
@@ -834,15 +837,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override protected void doRelease() {
-            requestedBinding = null;
-            requestedBindingBatch = null;
-            asyncBottom = STOP_SENTINEL;
-            asyncBinding = null;
             syncL.recycle(this);
-            asyncL.recycle(this);
-            unsrcIds      = recycleLongsAndGetEmpty(unsrcIds);
-            rowSkels      = recycleLongsAndGetEmpty(rowSkels);
-            skelCol2InCol = recycleShortsAndGetEmpty(skelCol2InCol);
+            Owned.safeRecycle(asyncL, this);
+            requestedBinding      = null;
+            requestedBindingBatch = null;
+            asyncBottom           = STOP_SENTINEL;
+            asyncBinding          = null;
+            unsrcIds              = recycleLongsAndGetEmpty(unsrcIds);
+            rowSkels              = recycleLongsAndGetEmpty(rowSkels);
+            skelCol2InCol         = recycleShortsAndGetEmpty(skelCol2InCol);
             super.doRelease();
         }
 
@@ -968,13 +971,24 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
         }
 
+        private LocalityCompositeDict.Lookup doAsyncInit() {
+            var lookup  = dict.lookup().takeOwnership(this);
+            this.asyncL = lookup;
+            this.asyncV = new TwoSegmentRope();
+            return lookup;
+        }
+
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
-            final var b = this.asyncBinding; // compiler should copy reference to stack
+            var asyncL = this.asyncL;
+            if (asyncL == null)
+                asyncL = doAsyncInit();
+            short r, base;
+            if (asyncBottom == STOP_SENTINEL || (r=(short)(asyncDone-1)) < 0)
+                return;
+            var asyncV = this.asyncV;
+            final var b = requireNonNull(this.asyncBinding); // compiler should copy reference to stack
             long[] rowSkels = this.rowSkels;
             long[] unsrcIds = this.unsrcIds;
-            short r = (short)(asyncDone-1), base;
-            if (b == null || r < 0 || asyncBottom == STOP_SENTINEL)
-                return;
             if (worker != null)
                 worker.expelRelaxed(tpEmitter);
             byte  sInCol = this. sInCol,  pInCol = this. pInCol,  oInCol = this. oInCol;
@@ -1286,12 +1300,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
     }
 
-    public static boolean ALT = true;
-
     private <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     converterFromStore(BatchType<B> bt, Orphan<? extends Emitter<StoreBatch, ?>> upstream) {
         var conv =  new FromStoreConverter<>(bt, upstream);
-        if (ALT && hugeDict && conv.cols() > 0)
+        if (hugeDict && conv.cols() > 0)
             return AsyncStage.create(conv);
         return conv;
     }
