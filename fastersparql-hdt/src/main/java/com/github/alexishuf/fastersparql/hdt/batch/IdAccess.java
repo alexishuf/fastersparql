@@ -24,7 +24,6 @@ import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
 public class IdAccess {
     private static final Logger log = LoggerFactory.getLogger(IdAccess.class);
-    private static final int B_SP_LEN = ByteVector.SPECIES_PREFERRED.length();
     private static final int CACHE_SIZE = 256;
     private static final int CACHE_MASK = CACHE_SIZE-1;
     private static final VarHandle CACHE_ID  = MethodHandles.arrayElementVarHandle(long[].class);
@@ -280,31 +279,32 @@ public class IdAccess {
         int len = str.length();
         SegmentRope rope = switch (str.charAt(0)) {
             case '"' -> {
-                var esc = PooledMutableRope.getWithCapacity((len + B_SP_LEN) & -B_SP_LEN);
-                esc.append('"');
-                if (u8 == null) {
-                    coldEscapeString(esc, str);
-                } else {
-                    int endLex = len -1;
-                    while (endLex > 0 && u8[endLex] != '"') --endLex;
-                    for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
-                        byte c = 0;
-                        while (i < endLex && ((c=u8[i]) < 0 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
-                            ++i;
-                        esc.append(u8, consumed, i);
-                        if (i >= endLex) break;
-                        esc.append('\\');
-                        switch (c) {
-                            case '\\', '"' -> esc.append(c);
-                            case '\t'      -> esc.append('t');
-                            case '\r'      -> esc.append('r');
-                            case '\n'      -> esc.append('n');
-                            default        -> esc.append(UNICODE_WS, c*5, 5);
+                try (var esc = PooledMutableRope.getWithCapacity(len)) {
+                    esc.append('"');
+                    if (u8 == null) {
+                        coldEscapeString(esc, str);
+                    } else {
+                        int endLex = len - 1;
+                        while (endLex > 0 && u8[endLex] != '"') --endLex;
+                        for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
+                            byte c = 0;
+                            while (i < endLex && ((c = u8[i]) < 0 || (LIT_INVALID[c >> 5] & (1 << c)) == 0))
+                                ++i;
+                            esc.append(u8, consumed, i);
+                            if (i >= endLex) break;
+                            esc.append('\\');
+                            switch (c) {
+                                case '\\', '"' -> esc.append(c);
+                                case '\t' -> esc.append('t');
+                                case '\r' -> esc.append('r');
+                                case '\n' -> esc.append('n');
+                                default -> esc.append(UNICODE_WS, c * 5, 5);
+                            }
                         }
+                        esc.append(u8, endLex, len);
                     }
-                    esc.append(u8, endLex, len);
+                    yield FinalSegmentRope.asFinal(esc);
                 }
-                yield FinalSegmentRope.asFinal(esc);
             }
             case '_' -> u8 == null ? FinalSegmentRope.asFinal(str.toString())
                                    : FinalSegmentRope.asFinal(u8, 0, len);
