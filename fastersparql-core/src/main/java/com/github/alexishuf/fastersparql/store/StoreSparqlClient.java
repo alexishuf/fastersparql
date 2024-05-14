@@ -2386,6 +2386,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     fb = Batch.safeRecycle(fb, this);
                 }
                 Owned.safeRecycle(rightFilter, this);
+                Owned.safeRecycle(merger, this);
             } finally {
                 try {
                     super.cleanup(cause);
