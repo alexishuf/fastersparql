@@ -82,7 +82,7 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStream
                 write(arr, 0, arr.length);
             }
         } finally {
-            b.releaseOwnership(this);
+            b.recycle(this);
         }
     }
 
