@@ -309,7 +309,7 @@ public class IdAccess {
             case '_' -> u8 == null ? FinalSegmentRope.asFinal(str.toString())
                                    : FinalSegmentRope.asFinal(u8, 0, len);
             default -> {
-                RopeFactory fac = RopeFactory.make(len + 2).add('<');
+                RopeFactory fac = RopeFactory.make(RopeFactory.requiredBytes(str) + 2).add('<');
                 if (u8 == null) fac.add(str);
                 else            fac.add(u8, 0, len);
                 yield fac.add('>').take();
