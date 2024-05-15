@@ -169,7 +169,6 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
                     int dPos = tail.rows*cols;
                     nr = (short)( (tail.termsCapacity-dPos)/cols );
                     if (nr <= 0) {
-                        tail.tail = null;
                         nr = (short)( (tail = createTail()).termsCapacity/cols );
                         dPos = 0;
                     }

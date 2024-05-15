@@ -6,7 +6,6 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
-import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -308,7 +307,6 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
         int dstPos = tail.rows*cols, nTerms = rows*cols;
         if (dstPos+nTerms > tail.termsCapacity())
             return false;
-        ThreadJournal.journal("@@@ term.copyIfFast, before=", this, "after=", nonEmpty);
         arraycopy(nonEmpty.arr, 0, tail.arr, dstPos, nTerms);
         tail.rows += rows;
         return true;
@@ -387,7 +385,6 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
 
     @Override public void putTerm(int col, Term t) {
         var tail = this.tail;
-        if (tail == null || tail.offerRowBase < 0) throw new IllegalStateException();
         if (col < 0 || col >= tail.cols) throw new IndexOutOfBoundsException();
         tail.arr[tail.offerRowBase+col] = FinalTerm.asFinal(t);
     }

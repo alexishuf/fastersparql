@@ -1009,9 +1009,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void commitPut() {
         var tail = this.tail;
-        if (tail == null) throw new UnsupportedOperationException("intermediary batch");
         if (tail.offerNextLocals < 0) throw new IllegalStateException();
-
         tail.commitPut0();
         assert tail.validate() : "corrupted";
     }
@@ -1329,7 +1327,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 if ((src = sources[c]) > 0)
                     dst.putTerm(c, left, leftRow, src-1);
             }
-            dst.commitPut0();
+            dst.commitPut();
             return dst.releaseOwnership(this);
         }
 
