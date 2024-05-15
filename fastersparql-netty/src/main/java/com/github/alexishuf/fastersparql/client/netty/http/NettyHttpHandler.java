@@ -108,7 +108,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private static final int ST_NON_EMPTY       = 0x040;
     private static final int ST_GOT_LAST_CHUNK  = 0x080;
     private static final int ST_CANCELLED       = 0x100;
-    private static final int ST_UNHEALTHY       = 0x200;
+    private static final int ST_EARLY_CLOSE     = 0x200;
+    private static final int ST_UNHEALTHY       = 0x400;
 
     private static final LongRenderer ST = st -> {
         if (st == 0) return "";
@@ -122,6 +123,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         if ((st&ST_NON_EMPTY)       != 0) sb.append("NON_EMPTY,");
         if ((st&ST_GOT_LAST_CHUNK)  != 0) sb.append("GOT_LAST_CHUNK,");
         if ((st&ST_CANCELLED)       != 0) sb.append("CANCELLED,");
+        if ((st&ST_EARLY_CLOSE)     != 0) sb.append("EARLY_CLOSE,");
         if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
         sb.setLength(sb.length()-1);
         return sb.append(']').toString();
@@ -292,6 +294,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             reason = ": already has a pending request";
         else if ((st&(ST_REQ_SENT|ST_TERMINATED)) == ST_REQ_SENT)
             reason = ": already has an active request";
+        else if ((st&ST_EARLY_CLOSE) != 0)
+            reason = ": connection closed before request could be sent";
         else if ((st&ST_UNHEALTHY) != 0)
             reason = ": channel was deemed unhealthy";
         else if ((cookie&RECYCLED_COOKIE) != 0)
@@ -493,7 +497,10 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
                 onCancelled((st&ST_NON_EMPTY) != 0);
             } else {
                 st |= ST_UNHEALTHY;
-                onIncompleteSuccessResponse((st&ST_NON_EMPTY) == 0);
+                if ((st&ST_REQ_SENT) == 0)
+                    st |= ST_EARLY_CLOSE;
+                else
+                    onIncompleteSuccessResponse((st&ST_NON_EMPTY) == 0);
             }
         } catch (Throwable t) {
             st |= ST_UNHEALTHY;
