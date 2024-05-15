@@ -464,7 +464,7 @@ public abstract class SegmentRope extends PlainRope {
             fstOff += begin;
             sndOff += Math.max(0, begin-fstLen);
             fstLen = Math.min(fstLen, end)-begin;
-            return compare1_2(segment, pos, rLen, fst, fstOff, fstLen,
+            return compare1_2(segment, offset+pos, rLen, fst, fstOff, fstLen,
                     snd, sndOff, rLen-fstLen) == 0;
         }
     }
