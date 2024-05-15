@@ -125,7 +125,10 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 ready   = Batch.safeRecycle(ready,   this);
                 filling = Batch.safeRecycle(filling, this);
             } else if (filling != null) {
-                ready = Batch.quickAppend(ready, this, filling.releaseOwnership(this));
+                if (filling.rows == 0)
+                    Batch.safeRecycle(filling, this);
+                else
+                    ready = Batch.quickAppend(ready, this, filling.releaseOwnership(this));
                 filling = null;
             }
             super.cleanup(cause);
