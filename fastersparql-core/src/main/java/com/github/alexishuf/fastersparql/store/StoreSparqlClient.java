@@ -1067,7 +1067,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void doRelease() {
             try {
-                pref.recycle(this);
+                Owned.safeRecycle(pref, this);
                 releaseRef();
             } finally {
                 super.doRelease();

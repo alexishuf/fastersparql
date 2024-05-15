@@ -296,12 +296,11 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override public QueryEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
 
         @Override protected void doRelease() {
-            var boundRequest = this.boundRequest;
             if (boundRequest != null) {
                 boundRequest.release();
-                this.boundRequest = null;
+                boundRequest = null;
             }
-            lb = Batch.safeRecycle(lb, this);
+            lb     = Batch.safeRecycle(lb,     this);
             merger = Owned.safeRecycle(merger, this);
             releaseRef();
         }

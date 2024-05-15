@@ -88,7 +88,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class NettySparqlServer implements AutoCloseable{
     private static final Logger log = LoggerFactory.getLogger(NettySparqlServer.class);
-    private static final EventLoopGroupHolder ACCEPT_ELG
+    public static final EventLoopGroupHolder ACCEPT_ELG
             = new EventLoopGroupHolder("NettySparqlServer.ACCEPT_ELG", null,
                                        sharedEventLoopGroupKeepAliveSeconds(), SECONDS, 1);
     private static final int HANDLER_POOL_SIZE = FSNettyProperties.serverHandlerPool();
@@ -322,8 +322,13 @@ public class NettySparqlServer implements AutoCloseable{
                 if (hasQuery) {
                     journal("doClose, skip ctx.close(), other handler has upstream", this);
                 } else {
-                    journal("doClose, ctx.close9)", this);
-                    ctx.close();
+                    journal("doClose, ctx.close()", this);
+                    try {
+                        ctx.close();
+                    } catch (Throwable t) {
+                        journal("ignoring ", t, "during doClose of", this);
+                        journal("st=", st, ST, "handler=", this);
+                    }
                 }
             } else {
                 notifyClosed();

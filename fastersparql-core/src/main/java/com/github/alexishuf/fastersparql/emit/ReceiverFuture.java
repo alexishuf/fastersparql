@@ -60,9 +60,9 @@ public abstract class ReceiverFuture<T, B extends Batch<B>, R extends ReceiverFu
                 history.recycled(this);
             if (DETECT_LEAKS && leakState != null)
                 leakState.update(GARBAGE);
-            assert upstream != null;
-            Owned.recycle(upstream, this);
         }
+        assert upstream != null;
+        Owned.recycle(upstream, this);
         return null;
     }
 

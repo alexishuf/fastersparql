@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
@@ -309,7 +310,8 @@ public class QueryBench {
             //watchdog.join(Duration.ofSeconds(1));
         //} catch (InterruptedException ignored) {}
         fedHandle.close();
-        SharedEventLoopGroupHolder.get().shutdownNowIfPossible(5, SECONDS);
+        SharedEventLoopGroupHolder.get().shutdownNowIfPossible(Integer.MAX_VALUE, SECONDS);
+        NettySparqlServer.ACCEPT_ELG.shutdownNowIfPossible(Integer.MAX_VALUE, SECONDS);
         FS.shutdown();
         journal("trialTearDown: exit");
     }
