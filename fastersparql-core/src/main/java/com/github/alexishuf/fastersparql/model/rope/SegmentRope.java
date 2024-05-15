@@ -541,28 +541,28 @@ public abstract class SegmentRope extends PlainRope {
         if (U != null) {
             byte[] base = utf8;
             phys += segment.address();
-            h = hashCode(FNV_BASIS, base, phys, nFst);
-            h = hashCode(h, base, phys+(end-nSnd)-begin, nSnd);
+            h = hashUnsafe(FNV_BASIS, base, phys, nFst);
+            h = hashUnsafe(h, base, phys+(end-nSnd)-begin, nSnd);
         } else {
-            h = hashCode(FNV_BASIS, segment, phys, nFst);
-            h = hashCode(h, segment, offset+(end-nSnd), nSnd);
+            h = hashSafe(FNV_BASIS, segment, phys, nFst);
+            h = hashSafe(h, segment, offset+(end-nSnd), nSnd);
         }
         return h;
     }
 
-    public static int hashCode(int h, byte[] base, long offset, int len) {
+    public static int hashUnsafe0(int h, byte[] base, long offset, int len) {
+        for (int i = 0; i < len; i++)
+            h = FNV_PRIME * (h ^ (0xff& U.getByte(base, offset+i)));
+        return h;
+    }
+    public static int hashUnsafe(int h, byte[] base, long offset, int len) {
         if (base != null) offset += U8_BASE;
         for (int i = 0; i < len; i++)
             h = FNV_PRIME * (h ^ (0xff& U.getByte(base, offset+i)));
         return h;
     }
 
-    public static int hashCode(int h, MemorySegment seg, long off, int len) {
-//        if (U != null) {
-//            if (len == 0) return h;
-//            byte[] base = (byte[])seg.array().orElse(null);
-//            return hashCode(h, base, off+seg.address() + (base == null ? 0 : U8_BASE), len);
-//        }
+    public static int hashSafe(int h, MemorySegment seg, long off, int len) {
         for (int i = 0; i < len; i++)
             h = FNV_PRIME * (h ^ (0xff&seg.get(JAVA_BYTE, off+i)));
         return h;
@@ -570,9 +570,9 @@ public abstract class SegmentRope extends PlainRope {
 
     @Override public int hashCode() {
         if (U == null)
-            return hashCode(FNV_BASIS, segment, offset, len);
+            return hashSafe(FNV_BASIS, segment, offset, len);
         else
-            return hashCode(FNV_BASIS, utf8, segment.address()+offset, len);
+            return hashUnsafe(FNV_BASIS, utf8, segment.address()+offset, len);
     }
 
 

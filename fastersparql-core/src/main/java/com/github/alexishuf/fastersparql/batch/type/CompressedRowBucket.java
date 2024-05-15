@@ -368,7 +368,7 @@ public abstract sealed class CompressedRowBucket
     @Override public int hashCode(int row) {
         if (!BS.get(has, row))
             return 0;
-        if (!LowLevelHelper.HAS_UNSAFE)
+        if (LowLevelHelper.U == null)
             return safeHashCode(row);
         int h = 0;
         var shared = this.shared;
@@ -395,8 +395,8 @@ public abstract sealed class CompressedRowBucket
                     fst = d.arr;   fstOff = sndOff;    fstLen = sndLen;
                     snd = sh.utf8; sndOff = sh.offset; sndLen = sh.len;
                 }
-                int termHash = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
-                h ^=           SegmentRope.hashCode(termHash,  snd, sndOff, sndLen);
+                int termHash = SegmentRope.hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
+                h ^=           SegmentRope.hashUnsafe(termHash,  snd, sndOff, sndLen);
             }
         } finally {
             if (tmp != null) tmp.close();
@@ -430,8 +430,8 @@ public abstract sealed class CompressedRowBucket
                     fst = snd ;       fstOff = sndOff;    fstLen = sndLen;
                     snd = sh.segment; sndOff = sh.offset; sndLen = sh.len;
                 }
-                int termHash = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
-                h ^=           SegmentRope.hashCode(termHash,  snd, sndOff, sndLen);
+                int termHash = SegmentRope.hashSafe(FNV_BASIS, fst, fstOff, fstLen);
+                h ^=           SegmentRope.hashSafe(termHash,  snd, sndOff, sndLen);
             }
         } finally {
             if (tmp != null) tmp.close();

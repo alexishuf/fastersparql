@@ -6,7 +6,9 @@ import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import java.lang.foreign.MemorySegment;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
-import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.*;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class TwoSegmentRope extends PlainRope {
@@ -133,21 +135,21 @@ public class TwoSegmentRope extends PlainRope {
 
     @Override public byte[] copy(int begin, int end, byte[] dest, int offset) {
         checkRange(begin, end);
-        if (LowLevelHelper.U == null)
+        if (U == null)
             return copySafe(begin, end, dest, offset);
         if (offset+(end-begin) > dest.length)
             throw new IndexOutOfBoundsException("Copying [begin, end) overflows dest at offset");
         offset += LowLevelHelper.U8_BASE;
         if (begin < fstLen) {
-            int n = Math.min(end, fstLen)-begin;
-            LowLevelHelper.U.copyMemory(fstU8, (fstU8 == null ? 0 : LowLevelHelper.U8_BASE)+fst.address()+fstOff+begin,
+            int n = min(end, fstLen)-begin;
+            U.copyMemory(fstU8, (fstU8 == null ? 0 : LowLevelHelper.U8_BASE)+fst.address()+fstOff+begin,
                          dest, offset, n);
             offset += n;
         }
-        begin = Math.max(0, begin-fstLen);
+        begin = max(0, begin-fstLen);
         int n = (end - fstLen) - begin;
         if (n > 0) {
-            LowLevelHelper.U.copyMemory(sndU8, (sndU8==null ? 0 : LowLevelHelper.U8_BASE)+snd.address()+sndOff+begin,
+            U.copyMemory(sndU8, (sndU8==null ? 0 : LowLevelHelper.U8_BASE)+snd.address()+sndOff+begin,
                          dest, offset, n);
         }
         return dest;
@@ -155,11 +157,11 @@ public class TwoSegmentRope extends PlainRope {
 
     private byte[] copySafe(int begin, int end, byte[] dest, int offset) {
         if (begin < fstLen) {
-            int n = Math.min(end, fstLen)-begin;
+            int n = min(end, fstLen)-begin;
             MemorySegment.copy(fst, JAVA_BYTE, fstOff+begin, dest, offset, n);
             offset += n;
         }
-        begin = Math.max(0, begin-fstLen);
+        begin = max(0, begin-fstLen);
         int n = (end-fstLen)-begin;
         if (n > 0) {
             MemorySegment.copy(snd, JAVA_BYTE, sndOff+begin, dest, offset, n);
@@ -172,10 +174,10 @@ public class TwoSegmentRope extends PlainRope {
         if (end-begin == len) return this;
         var r = new TwoSegmentRope();
         if (begin < fstLen)
-            r.wrapFirst(fst, fstU8, fstOff+begin, Math.min(fstLen, end)-begin);
+            r.wrapFirst(fst, fstU8, fstOff+begin, min(fstLen, end)-begin);
         int e = end-fstLen;
         if (e > 0) {
-            begin = Math.max(0, begin - fstLen);
+            begin = max(0, begin - fstLen);
             r.wrapSecond(snd, sndU8, sndOff+begin, e-begin);
         }
         return r;
@@ -183,13 +185,13 @@ public class TwoSegmentRope extends PlainRope {
 
     @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, char c0) {
         checkRange(begin, end);
-        int e = Math.min(end, fstLen), i;
+        int e = min(end, fstLen), i;
         if (begin < fstLen) {
             i = (int)(SegmentRope.skipUntil(fst, fstU8, begin+fstOff, e+fstOff, c0)-fstOff);
             if (i < e) return i;
         }
         if ((e = end-fstLen) > 0) {
-            i = Math.max(0, begin-fstLen);
+            i = max(0, begin-fstLen);
             return fstLen + (int)(SegmentRope.skipUntil(snd, sndU8, sndOff+i, sndOff+e, c0)-sndOff);
         }
         return end;
@@ -197,13 +199,13 @@ public class TwoSegmentRope extends PlainRope {
 
     @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, char c0, char c1) {
         checkRange(begin, end);
-        int e = Math.min(end, fstLen), i;
+        int e = min(end, fstLen), i;
         if (begin < fstLen) {
             i = (int)(SegmentRope.skipUntil(fst, fstU8, begin+fstOff, e+fstOff, c0, c1)-fstOff);
             if (i < e) return i;
         }
         if ((e = end-fstLen) > 0) {
-            i = Math.max(0, begin-fstLen);
+            i = max(0, begin-fstLen);
             return fstLen + (int)(SegmentRope.skipUntil(snd, sndU8, sndOff+i, sndOff+e, c0, c1)-sndOff);
         }
         return end;
@@ -211,13 +213,13 @@ public class TwoSegmentRope extends PlainRope {
 
     @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, byte c0) {
         checkRange(begin, end);
-        int e = end-fstLen, i = Math.max(0, begin-fstLen);
+        int e = end-fstLen, i = max(0, begin-fstLen);
         if (e > 0) {
             i = (int)(SegmentRope.skipUntilLast(snd, sndU8, sndOff+i, sndOff+e, c0)-sndOff);
             if (i < e) return fstLen+i;
         }
         if (begin < fstLen) {
-            e = Math.min(fstLen, end);
+            e = min(fstLen, end);
             i = (int)(SegmentRope.skipUntilLast(fst, fstU8, fstOff+begin, fstOff+e, c0)-fstOff);
             if (i < e) return i;
         }
@@ -227,13 +229,13 @@ public class TwoSegmentRope extends PlainRope {
 
     @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, byte c0, byte c1) {
         checkRange(begin, end);
-        int e = end-fstLen, i = Math.max(0, begin-fstLen);
+        int e = end-fstLen, i = max(0, begin-fstLen);
         if (e > 0) {
             i = (int)(SegmentRope.skipUntilLast(snd, sndU8, sndOff+i, sndOff+e, c0, c1)-sndOff);
             if (i < e) return fstLen+i;
         }
         if (begin < fstLen) {
-            e = Math.min(fstLen, end);
+            e = min(fstLen, end);
             i = (int)(SegmentRope.skipUntilLast(fst, fstU8, fstOff+begin, fstOff+e, c0, c1)-fstOff);
             if (i < e) return i;
         }
@@ -242,23 +244,23 @@ public class TwoSegmentRope extends PlainRope {
 
     private int skipSafe(int begin, int end, int[] alphabet) {
         checkRange(begin, end);
-        int e = Math.min(end, fstLen), i;
+        int e = min(end, fstLen), i;
         if (begin < fstLen) {
             i = (int)(SegmentRope.skipSafe(fst, fstOff+begin, fstOff+e, alphabet)-fstOff);
             if (i < e) return i;
         }
-        if ((e = Math.max(0, end-fstLen)) > 0) {
-            i = Math.max(0, begin-fstLen);
+        if ((e = max(0, end-fstLen)) > 0) {
+            i = max(0, begin-fstLen);
             return fstLen + (int)(SegmentRope.skipSafe(snd, sndOff+i, sndOff+e, alphabet)-sndOff);
         }
         return end;
     }
 
     @SuppressWarnings("unused") @Override public int skip(int begin, int end, int[] alphabet) {
-        if (LowLevelHelper.U == null)
+        if (U == null)
             return skipSafe(begin, end, alphabet);
         checkRange(begin, end);
-        int e = Math.min(end, fstLen), i;
+        int e = min(end, fstLen), i;
         if (begin < fstLen) {
             byte[] fstU8 = this.fstU8;
             long off = fstOff+fst.address();
@@ -267,8 +269,8 @@ public class TwoSegmentRope extends PlainRope {
             i = (int)(SegmentRope.skipUnsafe(fstU8, off+begin, off+e, alphabet)-off);
             if (i < e) return i;
         }
-        if ((e = Math.max(0, end-fstLen)) > 0) {
-            i = Math.max(0, begin-fstLen);
+        if ((e = max(0, end-fstLen)) > 0) {
+            i = max(0, begin-fstLen);
             long off = sndOff+snd.address();
             byte[] sndU8 = this.sndU8;
             if (sndU8 != null)
@@ -286,14 +288,14 @@ public class TwoSegmentRope extends PlainRope {
         int fLen;
         long sOff = snd.address()+sndOff;
         if (position < fstLen) {
-            fLen = Math.min(seq.length, fstLen-position);
+            fLen = min(seq.length, fstLen-position);
             long fOff = fst.address()+fstOff+position;
             return compare1_2(seq, 0, seq.length,
                               fstU8, fOff, fLen, sndU8, sOff, seq.length-fLen) == 0;
         } else {
             int sPos = position - fstLen;
             return compare1_1(seq, 0, seq.length,
-                              sndU8, sOff+sPos, Math.min(seq.length, sndLen-sPos)) == 0;
+                              sndU8, sOff+sPos, min(seq.length, sndLen-sPos)) == 0;
         }
     }
 
@@ -305,8 +307,8 @@ public class TwoSegmentRope extends PlainRope {
         if (pos+rLen > len) return false;
 
         long fstOff = this.fst.address()+this.fstOff+pos;
-        long sndOff = this.snd.address()+this.sndOff+Math.max(0, pos-this.fstLen);
-        int fstLen = Math.min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
+        long sndOff = this.snd.address()+this.sndOff+max(0, pos-this.fstLen);
+        int fstLen = min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
 
         if (rope instanceof SegmentRope s) {
             return compare1_2(s.utf8, s.segment.address()+s.offset+begin, rLen,
@@ -325,8 +327,8 @@ public class TwoSegmentRope extends PlainRope {
                 o_snd = (r = t.second()).utf8; o_sndOff = r.segment.address()+r.offset;
             }
             o_fstOff += begin;
-            o_sndOff += Math.max(0, begin-o_fstLen);
-            o_fstLen = Math.min(o_fstLen, end)-begin;
+            o_sndOff += max(0, begin-o_fstLen);
+            o_fstLen = min(o_fstLen, end)-begin;
             return compare2_2(fstU8, fstOff,   fstLen,
                               sndU8, sndOff,   sndLen,
                               o_fst, o_fstOff, o_fstLen,
@@ -339,8 +341,8 @@ public class TwoSegmentRope extends PlainRope {
         if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
         if (pos+rLen > len) return false;
 
-        long fstOff = this.fstOff+pos, sndOff = this.sndOff+Math.max(0, pos-this.fstLen);
-        int fstLen = Math.min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
+        long fstOff = this.fstOff+pos, sndOff = this.sndOff+max(0, pos-this.fstLen);
+        int fstLen = min(rLen, this.fstLen-pos), sndLen = pos+rLen-this.fstLen;
 
         if (rope instanceof SegmentRope s) {
             return compare1_2(s.segment, s.offset+begin, rLen,
@@ -359,8 +361,8 @@ public class TwoSegmentRope extends PlainRope {
                 o_snd = (r = t.second()).segment; o_sndOff = r.offset;
             }
             o_fstOff += begin;
-            o_sndOff += Math.max(0, begin-o_fstLen);
-            o_fstLen = Math.min(o_fstLen, end)-begin;
+            o_sndOff += max(0, begin-o_fstLen);
+            o_fstLen = min(o_fstLen, end)-begin;
             return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
                     o_fst, o_fstOff, o_fstLen,
                     o_snd, o_sndOff, rLen-o_fstLen) == 0;
@@ -391,33 +393,61 @@ public class TwoSegmentRope extends PlainRope {
                           r.fst, r.fstOff, r.fstLen, r.snd, r.sndOff, r.sndLen) == 0;
     }
 
-    @Override public int fastHash(int begin, int end) {
-        int h, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
-        if (begin+nFst < fstLen) {
-            h = SegmentRope.hashCode(FNV_BASIS, fst, fstOff+begin, nFst);
-        } else {
-            h = FNV_BASIS;
-            for (int i = 0; i < nFst; i++)
-                h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
+    private static int hashUnsafe(int h, int begin, int end,
+                                  byte[] fstU8, long fstAddress, int fstLen,
+                                  byte[] sndU8, long sndAddress) {
+        int n;
+        if (begin < fstLen) {
+            h = SegmentRope.hashUnsafe0(h, fstU8, fstAddress+begin, n=min(fstLen, end)-begin);
+            begin += n;
         }
-        begin = end-nSnd;
-        if (begin > fstLen) {
-            h = SegmentRope.hashCode(h, snd, sndOff+(begin-fstLen), nSnd);
-        } else {
-            for (int i = 0; i < nSnd; i++)
-                h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
+        if (begin < end)
+            h = SegmentRope.hashUnsafe0(h, sndU8, sndAddress+(begin-fstLen), end-begin);
+        return h;
+    }
+    private static int hashSafe(int h, int begin, int end,
+                                MemorySegment fst, long fstOff, int fstLen,
+                                MemorySegment snd, long sndOff) {
+        if (begin < fstLen) {
+            int n = min(fstLen, end)-begin;
+            h = SegmentRope.hashSafe(h, fst, fstOff+begin, n);
+            begin += n;
         }
+        if (begin < end)
+            h = SegmentRope.hashSafe(h, snd, sndOff+(begin-fstLen), end-begin);
         return h;
     }
 
+
+    @Override public int fastHash(int begin, int end) {
+        if (begin < 0 || end > len)
+            throw new IndexOutOfBoundsException();
+        if (U != null) {
+            long fstOff = fst.address() + this.fstOff + (fstU8 == null ? 0 : U8_BASE);
+            long sndOff = snd.address() + this.sndOff + (sndU8 == null ? 0 : U8_BASE);
+            int lEnd = min(begin + 4, end);
+            int h = hashUnsafe(FNV_BASIS, begin, lEnd,
+                               fstU8, fstOff, fstLen, sndU8, sndOff);
+            return hashUnsafe(h, max(lEnd, end-12), end, fstU8, fstOff, fstLen, sndU8, sndOff);
+        } else {
+            return fastHashSafe(begin, end);
+        }
+    }
+
+    private int fastHashSafe(int begin, int end) {
+        int lEnd = min(begin + 4, end);
+        int h = hashSafe(FNV_BASIS, begin,            lEnd, fst, fstOff, fstLen, snd, sndOff);
+        return  hashSafe(h,         max(lEnd, end-12), end, fst, fstOff, fstLen, snd, sndOff);
+    }
+
     @Override public int hashCode() {
-        int h = SegmentRope.hashCode(FNV_BASIS, fst, fstOff, fstLen);
-        return SegmentRope.hashCode(h, snd, sndOff, sndLen);
+        int h = SegmentRope.hashSafe(FNV_BASIS, fst, fstOff, fstLen);
+        return SegmentRope.hashSafe(h, snd, sndOff, sndLen);
     }
 
     @Override public void appendTo(StringBuilder sb, int begin, int end) {
         try (var d = RopeDecoder.create()) {
-            int n = Math.min(fstLen, end)-begin;
+            int n = min(fstLen, end)-begin;
             if (n > 0)
                 d.write(sb, fst, fstOff+begin, n);
             n = end-begin-n;
@@ -467,8 +497,8 @@ public class TwoSegmentRope extends PlainRope {
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
         // the following locals simulate o.sub(begin, end)
         long o_fstOff = o.fst.address()+o.fstOff+begin;
-        long o_sndOff = o.snd.address()+o.sndOff+Math.max(0, begin-o.fstLen);
-        int  o_fstLen = Math.max(0, Math.min(end, o.fstLen)-begin),
+        long o_sndOff = o.snd.address()+o.sndOff+max(0, begin-o.fstLen);
+        int  o_fstLen = max(0, min(end, o.fstLen)-begin),
              o_sndLen = end-begin-o_fstLen;
         return compare2_2(fstU8, fst.address()+fstOff, fstLen,
                           sndU8, snd.address()+sndOff, sndLen,
@@ -477,8 +507,8 @@ public class TwoSegmentRope extends PlainRope {
     private int compareToNoUnsafe(TwoSegmentRope o, int begin, int end) {
         if (begin < 0 || end > o.len) throw new IndexOutOfBoundsException();
         // the following locals simulate o.sub(begin, end)
-        long o_fstOff = o.fstOff+begin, o_sndOff = o.sndOff+Math.max(0, begin-o.fstLen);
-        int  o_fstLen = Math.max(0, Math.min(end, o.fstLen)-begin),
+        long o_fstOff = o.fstOff+begin, o_sndOff = o.sndOff+max(0, begin-o.fstLen);
+        int  o_fstLen = max(0, min(end, o.fstLen)-begin),
                 o_sndLen = end-begin-o_fstLen;
         return compare2_2(  fst,   fstOff,   fstLen,   snd,   sndOff,   sndLen,
                 o.fst, o_fstOff, o_fstLen, o.snd, o_sndOff, o_sndLen);

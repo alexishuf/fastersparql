@@ -1723,14 +1723,14 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         SegmentRope fst = first, snd = second;
         int h = FNV_BASIS, nFst = Math.min(4, end-begin), nSnd = Math.min(12, end-(begin+4));
         if (begin+nFst < fst.len) {
-            h = SegmentRope.hashCode(FNV_BASIS, fst.segment, fst.offset+begin, nFst);
+            h = SegmentRope.hashSafe(FNV_BASIS, fst.segment, fst.offset+begin, nFst);
         } else {
             for (int i = 0; i < nFst; i++)
                 h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
         }
         begin = end-nSnd;
         if (begin > fst.len) {
-            h = SegmentRope.hashCode(h, snd.segment, snd.offset+(begin-fst.len), nSnd);
+            h = SegmentRope.hashSafe(h, snd.segment, snd.offset+(begin-fst.len), nSnd);
         } else {
             for (int i = 0; i < nFst; i++)
                 h = FNV_PRIME * (h ^ (0xff&get(begin+i)));
@@ -1760,8 +1760,8 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 }
             } else {
                 SegmentRope fst = first, snd = second;
-                hash = SegmentRope.hashCode(FNV_BASIS, fst.segment, fst.offset, fst.len);
-                hash = SegmentRope.hashCode(hash, snd.segment, snd.offset, snd.len);
+                hash = SegmentRope.hashSafe(FNV_BASIS, fst.segment, fst.offset, fst.len);
+                hash = SegmentRope.hashSafe(hash, snd.segment, snd.offset, snd.len);
             }
             this.hash = hash;
         }
