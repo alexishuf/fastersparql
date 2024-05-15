@@ -78,8 +78,9 @@ public class OutputStreamSink implements ByteSink<OutputStreamSink, OutputStream
         try {
             byte[] arr = b.arr;
             for (int i = begin; i < end; i += arr.length) {
-                rope.copy(i, Math.min(end, i+arr.length), arr, 0);
-                write(arr, 0, arr.length);
+                int chunkEnd = Math.min(end, i + arr.length);
+                rope.copy(i, chunkEnd, arr, 0);
+                write(arr, 0, chunkEnd-i);
             }
         } finally {
             b.recycle(this);
