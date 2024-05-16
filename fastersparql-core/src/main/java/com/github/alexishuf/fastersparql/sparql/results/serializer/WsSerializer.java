@@ -15,12 +15,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class WsSerializer extends ResultsSerializer<WsSerializer> {
-    public static final int DEF_BUFFER_HINT = 2048;
     private static final FinalSegmentRope PREFIX_CMD = FinalSegmentRope.asFinal("!prefix ");
     private static final class PrefixAssignerFac implements Supplier<WsPrefixAssigner> {
         @Override public WsPrefixAssigner get() {
@@ -55,25 +55,23 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
         Primer.INSTANCE.sched(() -> PREFIX_ASSIGNER_ALLOC.prime(fac, 2, 0));
     }
 
-    private final MutableRope rowsBuffer;
     private final WsPrefixAssigner prefixAssigner;
 
     public static class WsFactory implements Factory {
         @Override public Orphan<WsSerializer> create(Map<String, String> params) {
-            return new WsSerializer.Concrete(DEF_BUFFER_HINT);
+            return new WsSerializer.Concrete();
         }
         @Override public SparqlResultFormat name() { return SparqlResultFormat.WS; }
     }
 
-    public static Orphan<WsSerializer> create(int bufferHint) {return new Concrete(bufferHint);}
-    protected WsSerializer(int bufferHint) {
+    public static Orphan<WsSerializer> create() {return new Concrete();}
+    protected WsSerializer() {
         super(SparqlResultFormat.WS.asMediaType());
-        rowsBuffer     = new MutableRope(bufferHint);
         prefixAssigner = PREFIX_ASSIGNER_ALLOC.create();
         prefixAssigner.transferOwnership(RECYCLED, this);
     }
     private static final class Concrete extends WsSerializer implements Orphan<WsSerializer> {
-        private Concrete(int bufferHint) {super(bufferHint);}
+        private Concrete() {super();}
         @Override public WsSerializer takeOwnership(Object o) {return takeOwnership0(o);}
     }
 
@@ -84,7 +82,6 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
         ask     = false;
         empty   = true;
         prefixAssigner.recycle(this);
-        rowsBuffer.close();
         return null;
     }
 
@@ -112,68 +109,68 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
         int r = 0;
         try {
             prefixAssigner.dest = sink;
-            if (rowsBuffer.len != 0) {
-                throw new IllegalStateException("rowsBuffer not empty");
-            } else if (ask) {
+            if (ask) {
                 serializeAsk(sink, batch, nodeCons, chunkCons);
                 return;
             }
 
             boolean chunk = !chunkCons.isNoOp();
-            int chunkRows = 0, lastLen = sink.len(), lastRowsBufferLen;
-            int softMax = min(hardMax, min(sink.freeCapacity(), rowsBuffer.u8().length));
+            int chunkRows = 0, lastLen = sink.len(), lastRowBegin;
+            int softMax = min(hardMax, sink.freeCapacity());
             for (; batch != null; batch = detachAndDeliverNode(batch, nodeCons)) {
                 r = 0;
                 for (int rows = batch.rows; r < rows; ++r) {
-                    lastRowsBufferLen = rowsBuffer.len;
-                    // write terms to rowsBuffer, !prefix command will be written to sink
-                    for (int col : columns) {
-                        batch.writeSparql(rowsBuffer, r, col, prefixAssigner);
-                        rowsBuffer.append('\t');
-                    }
-                    if (columns.length == 0)
-                        rowsBuffer.append((byte)'\n');
-                    else
-                        rowsBuffer.u8()[rowsBuffer.len - 1] = '\n'; // replace last '\t'
-                    ++chunkRows;
-                    int lastRowLen = rowsBuffer.len-lastRowsBufferLen;
-                    // send when we are "2 rows" from reaching softMax
-                    if (rowsBuffer.len + sink.len() >= softMax - lastRowLen<<1) {
-                        sink.append(rowsBuffer); // flush serialization into sink
-                        rowsBuffer.len = 0;
-                        if (chunk) {
-                            deliver(sink, chunkCons, chunkRows, lastLen, hardMax);
-                            chunkRows = 0; // chunk delivered
-                            sink.touch();
+                    lastRowBegin = sink.len();
+                    if (columns.length == 0) {
+                        sink.append((byte)'\n');
+                    } else {
+                        for (int col : columns)
+                            assignNames(batch, r, col);
+                        for (int i = 0, last = columns.length - 1; i < columns.length; i++) {
+                            batch.writeSparql(sink, r, columns[i], prefixAssigner);
+                            sink.append(i == last ? (byte) '\n' : (byte) '\t');
                         }
+                    }
+                    ++chunkRows;
+                    int lastRowLen = sink.len()-lastRowBegin;
+                    // send when we are "2 rows" from reaching softMax
+                    if (chunk && sink.len() >= softMax - lastRowLen<<1) {
+                        deliver(sink, chunkCons, chunkRows, lastLen, hardMax);
+                        chunkRows = 0; // chunk delivered
+                        sink.touch();
                     }
                     lastLen = sink.len();
                 }
             }
             // deliver buffered rows
-            if (rowsBuffer.len > 0 || sink.len() > 0) {
-                sink.append(rowsBuffer);
-                rowsBuffer.len = 0;
-                if (chunk)
-                    deliver(sink, chunkCons, 1, sink.len(), hardMax);
-            }
+            if (chunk && sink.len() > 0)
+                deliver(sink, chunkCons, 1, sink.len(), hardMax);
         } catch (Throwable t) {
             handleNotSerialized(batch, r, nodeCons, t);
             throw t;
         }
     }
 
-    @Override public void serialize(Batch<?> batch, ByteSink<?, ?> sink, int row) {
-        if (rowsBuffer.len != 0)
-            throw new IllegalStateException("rowsBuffer not empty");
-        // write terms to rowsBuffer, !prefix command will be written to sink
-        for (int col : columns) {
-            batch.writeSparql(rowsBuffer, row, col, prefixAssigner);
-            rowsBuffer.append('\t');
+    private void assignNames(Batch<?> batch, int r, int c) {
+        var sh = batch.shared(r, c);
+        if (sh.len > 15/*"^^<http://a#t>*/ && sh.get(0) == '"') {
+            if (sh != DT_DOUBLE && sh != DT_integer && sh != DT_decimal && sh != DT_BOOLEAN) {
+                var prefix = SHARED_ROPES.internPrefixOf(sh, 3/*"^^<*/, sh.len);
+                prefixAssigner.nameFor(prefix);
+            }
+        } else if (sh.len > 0 && sh != P_RDF) {
+            prefixAssigner.nameFor(sh);
         }
-        rowsBuffer.u8()[rowsBuffer.len - 1] = '\n'; // replace last '\t'
-        sink.append(rowsBuffer);
-        rowsBuffer.len = 0;
+    }
+
+    @Override public void serialize(Batch<?> batch, ByteSink<?, ?> sink, int row) {
+        // write terms to rowsBuffer, !prefix command will be written to sink
+        for (int col : columns)
+            assignNames(batch, row, col);
+        for (int i = 0, last = columns.length - 1; i < columns.length; i++) {
+            batch.writeSparql(sink, row, columns[i], prefixAssigner);
+            sink.append(i == last ? (byte) '\n' : (byte) '\t');
+        }
     }
 
     private <B extends Batch<B>, S extends ByteSink<S, T>, T>

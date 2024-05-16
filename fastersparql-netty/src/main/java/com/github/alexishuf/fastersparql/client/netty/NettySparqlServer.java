@@ -74,7 +74,6 @@ import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
-import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.render;
 import static io.netty.buffer.Unpooled.wrappedBuffer;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_X_WWW_FORM_URLENCODED;
@@ -1092,8 +1091,7 @@ public class NettySparqlServer implements AutoCloseable{
 
         private static final int LONG_MAX_VALUE_LEN = String.valueOf(Long.MAX_VALUE).length();
 
-        protected final WsSerializer serializer = WsSerializer.create(ByteBufSink.NORMAL_HINT)
-                                                              .takeOwnership(this);
+        protected final WsSerializer serializer = WsSerializer.create().takeOwnership(this);
         protected boolean earlyCancel, waitingVars, isBindQuery;
         protected TextWebSocketFrame endFrame = new TextWebSocketFrame(wrappedBuffer(END));
         protected final MutableRope bindReqRope;

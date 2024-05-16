@@ -425,7 +425,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } else {
                 bindingsVars = bindQuery.bindingsVars();
                 usefulBindingsVars = parent.vars().intersection(bindingsVars);
-                serializer = WsSerializer.create(NORMAL_HINT).takeOwnership(this);
+                serializer = WsSerializer.create().takeOwnership(this);
                 bindType = bindQuery.type;
             }
             bsRunnable.executor(netty.executor());

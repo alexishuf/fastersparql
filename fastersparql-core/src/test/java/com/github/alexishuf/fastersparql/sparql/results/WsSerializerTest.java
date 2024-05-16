@@ -105,7 +105,7 @@ class WsSerializerTest {
              var actual = PooledMutableRope.get();
              var sink = PooledMutableRope.get();
              var serializerGuard = new Guard<WsSerializer>(this)) {
-            var serializer = serializerGuard.set(WsSerializer.create(256));
+            var serializer = serializerGuard.set(WsSerializer.create());
             ResultsSerializer.ChunkConsumer<FinalSegmentRope> appender = actual::append;
             serializer.init(in.vars(), in.vars(), false);
             serializer.serializeHeader(actual);
