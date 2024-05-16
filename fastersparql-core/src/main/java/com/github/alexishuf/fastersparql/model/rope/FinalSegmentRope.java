@@ -171,30 +171,36 @@ public class FinalSegmentRope extends SegmentRope {
         return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(Rope other, int begin, int end) {
-        if (end == begin) return EMPTY;
-        if (begin == 0 && other instanceof FinalSegmentRope f && end == f.len) return f;
-        return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        if (len == other.len && other instanceof FinalSegmentRope f) return f;
+        return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(SegmentRope other, int begin, int end) {
-        if (end == begin) return EMPTY;
-        if (begin == 0 && other instanceof FinalSegmentRope f && end == f.len) return f;
-        return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        if (len == other.len && other instanceof FinalSegmentRope f) return f;
+        return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(SegmentRopeView other, int begin, int end) {
-        if (end == begin) return EMPTY;
-        return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(MutableRope other, int begin, int end) {
-        if (end == begin) return EMPTY;
-        return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(TwoSegmentRope other, int begin, int end) {
-        if (end == begin) return EMPTY;
-        return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(Term other, int begin, int end) {
-        if (end == begin) return EMPTY;
-        return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        return make(len).add(other, begin, end).take();
     }
 
     /** Create a {@link FinalSegmentRope} that wraps the same segment range as {@code view} */
