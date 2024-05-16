@@ -1296,8 +1296,6 @@ public class NettySparqlServer implements AutoCloseable{
                 else if (seq < lastSeqSent)
                     invalidLastSeqSent(seq);
             }
-            if (!batch.validate())
-                throw new IllegalStateException(render(batch, "corrupted on", this));
             serializer.serialize(batch.releaseOwnership(this), bbSink.touch(), REC_MAX_FRAME_LEN,
                                  BATCH_RECYCLER, this);
         }
