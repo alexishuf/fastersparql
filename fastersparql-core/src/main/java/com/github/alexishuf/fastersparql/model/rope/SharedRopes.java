@@ -200,35 +200,9 @@ public class SharedRopes {
         return interned;
     }
 
-    /** Statically bound variant of {@link #intern(PlainRope, int, int, int)}. */
-    private FinalSegmentRope intern(SegmentRope r, int begin, int end, int skipBegin) {
-        int len = end - begin;
-        if (len < MIN_INTERNED_LEN)
-            throw new IllegalArgumentException("interned len < MIN_INTERNED_LEN");
-        int h = r.fastHash(begin+skipBegin, end-SKIP_INTERNED_END);
-        int bucketBegin = (h&bucketMask) << BUCKET_BITS;
-        int i = bucketBegin, bucketEnd = bucketBegin + BUCKET_SIZE;
-        for (; i < bucketEnd; ++i) {
-            int oldHash = (int) HASHES.getAcquire(hashes, i);
-            var old = buckets[i];
-            if (old == null) break;
-            if (oldHash == h && old.len == len && old.has(0, r, begin, end)) return old;
-        }
-        if (i == bucketEnd) i = bucketBegin+writeableIdx;
-        var interned = FinalSegmentRope.asFinal(r, begin, end);
-        buckets[i] = interned;
-        HASHES.setRelease(hashes, i, h);
-        return interned;
-    }
-
     /** Equivalent to {@link #intern(PlainRope, int, int, int)} with {@code skipBegin =}
      *  {@link #SKIP_INTERNED_DTYPE_BEGIN} */
     public FinalSegmentRope internDatatype(PlainRope r, int begin, int end) {
-        return intern(r, begin, end, SKIP_INTERNED_DTYPE_BEGIN);
-    }
-
-    /** Statically-bound variant of {@link #internDatatype(PlainRope, int, int)} */
-    public FinalSegmentRope internDatatype(SegmentRope r, int begin, int end) {
         int len = end - begin;
         if (len > 38 && r.get(begin+36) == '#') {
             //"^^<http://www.w3.org/2001/XMLSchema#...>
@@ -309,7 +283,25 @@ public class SharedRopes {
     }
     /** Statically-bound variant of {@link #internPrefix(PlainRope, int, int)} */
     public FinalSegmentRope internPrefix(SegmentRope r, int begin, int end) {
-        return intern(r, begin, end, SKIP_INTERNED_IRI_BEGIN);
+        // the following code is the manual inlining of
+        //   return intern(r, begin, end, SKIP_INTERNED_IRI_BEGIN);
+        int len = end - begin;
+        if (len < MIN_INTERNED_LEN)
+            throw new IllegalArgumentException("interned len < MIN_INTERNED_LEN");
+        int h = r.fastHash(begin + SKIP_INTERNED_IRI_BEGIN, end -SKIP_INTERNED_END);
+        int bucketBegin = (h&bucketMask) << BUCKET_BITS;
+        int i = bucketBegin, bucketEnd = bucketBegin + BUCKET_SIZE;
+        for (; i < bucketEnd; ++i) {
+            int oldHash = (int) HASHES.getAcquire(hashes, i);
+            var old = buckets[i];
+            if (old == null) break;
+            if (oldHash == h && old.len == len && old.has(0, r, begin, end)) return old;
+        }
+        if (i == bucketEnd) i = bucketBegin+writeableIdx;
+        var interned = FinalSegmentRope.asFinal(r, begin, end);
+        buckets[i] = interned;
+        HASHES.setRelease(hashes, i, h);
+        return interned;
     }
     /** Internal/test use only */
     public FinalSegmentRope internPrefix(String s) {
@@ -317,24 +309,18 @@ public class SharedRopes {
         return internPrefix(r, 0, r.len);
     }
 
-    /** Statically-bound version of {@link #internDatatypeOf(PlainRope, int, int)} to help JIT */
-    public FinalSegmentRope internDatatypeOf(SegmentRope r, int begin, int end) {
-        int endLex = r.skipUntilLast(begin, end, (byte)'"');
-        if (end-endLex < MIN_INTERNED_LEN) return FinalSegmentRope.EMPTY;
-        return intern(r, endLex, end, SKIP_INTERNED_DTYPE_BEGIN);
-    }
-
     /**
-     * Tries to intern datatype suffixes  (e.g., {@code "^^<http://...>}.
+     * Tries to intern datatype suffixes  (e.g., {@code "^^<http://...>}).
      *
-     * @param r a literal in N-Triple syntax (quoted with a single {@code "}.
+     * @param r a literal in N-Triple syntax (quoted with a single {@code "}).
      * @return {@link FinalSegmentRope#EMPTY} if there is no datatype suffix, else a
      *         {@link SegmentRope} with the datatype suffix segments copied to a safe location.
      * */
     public FinalSegmentRope internDatatypeOf(PlainRope r, int begin, int end) {
         int endLex = r.skipUntilLast(begin, end, (byte)'"');
-        if (end-endLex < MIN_INTERNED_LEN) return FinalSegmentRope.EMPTY;
-        return intern(r, endLex, end, SKIP_INTERNED_DTYPE_BEGIN);
+        if (end-endLex < MIN_INTERNED_LEN)
+            return FinalSegmentRope.EMPTY;
+        return internDatatype(r, endLex, end);
     }
 
     /** Statically bound version of {@link #internPrefixOf(PlainRope, int, int)} to help the JIT. */
@@ -342,7 +328,7 @@ public class SharedRopes {
         int i = 1+r.skipUntilLast(begin, end, (byte)'/', (byte)'#');
         if (i > end || i-begin < MIN_INTERNED_LEN)
             return FinalSegmentRope.EMPTY;
-        return intern(r, begin, i, SKIP_INTERNED_IRI_BEGIN);
+        return internPrefix(r, begin, i);
     }
 
     /**
