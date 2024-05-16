@@ -6,7 +6,10 @@ import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -15,13 +18,17 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.DT_MID;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.contains;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
+import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class WsSerializer extends ResultsSerializer<WsSerializer> {
-    private static final FinalSegmentRope PREFIX_CMD = FinalSegmentRope.asFinal("!prefix ");
+    private static final FinalSegmentRope PREFIX_CMD = asFinal("!prefix ");
     private static final class PrefixAssignerFac implements Supplier<WsPrefixAssigner> {
         @Override public WsPrefixAssigner get() {
             var pa = new WsPrefixAssigner(RopeArrayMap.create()).takeOwnership(RECYCLED);
@@ -56,6 +63,9 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
     }
 
     private final WsPrefixAssigner prefixAssigner;
+    private FinalSegmentRope[] names = ArrayAlloc.EMPTY_F_SEG_ROPE;
+    private short[] datatypeTails = ArrayAlloc.EMPTY_SHORT;
+    private final SegmentRopeView local = new SegmentRopeView();
 
     public static class WsFactory implements Factory {
         @Override public Orphan<WsSerializer> create(Map<String, String> params) {
@@ -77,10 +87,12 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
 
     @Override protected @Nullable WsSerializer internalMarkGarbage(Object currentOwner) {
         super.internalMarkGarbage(currentOwner);
-        columns = null;
-        vars    = Vars.EMPTY;
-        ask     = false;
-        empty   = true;
+        columns       = null;
+        vars          = Vars.EMPTY;
+        ask           = false;
+        empty         = true;
+        names         = ArrayAlloc.recycleSegmentRopesAndGetEmpty(names);
+        datatypeTails = ArrayAlloc.recycleShortsAndGetEmpty(datatypeTails);
         prefixAssigner.recycle(this);
         return null;
     }
@@ -88,6 +100,8 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
     @Override protected void onInit() {
         requireAlive();
         prefixAssigner.reset();
+        names         = ArrayAlloc.finalSegmentRopesAtLeast(columns.length, names);
+        datatypeTails = ArrayAlloc.shortsAtLeast(columns.length, datatypeTails);
     }
 
     @Override public void serializeHeader(ByteSink<?, ?> dest) {
@@ -114,9 +128,12 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
                 return;
             }
 
-            boolean chunk = !chunkCons.isNoOp();
             int chunkRows = 0, lastLen = sink.len(), lastRowBegin;
-            int softMax = min(hardMax, sink.freeCapacity());
+            boolean chunk     = !chunkCons.isNoOp();
+            int softMax       = min(hardMax, sink.freeCapacity());
+            var names         = this.names;
+            var datatypeTails = this.datatypeTails;
+            var columns       = this.columns;
             for (; batch != null; batch = detachAndDeliverNode(batch, nodeCons)) {
                 r = 0;
                 for (int rows = batch.rows; r < rows; ++r) {
@@ -124,10 +141,11 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
                     if (columns.length == 0) {
                         sink.append((byte)'\n');
                     } else {
-                        for (int col : columns)
-                            assignNames(batch, r, col);
+                        for (int i = 0; i < columns.length; i++) {
+                            assignNames(batch, r, columns, i, names, datatypeTails);
+                        }
                         for (int i = 0, last = columns.length - 1; i < columns.length; i++) {
-                            batch.writeSparql(sink, r, columns[i], prefixAssigner);
+                            writeSparql(sink, batch, r, columns, i, names, datatypeTails);
                             sink.append(i == last ? (byte) '\n' : (byte) '\t');
                         }
                     }
@@ -151,24 +169,86 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
         }
     }
 
-    private void assignNames(Batch<?> batch, int r, int c) {
-        var sh = batch.shared(r, c);
-        if (sh.len > 15/*"^^<http://a#t>*/ && sh.get(0) == '"') {
-            if (sh != DT_DOUBLE && sh != DT_integer && sh != DT_decimal && sh != DT_BOOLEAN) {
-                var prefix = SHARED_ROPES.internPrefixOf(sh, 3/*"^^<*/, sh.len);
-                prefixAssigner.nameFor(prefix);
-            }
-        } else if (sh.len > 0 && sh != P_RDF) {
-            prefixAssigner.nameFor(sh);
-        }
+    private boolean hasExp(Batch<?> batch, int r, int c) {
+        if (!batch.localView(r, c, local))
+            return false;
+        final int len = local.len;
+        return local.skipUntilLast(1, len, (byte)'e', (byte)'E') < len;
     }
 
+
+
+    private void assignNames(Batch<?> batch, int r, int[] columns, int ci, FinalSegmentRope[] names,
+                             short[] datatypeTails) {
+        var sh = batch.shared(r, columns[ci]);
+        FinalSegmentRope name;
+        short tail = -1;
+        if (sh.len > 15/*"^^<http://a#t>*/ && sh.get(0) == '"') {
+            if (sh == DT_DOUBLE && hasExp(batch, r, columns[ci])) {
+                name = NAKED;
+            } else if (sh == DT_integer || sh == DT_decimal || sh == DT_BOOLEAN) {
+                name = NAKED;
+            } else {
+                var prefix = SHARED_ROPES.internPrefixOf(sh, 3/*"^^<*/, sh.len);
+                tail = (short)(sh.len-1-(3+prefix.len));
+                name = (FinalSegmentRope)prefixAssigner.nameFor(prefix);
+            }
+        } else if (sh == P_RDF) {
+            name = PrefixMap.RDF_NAME;
+        } else if (sh.len > 0) {
+            name = sh.get(0) == '"' ? NT_LIT : (FinalSegmentRope)prefixAssigner.nameFor(sh);
+        } else {
+            name = NT_LOCAL;
+        }
+        names[ci]         = name;
+        datatypeTails[ci] = tail;
+    }
+
+    private static final FinalSegmentRope NAKED         = asFinal(new byte[]{'~'});
+    private static final FinalSegmentRope NT_LIT        = asFinal(new byte[]{'?'});
+    private static final FinalSegmentRope NT_LOCAL      = asFinal(new byte[]{'@'});
+
+    private void writeSparql(ByteSink<?,?> dst, Batch<?> batch, int r,
+                             int[] columns, int ci,
+                             FinalSegmentRope[] names, short[] datatypeTails) {
+        int column = columns[ci];
+        if (!batch.localView(r, column, local))
+            local.wrapEmpty();
+        var name = names[ci];
+        if (name == NAKED || name == NT_LOCAL || name == NT_LIT) {
+            dst.append(local, name == NAKED ? 1 : 0, local.len);
+            if (name == NT_LIT)
+                dst.append(batch.shared(r, column));
+        } else {
+            short tail = datatypeTails[ci];
+            if (tail >= 0) { // datatype
+                dst.append(local, 0, local.len);
+                dst.append(DT_MID).append(name).append(':');
+                var sh = batch.shared(r, column);
+                dst.append(sh, sh.len-1-tail, sh.len-1);
+            } else if (name == PrefixMap.RDF_NAME && local.equals(TYPE_LOCAL)) { // a
+                dst.append('a');
+            } else { // IRI
+                dst.append(name).append(':');
+                byte bad = local.len < 2 ? (byte)'a' : local.get(local.len-2);
+                boolean needsEscape = !contains(PN_LOCAL_LAST, bad)
+                                   && !local.isEscaped(local.len-2);
+                dst.append(local, 0, local.len-(needsEscape ? 2 : 1));
+                if (needsEscape)
+                    dst.append('\\').append(bad);
+            }
+        }
+    }
+    private static final SegmentRope TYPE_LOCAL = Term.RDF_TYPE.local();
+
     @Override public void serialize(Batch<?> batch, ByteSink<?, ?> sink, int row) {
-        // write terms to rowsBuffer, !prefix command will be written to sink
-        for (int col : columns)
-            assignNames(batch, row, col);
+        var names         = this.names;
+        var datatypeTails = this.datatypeTails;
+        int[] columns     = this.columns;
+        for (int i = 0; i < columns.length; i++)
+            assignNames(batch, row, columns, i, names, datatypeTails);
         for (int i = 0, last = columns.length - 1; i < columns.length; i++) {
-            batch.writeSparql(sink, row, columns[i], prefixAssigner);
+            writeSparql(sink, batch, row, columns, i, names, datatypeTails);
             sink.append(i == last ? (byte) '\n' : (byte) '\t');
         }
     }
@@ -213,7 +293,7 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
             Rope name = prefix2name.get(prefix);
             if (name == null) {
                 name = RopeFactory.make(12).add('p').add(prefix2name.size()).take();
-                prefix2name.put(FinalSegmentRope.asFinal(prefix), name);
+                prefix2name.put(asFinal(prefix), name);
                 dest.ensureFreeCapacity(PREFIX_CMD.len+name.len()+ prefix.len()+3)
                       .append(PREFIX_CMD).append(name).append(':')
                       .append(prefix).append('>').append('\n');
