@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
@@ -11,6 +10,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 
@@ -39,10 +39,9 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
         return sb.append(processor.label(pt));
     }
 
-    protected void cleanup(@Nullable Throwable error) {
-        processor.recycle(this);
-        if (error != null && !(error instanceof BItCancelledException))
-            delegate.close();
+    @Override protected void cleanup(@Nullable Throwable error) {
+        Owned.safeRecycle(processor, this);
+        delegate.close();
     }
 
     @Override public @Nullable Orphan<B> nextBatch(Orphan<B> orphan) {
@@ -51,7 +50,6 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                 lock();
                 try {
                     if (isTerminated()) {
-                        g.close();
                         break;
                     } else if (g.set(processor.processInPlace(g.poll())) == null) {
                         delegate.close(); // premature end, likely due to LIMIT clause
