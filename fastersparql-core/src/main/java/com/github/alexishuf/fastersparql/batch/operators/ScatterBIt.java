@@ -1,6 +1,8 @@
 package com.github.alexishuf.fastersparql.batch.operators;
 
 import com.github.alexishuf.fastersparql.batch.*;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
+import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -40,7 +42,7 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
 
     public static final class ConsumerQueue<B extends Batch<B>> extends SPSCBIt<B> {
         private final ScatterBIt<B> parent;
-        private @Nullable BItCancelledException cancelled;
+        private boolean cancelled;
 
         private ConsumerQueue(ScatterBIt<B> parent, BatchType<B> batchType, Vars vars,
                               int maxItems) {
@@ -53,21 +55,19 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
         }
 
         @Override public boolean tryCancel() {
+            boolean first = super.tryCancel(); // cancel this ConsumerQueue, will not affect upstream
+            if (cancelled)
+                return false; // previous tryCancel()
             lock();
             try {
-                if (cancelled == null) {
-                    dropAllQueued();
-                    cancelled = BItCancelledException.get(this);
-                    if ((int)CANCELLED.getAndAddRelease(parent, 1) == parent.queues.length-1) {
-                        if (parent.upstream.tryCancel()) {
-                            for (ConsumerQueue<B> q : parent.queues)
-                                q.eager();
-                        }
-                    }
-                    return true;
+                if (!cancelled) {
+                    cancelled = true;
+                    if ((int)CANCELLED.getAndAddRelease(parent, 1) == parent.queues.length-1)
+                        parent.upstream.tryCancel();
+                    return first; // can be false if completed before tryCancel()
                 }
             } finally { unlock(); }
-            return notTerminated();
+            return false; // another thread on tryCancel() cancelled before this one
         }
 
         @Override public void close() {
@@ -129,23 +129,17 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
                     stats.onBatchPassThrough(b);
                 //copy b to all consumers, except last
                 for (int i = 0; i < lastIdx; i++) {
-                    ConsumerQueue<B> q = queues[i];
-                    if (q.cancelled == null) {
-                        try {
-                            q.copy(b);
-                        } catch (BatchQueue.QueueStateException e) {
-                            handleTerminatedDuringOffer(e, q);
-                        }
-                    }
+                    var q = queues[i];
+                    try {
+                        if (!q.cancelled) q.copy(b);
+                    } catch (CancelledException ignored) {
+                    } catch (TerminatedException e) { handleTerminatedDuringOffer(e, q); }
                 }
                 // deliver b by reference to the last consumer
-                if (last.cancelled == null) {
-                    try {
-                        last.offer(g.take());
-                    } catch (BatchQueue.QueueStateException e) {
-                        handleTerminatedDuringOffer(e, last);
-                    }
-                }
+                try {
+                    if (!last.cancelled) last.offer(g.take());
+                } catch (CancelledException ignored) {
+                } catch (TerminatedException e) { handleTerminatedDuringOffer(e, last); }
             }
         } catch (Throwable e) {
             if (e instanceof BItReadFailedException rfe) {
@@ -159,7 +153,7 @@ public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, 
             FSCancelledException surprise = null;
             for (ConsumerQueue<B> q : queues) {
                 Throwable qCause;
-                if (q.cancelled == null && cancelled)
+                if (!q.cancelled && cancelled)
                     qCause = surprise == null ? surprise=new FSCancelledException() : surprise;
                 else if (cancelled)
                     qCause = BItCancelledException.get(q);
