@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
@@ -20,9 +19,7 @@ import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.function.IntFunction;
 
-import static com.github.alexishuf.fastersparql.batch.type.BatchType.PREFERRED_BATCH_TERMS;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.LEN_MASK;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.SH_SUFF_MASK;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
@@ -36,79 +33,12 @@ public abstract sealed class CompressedRowBucket
         implements RowBucket<CompressedBatch, CompressedRowBucket> {
     private static final int SL_OFF = 0;
     private static final int SL_LEN = 1;
-    private static final Bytes[] EMPTY_DATA = new Bytes[0];
-    private static final RowsDataFac DATA_FAC = new RowsDataFac();
-    private static final RowsDataRecycler DATA_RECYCLER = new RowsDataRecycler();
-    private static final LevelAlloc<Bytes[]> DATA_POOL;
-
-    static {
-        int batchLevel = len2level(PREFERRED_BATCH_TERMS);
-        int maxLevel = len2level(Short.MAX_VALUE);
-        DATA_POOL = new LevelAlloc<>(
-                Bytes[].class, "CompressedRowBucket.DATA_POOL",
-                20, 4, DATA_RECYCLER.clearElseMake,
-                new Capacities()
-                        .set(0, maxLevel, Alloc.THREADS*8)
-                        .set(0, 3, Alloc.THREADS*32 )
-                        .set(4, 4, Alloc.THREADS*128)
-                        .set(5, 6, Alloc.THREADS*64 )
-                        .set(batchLevel-3, batchLevel-3, Alloc.THREADS*64)
-                        .set(batchLevel-2, batchLevel-1, Alloc.THREADS*128)
-                        .set(batchLevel, batchLevel, Alloc.THREADS*64)
-                        .set(0, len2level(PREFERRED_BATCH_TERMS), Alloc.THREADS*32)
-        );
-        DATA_POOL.setZero(DATA_FAC.apply(0));
-        DATA_RECYCLER.pool = DATA_POOL;
-//        Primer.INSTANCE.sched(() -> {
-//            // StrongDedup usage:
-//            for (int level = 4; level <= 5; level++)
-//                DATA_POOL.primeLevelLocalAndShared(DATA_FAC, level);
-//            DATA_POOL.primeLevelLocal(DATA_FAC, 6);
-//            // WeakDedup, DistinctType.WEAK
-//            for (int level = batchLevel-3; level < batchLevel; level++)
-//                DATA_POOL.primeLevelLocalAndShared(DATA_FAC, level);
-//            // WeakDedup, DistinctType > WEAK
-//            for (int level = maxLevel-3; level <= maxLevel; level++)
-//                DATA_POOL.primeLevelLocalAndShared(DATA_FAC, level);
-//        });
-    }
-
-    private static final class RowsDataFac implements IntFunction<Bytes[]> {
-        @Override public Bytes[] apply(int len) {return len == 0 ? EMPTY_DATA : new Bytes[len];}
-        @Override public String toString() {return "RowsDataFac";}
-    }
-
-    private static final class RowsDataRecycler extends LevelCleanerBackgroundTask<Bytes[]> {
-        private RowsDataRecycler() {
-            super("CompressedRowsDataRecycler", DATA_FAC);
-            FS.addShutdownHook(this::dumpStats);
-        }
-
-        public void dumpStats() {
-            sync();
-            double nArrays = Math.max(1, objsPooled+fullPoolGarbage);
-            System.err.printf("""
-                    CompressedRowsData Bytes[]s   pooled: %,9d (%5.3f%%)
-                    CompressedRowsData Bytes[]s no space: %,9d (%5.3f%%)
-                    """,
-                    objsPooled,      100.0 *      objsPooled/nArrays,
-                    fullPoolGarbage, 100.0 * fullPoolGarbage/nArrays);
-        }
-
-
-        @Override protected void clear(Bytes[] rowsData) {
-            for (int i = 0; i < rowsData.length; i++) {
-                var rd = rowsData[i];
-                if (rd != null)
-                    rowsData[i] = rd.recycle(rowsData);
-            }
-        }
-    }
 
     private Bytes[] rowsData;
     private FinalSegmentRope[] shared;
     private int cols, rows;
     private long[] has;
+    private BytesArray rowsDataHolder;
     private LIFOPool<RowBucket<CompressedBatch, ?>> pool;
 
     static int estimateBytes(int rows, int cols) {
@@ -121,10 +51,11 @@ public abstract sealed class CompressedRowBucket
 
     public CompressedRowBucket(int rowsCapacity, int cols) {
         int level = LevelAlloc.len2level(rowsCapacity);
-        this.rowsData = DATA_POOL.createFromLevel(level);
-        this.shared = finalSegmentRopesAtLeast(rowsData.length*cols);
+        this.rowsDataHolder = BytesArray.createFromLevel(level).takeOwnership(this);
+        this.rowsData       = rowsDataHolder.arr;
+        this.shared         = finalSegmentRopesAtLeast(rowsData.length*cols);
         int hasWords = BS.longsFor(rowsData.length);
-        long[] has = longsAtLeast(hasWords);
+        long[] has   = longsAtLeast(hasWords);
         if (has == null)
             has = new long[hasWords];
         else
@@ -142,8 +73,8 @@ public abstract sealed class CompressedRowBucket
             currentOwner = SpecialOwner.RECYCLED;
         }
         internalMarkGarbage(currentOwner);
-        DATA_RECYCLER.sched(rowsData, rowsData.length);
-        rowsData = EMPTY_DATA;
+        rowsDataHolder = BytesArray.recycleAndGetEmpty(rowsDataHolder, this);
+        rowsData = rowsDataHolder.arr;
         shared   = recycleSegmentRopesAndGetEmpty(shared);
         has      = recycleLongsAndGetEmpty(has);
         rows     = 0;
@@ -196,15 +127,17 @@ public abstract sealed class CompressedRowBucket
         int required = rows+additionalRows;
         if (required > rowsData.length) {
             int requiredLevel = len2level(rows + additionalRows);
-            Bytes[] newData = DATA_POOL.createFromLevel(requiredLevel);
-            Bytes[] oldData = rowsData;
+            var newDataH = BytesArray.createFromLevel(requiredLevel).takeOwnership(this);
+            var oldDataH = rowsDataHolder;
+            var newData = newDataH.arr;
+            var oldData = oldDataH.arr;
             // DATA_RECYCLER recycles anything in oldData, move all non-garbage rows to newData
             for (int i = 0; (i=BS.nextSetOrLen(has, i)) < oldData.length; ++i) {
-                newData[i] = oldData[i].transferOwnership(oldData, newData);
+                newData[i] = oldData[i].transferOwnership(oldDataH, newDataH);
                 oldData[i] = null;
             }
-            rowsData = newData;
-            DATA_RECYCLER.sched(oldData, oldData.length);
+            rowsData = (rowsDataHolder = newDataH).arr;
+            oldDataH.recycle(this);
             has = ArrayAlloc.grow(has, BS.longsFor(newData.length));
             int terms = newData.length*cols;
             if (terms > shared.length)
@@ -217,10 +150,10 @@ public abstract sealed class CompressedRowBucket
     @Override public void clear(int rowsCapacity, int cols) {
         if (rowsCapacity > rowsData.length) {
             int level = len2level(rowsCapacity);
-            var newData = DATA_POOL.createFromLevel(level);
-            DATA_RECYCLER.sched(rowsData, rowsData.length);
-            rowsData = newData;
-            has = longsAtLeast(BS.longsFor(newData.length), has);
+            var newData = BytesArray.createFromLevel(level).takeOwnership(this);
+            rowsDataHolder.recycle(this);
+            rowsData = (rowsDataHolder = newData).arr;
+            has = longsAtLeast(BS.longsFor(newData.arr.length), has);
         }
         int terms = rowsData.length*cols;
         if (shared.length < terms)
@@ -276,22 +209,23 @@ public abstract sealed class CompressedRowBucket
         requireAlive();
         b.clear();
         // first pass counts required locals capacity
-        long [] has      = this.has;
-        Bytes[] rowsData = this.rowsData;
+        var has            = this.has;
+        var rowsDataHolder = this.rowsDataHolder;
+        var rowsData       = this.rowsData;
         for (int rows = this.rows; (row=BS.nextSetOrLen(has, row)) < rows; ++row) {
-            if (!b.copyFromBucketIfFits(rowsData[row].requireOwner(rowsData).arr, shared, row))
+            if (!b.copyFromBucketIfFits(rowsData[row].requireOwner(rowsDataHolder).arr, shared, row))
                 break; // b has no more space
         }
         // if first row already blew the budget, enlarge b to fit
         if (b.rows == 0 && row < rows) {
-            b.copyFromBucket(rowsData[row].requireOwner(rowsData).arr, shared, row);
+            b.copyFromBucket(rowsData[row].requireOwner(rowsDataHolder).arr, shared, row);
             ++row;
         }
         return row; // return value to be given as row in the next call to fill()
     }
 
     @Override public void set(int dst, CompressedBatch batch, int row) {
-        rowsData[dst] = batch.copyToBucket(rowsData[dst], rowsData, shared, dst, row);
+        rowsData[dst] = batch.copyToBucket(rowsData[dst], rowsDataHolder, shared, dst, row);
         BS.set(has, dst);
     }
 
@@ -302,11 +236,11 @@ public abstract sealed class CompressedRowBucket
         if (BS.get(has, src)) {
             BS.set(has, dst);
             s = rowsData[src];
-            rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsData, s.arr.length);
+            rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsDataHolder, s.arr.length);
             arraycopy(shared, src * cols, shared, dst * cols, cols);
         } else {
             BS.clear(has, dst);
-            rowsData[dst] = d.recycle(rowsData);
+            rowsData[dst] = d.recycle(rowsDataHolder);
         }
     }
 
@@ -318,11 +252,11 @@ public abstract sealed class CompressedRowBucket
         Bytes s = bucket.rowsData[src], d = rowsData[dst];
         if (BS.get(bucket.has, src)) {
             BS.set(has, dst);
-            rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsData, s.arr.length);
+            rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsDataHolder, s.arr.length);
             arraycopy(bucket.shared, src*bucket.cols, shared, dst*cols, cols);
         } else if (d != null) {
             BS.clear(has, dst);
-            rowsData[dst] = d.recycle(rowsData);
+            rowsData[dst] = d.recycle(rowsDataHolder);
         }
     }
 
@@ -330,7 +264,7 @@ public abstract sealed class CompressedRowBucket
         if (srcRow >= rows)
             throw new IndexOutOfBoundsException(srcRow);
         else if (BS.get(has, srcRow))
-            dst.copyFromBucket(rowsData[srcRow].requireOwner(rowsData).arr, shared, srcRow);
+            dst.copyFromBucket(rowsData[srcRow].requireOwner(rowsDataHolder).arr, shared, srcRow);
     }
 
     @Override public boolean equals(int row, CompressedBatch other, int otherRow) {
