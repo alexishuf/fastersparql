@@ -68,10 +68,6 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
         }
     }
 
-    @Override public @Nullable P recycle(Object currentOwner) {
-        return super.recycle(currentOwner);
-    }
-
     /* --- --- --- Emitter methods --- --- --- */
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
