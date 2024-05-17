@@ -320,6 +320,7 @@ public final class Modifier extends Plan {
         }
 
         @Override public @Nullable SlicingDedup<B> recycle(Object currentOwner) {
+            internalMarkRecycled(currentOwner);
             dedup.recycle(this);
             return null;
         }
