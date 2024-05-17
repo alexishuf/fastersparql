@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -41,7 +42,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private final BatchBinding tempBinding;
     private long bindingSeq;
     private @Nullable ArrayList<SparqlClient.Guard> guards;
-    private @Nullable Thread safeCleanupThread;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -79,16 +79,14 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             }
             guards = GUARDS_ALLOC.offer(guards);
         }
-        if (safeCleanupThread == Thread.currentThread()) {
-            // only recycle lb and rb if we are certain they are exclusively held by this BIt.
-            lb = Batch.safeRecycle(lb, this);
-            rb = Batch.safeRecycle(rb, this);
-        }
-        try {
-            merger.recycle(this);
-        } catch (Throwable t) { reportCleanupError(t); }
-        if (cause != null)
+        lb = Batch.safeRecycle(lb, this);
+        rb = Batch.safeRecycle(rb, this);
+        Owned.safeRecycle(merger, this);
+        if (cause != null) {
+            if (inner != empty)
+                inner.tryCancel();
             bindQuery.bindings.tryCancel();
+        }
     }
 
     @Override public boolean tryCancel() {
@@ -110,34 +108,29 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private static final byte PUB_LEFT_AND_CANCEL = PUB_LEFT|CANCEL;
 
     @Override public Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
-        if (lb == null) return null; // already exhausted
+        B b = orphan == null ? null : orphan.takeOwnership(this).clear(nColumns);
         lock();
-        boolean locked = true;
         try {
             if (plainState.isTerminated())
                 return null; // cancelled
             long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
             boolean rightEmpty = false, bindingEmpty = false;
-            B b = orphan == null ? batchType.create(nColumns).takeOwnership(this)
-                                 : orphan.takeOwnership(this).clear(nColumns);
+            if (b == null)
+                b = batchType.create(nColumns).takeOwnership(this);
             do {
                 if (inner == empty) {
                     if (lb != null && ++leftRow >= lb.rows) {
                         leftRow = 0;
-                        B n = lb.dropHead(this);
-                        if (n != null) {
-                            lb = n;
-                        } else {
+                        if ((lb=lb.dropHead(this)) == null) {
+                            Orphan<B> nlb;
                             unlock();
-                            locked = false;
-                            Orphan<B> nlb = bindQuery.bindings.nextBatch(null);
-                            lock();
-                            locked = true;
+                            try {
+                                nlb = bindQuery.bindings.nextBatch(null);
+                            } finally { lock(); }
                             if (nlb != null && plainState == State.ACTIVE) {
                                 lb = nlb.takeOwnership(this);
                             } else {
                                 Orphan.recycle(nlb);
-                                lb = null;
                                 break; // reached end or cancelled
                             }
                         }
@@ -149,7 +142,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 B rb = this.rb;
                 this.rb = null;
                 unlock();
-                locked = false;
                 try {
                     rb = inner.nextBatch(rb, this);
                 } catch (BItReadCancelledException e) {
@@ -158,7 +150,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                     throw e;
                 } finally {
                     lock();
-                    locked = true;
                 }
                 if (plainState.isTerminated()) {
                     Batch.recycle(rb, this);
@@ -191,22 +182,17 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             } while (readyInNanos(b.totalRows(), startNs) > 0 && !plainState.isTerminated());
             return b.rows == 0 ? handleEmptyBatch(b) : onNextBatch(b.releaseOwnership(this));
         } catch (Throwable t) {
-            lb = null; // signal exhaustion
             onTermination(t);
             throw t;
         } finally {
-            if (locked)
-                unlock();
+            unlock();
         }
     }
 
     @SuppressWarnings("SameReturnValue") private Orphan<B> handleEmptyBatch(B batch) {
         batch.recycle(this);
-        if (!plainState.isTerminated()) {
-            safeCleanupThread = Thread.currentThread();
+        if (!plainState.isTerminated())
             onTermination(null);
-            safeCleanupThread = null;
-        }
         return null;
     }
 
