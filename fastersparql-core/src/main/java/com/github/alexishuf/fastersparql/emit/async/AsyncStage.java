@@ -40,7 +40,6 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     private final Emitter<B, ?> up;
     @SuppressWarnings("unused") private @Nullable B plainQueue;
-    private volatile int termination;
 
     public static <B extends Batch<B>> Orphan<AsyncStage<B>>
     create(Orphan<? extends Emitter<B, ?>> upstream) {
@@ -87,7 +86,6 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
     @Override public void rebind(BatchBinding b) {
         resetForRebind(0, 0);
         Batch.safeRecycle((Batch<?>)QUEUE.getAndSetAcquire(this, (Batch<?>)null), this);
-        termination = 0;
         up.rebind(b);
     }
 
@@ -152,7 +150,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((st&IS_ASYNC) == 0) {
             deliverTermination(st, COMPLETED);
         } else {
-            termination = COMPLETED;
+            moveStateRelease(st, PENDING_COMPLETED);
             awake(true);
         }
     }
@@ -162,7 +160,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((st&IS_ASYNC) == 0) {
             deliverTermination(st, CANCELLED);
         } else {
-            termination = CANCELLED;
+            moveStateRelease(st, PENDING_CANCELLED);
             awake(true);
         }
     }
@@ -173,7 +171,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         if ((st&IS_ASYNC) == 0) {
             deliverTermination(st, FAILED);
         } else {
-            termination = FAILED;
+            moveStateRelease(st, PENDING_FAILED);
             awake(true);
         }
     }
@@ -190,7 +188,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
     @Override protected void resume() { up.request(requested()); }
 
     @Override protected boolean mustAwake() {
-        return termination != 0 || plainQueue != null;
+        return (statePlain()&IS_PENDING_TERM) != 0 || plainQueue != null;
     }
 
     @Override protected int produceAndDeliver(int state) {
@@ -198,7 +196,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         B queue = (B)QUEUE.getAndSetAcquire(this, null);
         if (queue != null)
             deliver(queue.releaseOwnership(this));
-        int termState = termination;
-        return plainQueue != null || termState == 0 ? state : termState;
+        return plainQueue != null || (state&IS_PENDING_TERM) == 0 ? state
+                : (state&~IS_PENDING_TERM) | IS_TERM;
     }
 }
