@@ -1179,7 +1179,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public Vars bindableVars() { return bindableVars; }
 
-        @Override public String toString() { return super.toString()+'('+tp+')'; }
+        @Override public String toString() { return super.toString(); }
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
             StoreSparqlClient.appendToSimpleLabel(out, endpoint, tp);
