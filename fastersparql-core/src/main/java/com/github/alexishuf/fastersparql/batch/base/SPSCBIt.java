@@ -117,6 +117,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         ready   = Batch.safeRecycle(ready,   this);
         filling = Batch.safeRecycle(filling, this);
         unlock();
+        unpark(producer); // may be waiting for free capacity
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {

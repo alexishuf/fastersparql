@@ -109,7 +109,8 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                     if (guard.rows() == 0)
                         continue;
                 }
-                offer(guard.poll());
+                if (!cancelRequested)
+                    offer(guard.poll());
             }
         } catch (BItReadCancelledException ignored) {
             lock(); // required for the load/acquire barrier
@@ -199,6 +200,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 log.warn("Ignoring tryCancel() failure for {} by {}", s, this, t);
             }
         }
+        dropAllQueued();
         return did;
     }
 

@@ -88,7 +88,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             merger.recycle(this);
         } catch (Throwable t) { reportCleanupError(t); }
         if (cause != null)
-            bindQuery.bindings.close();
+            bindQuery.bindings.tryCancel();
     }
 
     @Override public boolean tryCancel() {
