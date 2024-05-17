@@ -81,9 +81,7 @@ public sealed class Guard<O extends Owned<O>> implements AutoCloseable {
     }
 
     @Override public void close() {
-        O owned = this.owned;
-        if (owned != null)
-            owned.recycle(owner);
+        owned = Owned.safeRecycle(owned, owner);
     }
 
     public static sealed class BatchGuard<B extends Batch<B>> extends Guard<B> {
