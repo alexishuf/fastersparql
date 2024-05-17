@@ -244,9 +244,7 @@ public abstract sealed class CompressedRowBucket
         private boolean filled = false;
         private int row = 0;
 
-        @Override public void close() {
-            if (batch != null) batch = batch.recycle(this);
-        }
+        @Override public void close() {batch = Batch.safeRecycle(batch, this);}
 
         @Override public boolean hasNext() {
             boolean has = batch != null;

@@ -231,9 +231,7 @@ public abstract sealed class TermBatchBucket
         private int row = 0;
         private boolean filled = false;
 
-        @Override public void close() {
-            if (tmp != null) tmp = tmp.recycle(this);
-        }
+        @Override public void close() { tmp = Batch.safeRecycle(tmp, this); }
 
         @Override public boolean hasNext() {
             boolean hasNext = tmp != null;
