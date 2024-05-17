@@ -388,6 +388,22 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     }
 
     /**
+     * Atomically clears all flags in {@code clear} and sets all flags in {@code set} with
+     * release semantics: future reads by threads that read the state with acquire semantics
+     * will observe writes the caller thread made before this method.
+     *
+     * @param clear bit mask of flags that will be set to {@code 0}
+     * @param set bit mas of flags that will be set to {@code 1}
+     * @return the new {@link #state()}.
+     */
+    public int changeFlagsRelease(int clear, int set) {
+        int ex = plainState, ac, n;
+        while ((ac=(int)S.compareAndExchangeRelease(this, ex, n=(ex&~clear)|set)) != ex)
+            ex = ac;
+        return n;
+    }
+
+    /**
      * Atomically reads the flag and sets it if unset.
      *
      * @param flag the bit mask to be set

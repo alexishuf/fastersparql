@@ -58,9 +58,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private static final int RIGHT_STARVED      = 0x00800000;
     private static final int CAN_REQ_RIGHT_MASK = RIGHT_BINDING|RIGHT_STARVED;
     private static final int CAN_REQ_RIGHT      = 0;
-    private static final int CAN_BIND_MASK      = RIGHT_STARVED|RIGHT_BINDING|IS_TERM|IS_CANCEL_REQ;
+    private static final int LEFT_CAN_BIND_MASK = RIGHT_STARVED|RIGHT_BINDING|IS_TERM|IS_CANCEL_REQ;
     private static final int LEFT_CAN_BIND      = RIGHT_STARVED;
-    private static final int RIGHT_CAN_BIND     = 0;
+    private static final int RIGHT_CANNOT_BIND  = RIGHT_BINDING|IS_TERM|IS_CANCEL_REQ;
     private static final int FILTER_BIND        = 0x00010000;
     private static final int REBIND_FAILED      = 0x00020000;
     private static final Flags BINDING_STAGE_FLAGS =
@@ -265,20 +265,24 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         journal("onBatch, rows=", rows, "st=", statePlain(), flags, "on", this);
 
         int state = lock();
-        boolean scheduleRebindTask;
+        boolean scheduleRebindTask = false;
         try {
-            B head = lb, dst = detachDistinctTail(head, this);
-            if (dst != null) {
-                state = unlock(); // copy/append() while unlocked
-                dst.append(orphan);
-                orphan = dst.releaseOwnership(this);
-                state = lock();
-                head = lb; // might have changed while unlocked
+            if ((state&IS_CANCEL_REQ) != 0) {
+                orphan.takeOwnership(this).recycle(this);
+            } else {
+                B head = lb, dst = detachDistinctTail(head, this);
+                if (dst != null) {
+                    state = unlock(); // copy/append() while unlocked
+                    dst.append(orphan);
+                    orphan = dst.releaseOwnership(this);
+                    state = lock();
+                    head = lb; // might have changed while unlocked
+                }
+                lb = Batch.quickAppend(head, this, orphan);
+                lbTotalRows += rows;
+                leftPending -= rows;
+                scheduleRebindTask = (state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND;
             }
-            lb           = Batch.quickAppend(head, this, orphan);
-            lbTotalRows += rows;
-            leftPending -= rows;
-            scheduleRebindTask = (state&CAN_BIND_MASK) == LEFT_CAN_BIND;
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
@@ -295,19 +299,21 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         journal("onBatchByCopy, rows=", rows, "st=", statePlain(), flags, "on", this);
 
         int state = lock();
-        boolean scheduleRebindTask;
+        boolean scheduleRebindTask = false;
         try {
-            B head = lb, tail = detachDistinctTail(head, this);
-            state = unlock(); // copy/append() while unlocked
-            if (tail == null)
-                tail = batchType.create(batch.cols).takeOwnership(this);
-            tail.copy(batch);
-            Orphan<B> tailOrphan = tail.releaseOwnership(this);
-            state = lock();
-            lb           = Batch.quickAppend(lb, this, tailOrphan);
-            lbTotalRows += rows;
-            leftPending -= rows;
-            scheduleRebindTask = (state&CAN_BIND_MASK) == LEFT_CAN_BIND;
+            if ((state&IS_CANCEL_REQ) == 0) {
+                B head = lb, tail = detachDistinctTail(head, this);
+                state = unlock(); // copy/append() while unlocked
+                if (tail == null)
+                    tail = batchType.create(batch.cols).takeOwnership(this);
+                tail.copy(batch);
+                Orphan<B> tailOrphan = tail.releaseOwnership(this);
+                state = lock();
+                lb = Batch.quickAppend(lb, this, tailOrphan);
+                lbTotalRows += rows;
+                leftPending -= rows;
+                scheduleRebindTask = (state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND;
+            }
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
@@ -426,18 +432,34 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
 
     @Override public boolean cancel() {
         journal("cancel()", this);
-        int st = lock(), next = st&STATE_MASK;
+        int st = lock();
+        boolean cancelLeft = false, cancelRight = false, hasEffect;
         try {
-            if ((st&(IS_CANCEL_REQ|IS_TERM)) == 0) {
-                next = CANCEL_REQUESTED;
-                leftUpstream.cancel();
-                rightRecv.upstream.cancel();
-                return true;
+            hasEffect = (st&(IS_CANCEL_REQ|IS_TERM)) == 0;
+            if (hasEffect) {
+                // change state NOW so clearFlagsRelease(RIGHT_BINDING) can observe IS_CANCEL_REQ
+                st = changeFlagsRelease(STATE_MASK, CANCEL_REQUESTED);
+                // cancel() on terminated is a waste of time. cancel() concurrent with
+                // rebind() can corrupt right upstream state
+                cancelLeft  = (st&LEFT_TERM) == 0;
+                cancelRight = (st&(RIGHT_STARVED|RIGHT_BINDING)) == 0;
+                if (lb != null && (st&(RIGHT_STARVED|RIGHT_BINDING)) == RIGHT_STARVED) {
+                    // this state holds between the first onBatch() RIGHT_STARVED and the
+                    // RebindTask.task() scheduled at onBatch(). RebindTask will bail due to
+                    // IS_CANCEL_REQ and there will be no termination from the right side,
+                    // which is starved.
+                    st = cancelFutureBindings(); // drop queue and terminateStage() if appropriate
+                }
             }
-            return false;
         } finally {
-            unlock(STATE_MASK, next);
+            if ((st&LOCKED_MASK) != 0) // cancelFutureBindings()->terminateStage() may unlock()
+                unlock();
         }
+        if (cancelLeft)
+            leftUpstream.cancel();
+        if (cancelRight)
+            rightRecv.upstream.cancel();
+        return hasEffect;
     }
 
     @Override public void request(long rows) {
@@ -454,7 +476,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         try {
             if (rows > requested) {
                 requested = rows;
-                maybeRequestLeft();
+                maybeRequestLeft(lb);
                 if ((state&CAN_REQ_RIGHT_MASK) == CAN_REQ_RIGHT)
                     rightRecv.upstream.request(rightRows);
             }
@@ -492,8 +514,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         return state;
     }
 
-    private void maybeRequestLeft() {
-        B lb = this.lb;
+    private void maybeRequestLeft(B lb) {
         // count queued left rows into LEFT_REQUESTED_MAX limit
         int queued = (lb == null ? 0 : lbTotalRows-lr);
         if (requested > Math.max(0, leftPending)+queued && leftPending < leftChunk>>1) {
@@ -591,7 +612,17 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         return lb;
     }
 
+    private int cancelFutureBindings() {
+        if (ENABLED) journal("cancelFutureBindings(), bs=", this);
+        dropLeftQueued();
+        int st = setFlagsRelease(RIGHT_STARVED);
+        if ((st&LEFT_TERM) == 0) leftUpstream.cancel();
+        else                     st = terminateStage(st);
+        return st;
+    }
+
     private int startNextBinding(int st) {
+        assert (st&(LOCKED_MASK|RIGHT_BINDING|IS_TERM|IS_CANCEL_REQ)) == LOCKED_MASK : "bad state";
         B lb = this.lb;
         short lr = (short)(this.lr+1);
         try {
@@ -603,11 +634,10 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             this.lr = lr;
             if (ENABLED)
                 journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
-            if ((st&IS_CANCEL_REQ) == 0)
-                maybeRequestLeft();
+            maybeRequestLeft(lb);
             if (lb == null) {
-                if ((st & LEFT_TERM) == 0) st = unlock(0, RIGHT_STARVED);
-                else                       st = terminateStage(st);
+                if ((st&LEFT_TERM) == 0) st = unlock(0, RIGHT_STARVED);
+                else                     st = terminateStage(st);
             } else {
                 // release lock but forbid onBatch() from calling startNextBinding()
                 // and forbid request() from calling upstream.request()
@@ -618,7 +648,10 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 rightRecv.upstreamEmpty = true;
                 rightRecv.listenerNotified = false;
                 st = clearFlagsRelease(RIGHT_BINDING)&~LOCKED_MASK; // rebind complete, allow upstream.request()
-                rightRecv.upstream.request((st & FILTER_BIND) == 0 ? requested : 2);
+                if ((st&IS_CANCEL_REQ) != 0)
+                    rightRecv.upstream.cancel();
+                else
+                    rightRecv.upstream.request((st&FILTER_BIND) == 0 ? requested : 2);
             }
         } catch (Throwable t) {
             log.error("{}.startNextBinding() failed after seq={}", this, rightRecv.bindingSeq, t);
@@ -674,8 +707,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             super(EMITTER_SVC, CREATED, TASK_FLAGS);
             this.bs = bs;
         }
-
-        public static final class Concrete extends RebindTask implements Orphan<RebindTask> {
+        private static final class Concrete extends RebindTask implements Orphan<RebindTask> {
             private Concrete(BindingStage<?, ?> bs) {super(bs);}
             @Override public RebindTask takeOwnership(Object o) {return takeOwnership0(o);}
         }
@@ -685,7 +717,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
             int st = bs.lock();
             try {
-                if ((st&CAN_BIND_MASK) == LEFT_CAN_BIND)
+                if ((st&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
                     st = bs.startNextBinding(st);
             } finally {
                 if ((st&LOCKED_MASK) != 0) bs.unlock();
@@ -738,7 +770,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         public void onBatch0(B rb, boolean copy) {
             if (rb == null)
                 return;
-            if (rb.rows == 0) {
+            if (rb.rows == 0 || (statePlain()&IS_CANCEL_REQ) != 0) {
                 if (!copy) rb.recycle(this);
                 return;
             }
@@ -822,14 +854,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             }
         }
 
-        private int cancelFutureBindings() {
-            if (ENABLED) journal("cancelFutureBindings(), bs=", this);
-            dropLeftQueued();
-            int st = setFlagsRelease(RIGHT_STARVED);
-            if ((st&LEFT_TERM) == 0) leftUpstream.cancel();
-            else                     st = terminateStage(st);
-            return st;
-        }
 
         @Override public void onComplete() {
             if (ENABLED) journal("right.onComplete() on ", this);
@@ -853,7 +877,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                         }
                     }
                     lockedSt = lock();
-                    if ((lockedSt&CAN_BIND_MASK)==RIGHT_CAN_BIND) {
+                    if ((lockedSt&RIGHT_CANNOT_BIND)==0) {
                         lockedSt = startNextBinding(lockedSt);
                     } else if ((lockedSt&IS_CANCEL_REQ) != 0) {
                         lockedSt = cancelFutureBindings();
