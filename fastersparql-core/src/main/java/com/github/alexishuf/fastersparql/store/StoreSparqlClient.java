@@ -836,12 +836,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override protected void doRelease() {
+            assert asyncBottom == STOP_SENTINEL && (state()&IS_RUNNING) == 0;
             syncL.recycle(this);
             Owned.safeRecycle(asyncL, this);
             requestedBinding      = null;
             requestedBindingBatch = null;
-            asyncBottom           = STOP_SENTINEL;
-            asyncBinding          = null;
             unsrcIds              = recycleLongsAndGetEmpty(unsrcIds);
             rowSkels              = recycleLongsAndGetEmpty(rowSkels);
             skelCol2InCol         = recycleShortsAndGetEmpty(skelCol2InCol);
@@ -920,7 +919,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             asyncBottom = STOP_SENTINEL; // causes task() to exit, if running on entering
             if ((stateAcquire()&IS_RUNNING) != 0)
                 spinUntilStopped();
-            asyncBinding = null; // defensive, but must be after waiting for !IS_RUNNING
+            if (asyncBottom != STOP_SENTINEL)
+                throw new IllegalStateException("concurrent stop()/request()");
         }
 
         private void spinUntilStopped() {
