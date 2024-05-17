@@ -360,6 +360,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             return st;
         st = unlock(0, DONE_CANCEL);
         try {
+            queue = Batch.safeRecycle(queue, this);
             if ((st&PROD_LIVE) == 0) {
                 earlyCancelProducer();
                 moveStateRelease(st, CANCEL_REQUESTED);

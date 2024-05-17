@@ -182,6 +182,8 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
 
     @Override public boolean cancel() {
+        //noinspection unchecked
+        Batch.safeRecycle((B)QUEUE.getAndSetAcquire(this, null), this);
         return up.cancel();
     }
 
