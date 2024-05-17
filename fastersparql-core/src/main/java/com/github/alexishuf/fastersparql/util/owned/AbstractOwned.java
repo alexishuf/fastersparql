@@ -165,16 +165,16 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
     }
 
     protected @Nullable O internalMarkGarbage(Object currentOwner) {
-        if (MARK) {
-            Object actual = owner;
-            if (actual != currentOwner)
-                throw new OwnershipException(this, currentOwner, actual, history);
-            owner = GARBAGE;
-            if (TRACE && history != null)
-                history.garbage(this);
-            if (DETECT_LEAKS && leakState != null)
-                leakState.update(GARBAGE);
-        }
+        // Since the object intends to recycle/close its own resources, even if ownership
+        // marking is disabled, owner = GARBAGE is still required to prevent double-free issues
+        Object actual = owner;
+        if (actual != (MARK ? currentOwner : null))
+            throw new OwnershipException(this, currentOwner, actual, history);
+        owner = GARBAGE;
+        if (TRACE && history != null)
+            history.garbage(this);
+        if (DETECT_LEAKS && leakState != null)
+            leakState.update(GARBAGE);
         return null;
     }
 
