@@ -84,7 +84,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             if (b != null)
                 b.recycle(currentOwner);
         } catch (Throwable t) {
-            log.error("Error recycling {}", b, t);
+            log.error("Error recycling {}", b.journalName(), t);
         }
         return null;
     }
