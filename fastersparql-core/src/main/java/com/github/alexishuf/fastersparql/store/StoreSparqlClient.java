@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.store;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BItCancelledException;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.SingletonBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
@@ -2374,19 +2373,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void cleanup(@Nullable Throwable cause) {
             try {
-                // close() and failures from nextBatch() are rare. Rarely generating garbage is
-                // cheaper than precisely tracking whether lb ownership is with this or with left,
-                if (cause == null) {
-                    lb = Batch.safeRecycle(lb, this); // signals exhaustion to nextBatch()
-                }
-                // if we arrived here from close(), nextBatch() may be concurrently executing.
-                // it is cheaper to leak rb and fb than to synchronize
-                if (!(cause instanceof BItCancelledException)) {
-                    rb = Batch.safeRecycle(rb, this);
-                    fb = Batch.safeRecycle(fb, this);
-                }
+                lb = Batch.safeRecycle(lb, this); // signals exhaustion to nextBatch()
+                rb = Batch.safeRecycle(rb, this);
+                fb = Batch.safeRecycle(fb, this);
                 Owned.safeRecycle(rightFilter, this);
+                Owned.safeRecycle(preFilterMerger, this);
                 Owned.safeRecycle(merger, this);
+                Owned.safeRecycle(sLexIt, this);
+                Owned.safeRecycle(pLexIt, this);
+                Owned.safeRecycle(oLexIt, this);
+                left.close();
             } finally {
                 try {
                     super.cleanup(cause);
@@ -2404,13 +2400,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
-            if (lb == null) return null; // already exhausted
+            B b = orphan == null ? null : orphan.takeOwnership(this).clear(nColumns);
             boolean locked = false;
             try {
                 long startNs = needsStartTime ? Timestamp.nanoTime() : Timestamp.ORIGIN;
                 long innerDeadline = rightSingleRow ? Timestamp.ORIGIN-1 : startNs+minWaitNs;
-                B b = orphan == null ? batchType.create(nColumns).takeOwnership(this)
-                                     : orphan.takeOwnership(this).clear(nColumns);
+                if (b == null)
+                    b = batchType.create(nColumns).takeOwnership(this);
                 do {
                     lock();
                     locked = true;
@@ -2509,7 +2505,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             } catch (Throwable t) {
                 if (state() == State.ACTIVE)
                     onTermination(t);
-                lb = null; // signal exhaustion
                 throw t;
             } finally {
                 if (locked)
@@ -2655,10 +2650,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return rebindLexical();
             if (++lr >= lb.rows) {
                 lr = 0;
-                B n = lb.dropHead(this);
-                if (n != null) {
-                    lb = n;
-                } else {
+                if ((lb=lb.dropHead(this)) == null) {
                     if (eager)
                         left.tempEager();
                     B nextLB = null;
@@ -2670,7 +2662,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         if (isTerminated()) // tryCancel()/close() while unlocked
                             nextLB = Batch.safeRecycle(nextLB, this); // abort rebind
                     }
-                    if ((lb = nextLB) == null)
+                    if ((lb=nextLB) == null)
                         return false;
                 }
             }
