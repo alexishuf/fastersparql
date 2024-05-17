@@ -54,20 +54,20 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
         return this;
     }
 
-    @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
+    @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
+        B b = offer == null ? null : offer.takeOwnership(this).clear(nColumns);
         lock();
         try {
             if (pendingError != null)
                 throwPending();
-            if (plainState.isTerminated())
+            if (plainState.isTerminated()) {
                 return null;
-            //journal.write("UBIt.nextBatch: &offer=", System.identityHashCode(b));
-            B b = orphan != null ? orphan.takeOwnership(this).clear(nColumns)
-                                 : batchType.create(nColumns).takeOwnership(this);
-            //journal.write("UBIt.nextBatch: &b=", System.identityHashCode(b));
+            }
             long start = fillingStart;
             if (needsStartTime && start == Timestamp.ORIGIN)
                 fillingStart = start = Timestamp.nanoTime();
+            if (b == null)
+                b = batchType.create(nColumns).takeOwnership(this);
             try {
                 while (!exhausted && readyInNanos(b.totalRows(), start) > 0)
                     b = fetch(b);
@@ -76,7 +76,6 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
             }
             fillingStart = Timestamp.ORIGIN;
             if (b.rows == 0) {
-                //noinspection UnusedAssignment
                 b = b.recycle(this);
                 if (pendingError != null) {
                     throwPending();
@@ -86,12 +85,14 @@ public abstract class UnitaryBIt<B extends Batch<B>> extends AbstractBIt<B> {
                 }
                 return null;
             }
-            orphan = Owned.releaseOwnership(b, this);
+            var orphan = Owned.releaseOwnership(b, this);
+            b = null;
             onNextBatch(orphan);
             //journal.write("UBIt.nextBatch: return &b=", System.identityHashCode(b), "rows=", b.rows, "[0][0]=", b.get(0, 0));
             return orphan;
         } finally {
             unlock();
+            Batch.safeRecycle(b, this);
         }
     }
 }
