@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -9,8 +10,11 @@ import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
+import static com.github.alexishuf.fastersparql.emit.async.EmitterService.Task.IS_RUNNING;
 import static com.github.alexishuf.fastersparql.emit.async.Stateful.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -60,6 +64,40 @@ class StatefulTest {
             assertEquals(ACTIVE|F_LOW|LOCKED_MASK, s.lock(), "failed to lock");
             assertEquals(ACTIVE|F_LOW,             s.unlock(),
                     "second unlock must unlock");
+        }
+    }
+
+    @Test void testIsRunningRace() throws Exception {
+        int threads = Math.max(2, Runtime.getRuntime().availableProcessors());
+        var rounds = new AtomicLong();
+        try (var sGuard = new Guard<StatefulTest.S>(this)) {
+            var running = new AtomicInteger();
+            S s = sGuard.set(S.create());
+            var stop = new AtomicBoolean();
+            Thread.startVirtualThread(() -> {
+                Async.uninterruptibleSleep(4_000);
+                stop.set(true);
+            });
+            try (var tasks = TestTaskSet.platformTaskSet("testIsRunningRace")) {
+                tasks.repeat(threads, () -> {
+                    int round = 0;
+                    while (!stop.get()) {
+                        if (s.compareAndSetFlagAcquire(IS_RUNNING)) {
+                            try {
+                                assertEquals(0, running.get());
+                                for (int i = 0; i < 1_000; i++)
+                                    assertEquals(i, running.getAndAdd(1));
+                                running.set(0);
+                            } finally {
+                                s.clearFlagsRelease(IS_RUNNING);
+                            }
+                        }
+                        ++round;
+                    }
+                    rounds.addAndGet(round);
+                });
+            }
+            assertTrue(rounds.get() > threads*4*500_000L);
         }
     }
 
