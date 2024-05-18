@@ -39,6 +39,8 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -289,7 +291,7 @@ public class QueryBench {
             plan.attach(metricsConsumer);
         triggerClassLoadingOfPooled();
 
-        watchdog = new Thread(this::watchdog, "watchdog");
+        watchdog = new Thread(this::watchdog, "watchdog"+(int)WATCHDOG_NEXT_THREAD_ID.getAndAdd(1));
         watchdog.start();
     }
 
@@ -375,6 +377,15 @@ public class QueryBench {
     private volatile @Nullable Plan watchdogPlan;
     private @Nullable StreamNode dbgExecution;
     private static final long WATCHDOG_INTERVAL_NS = 20_000_000_000L;
+    private static final VarHandle WATCHDOG_NEXT_THREAD_ID;
+    static {
+        try {
+            WATCHDOG_NEXT_THREAD_ID = MethodHandles.lookup().findStaticVarHandle(QueryBench.class, "plainNextWatchdogId", int.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+    @SuppressWarnings("unused") private static int plainNextWatchdogId;
     private Thread watchdog;
     private boolean skipAll;
 
@@ -422,7 +433,7 @@ public class QueryBench {
             if (watchdogPlan != plan)
                 continue; // disarmed or armed for another query
             watchdogPlan = null;
-            dump(plan, execution, "watchdog");
+            dump(plan, execution, watchdog.getName());
         }
     }
 
