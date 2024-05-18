@@ -31,8 +31,6 @@ public class Optimizer extends CardinalityEstimator {
     private static final int INIT_OPS_LEN = 22;
     private static final int INIT_DEPTH   = 10;
     private final IdentityHashMap<SparqlClient, CardinalityEstimator> client2estimator = new IdentityHashMap<>();
-    private final Alloc<State> stateAlloc = new Alloc<>(State.class, this+".stateAlloc",
-            Alloc.THREADS*8, State::new, State.BYTES);
 
     public Optimizer() {
         super(new CompletableFuture<>());
@@ -82,18 +80,17 @@ public class Optimizer extends CardinalityEstimator {
         }
     }
 
-    private State state(Plan plan) {
-        State state = stateAlloc.create();
-        state.setup(plan);
-        return state;
-    }
-
-    private final class State implements AutoCloseable {
+    private static final class State implements AutoCloseable {
         private static final int BYTES = 16 + 14*4 + 2*8
                 + 2*Vars.BYTES + 3*(16+8) /*ArrayList*/
                 + ArrayBinding.BYTES
                 + 2*((INIT_DEPTH+1)*20) /*groundedStack, estimatesStack*/
                 + 20 /*estimates*/;
+        private static final Alloc<State> ALLOC = new Alloc<>(State.class,
+                "Optimizer.State.ALLOC",
+                Alloc.THREADS*8, State::new, State.BYTES);
+
+        private Optimizer optimizer;
         private final Vars.Mutable tmpVars = new Vars.Mutable(10);
         private int upFiltersCount = 0;
         private Vars upFilterVars = Vars.EMPTY;
@@ -110,7 +107,8 @@ public class Optimizer extends CardinalityEstimator {
         private int estimatesStackSize = 0;
         private boolean inUse;
 
-        public State() {
+
+        private State() {
             for (int i = 0; i < groundedStack.length; i++)
                 groundedStack[i] = new Term[MIN_VARS];
             for (int i = 0, n = INIT_DEPTH>>1; i < n; i++)
@@ -120,26 +118,29 @@ public class Optimizer extends CardinalityEstimator {
         @Override public void close() {
             if (inUse) {
                 inUse = false;
-                stateAlloc.offer(this);
+                ALLOC.offer(this);
             } else {
                 throw new IllegalStateException("duplicate/concurrent close()");
             }
         }
 
-        public void setup(Plan plan) {
-            if (inUse)
+        public static State create(Optimizer optimizer, Plan plan) {
+            State s = ALLOC.create();
+            if (s.inUse)
                 throw new IllegalStateException("State object already in-use");
-            inUse = true;
-            tmpVars.clear();
-            tmpFilters.clear();
-            upFilters.clear();
-            upFiltersCount = 0;
-            upFiltersTaken = 0;
-            upFiltersTakenByChildren = 0;
-            upFilterVars = Vars.EMPTY;
-            upFilterVarsSets.clear();
-            grounded.reset(plan.allVars());
-            groundedStackSize = 0;
+            s.optimizer = optimizer;
+            s.inUse = true;
+            s.tmpVars.clear();
+            s.tmpFilters.clear();
+            s.upFilters.clear();
+            s.upFiltersCount = 0;
+            s.upFiltersTaken = 0;
+            s.upFiltersTakenByChildren = 0;
+            s.upFilterVars = Vars.EMPTY;
+            s.upFilterVarsSets.clear();
+            s.grounded.reset(plan.allVars());
+            s.groundedStackSize = 0;
+            return s;
         }
 
         private void saveGrounded() {
@@ -319,7 +320,7 @@ public class Optimizer extends CardinalityEstimator {
          * feeding a filter when cost are otherwise close.
          */
         private int faEstimate(Plan plan, ArrayBinding binding) {
-            int cost = estimate(plan, binding);
+            int cost = optimizer.estimate(plan, binding);
             Vars planVars = plan.publicVars();
             if (upFilterVars.isEmpty())
                 return cost; // no filters to test
@@ -567,7 +568,7 @@ public class Optimizer extends CardinalityEstimator {
      */
     public Plan optimize(Plan plan, Vars assumeGrounded) {
         Plan out;
-        try (var state = state(plan)) {
+        try (var state = State.create(this, plan)) {
             if (!assumeGrounded.isEmpty())
                 groundVars(assumeGrounded, state);
             out = state.optimize(plan, true);
@@ -618,7 +619,7 @@ public class Optimizer extends CardinalityEstimator {
         }
 
         // get and init State object
-        try (State st = state(join)) {
+        try (State st = State.create(this, join)) {
             groundVars(boundVars, st);
 
             // try to push filters on outer modifier
