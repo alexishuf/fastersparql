@@ -23,8 +23,6 @@ public class TempOwner<O extends Owned<O>> implements AutoCloseable {
         this.owned = owned;
         if (owned instanceof AbstractOwned<?> ao)
             this.oldOwner = ao.owner();
-        else if (owned instanceof ExposedOwned<?> eo)
-            this.oldOwner = eo.unsafeInternalOwner0();
         else
             throw new UnsupportedOperationException("unsupported Owned<O> implementation");
         this.owned.transferOwnership(oldOwner, thread);

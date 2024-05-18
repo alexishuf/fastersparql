@@ -1,15 +1,14 @@
 package com.github.alexishuf.fastersparql.emit;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
-import com.github.alexishuf.fastersparql.util.owned.*;
-import com.github.alexishuf.fastersparql.util.owned.LeakDetector.LeakState;
+import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
+import com.github.alexishuf.fastersparql.util.owned.SidecarOwned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -17,91 +16,30 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.util.concurrent.*;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.GARBAGE;
-
 public abstract class ReceiverFuture<T, B extends Batch<B>, R extends ReceiverFuture<T, B, R>>
         extends CompletableFuture<T>
-        implements ExposedOwned<R>, Receiver<B> {
-    private static final boolean MARK         = FSProperties.ownedMark();
-    private static final boolean TRACE        = OwnershipHistory.ENABLED;
-    private static final boolean DETECT_LEAKS = LeakDetector.ENABLED;
+        implements SidecarOwned<R>, Receiver<B> {
     protected @Nullable Emitter<B, ?> upstream;
     protected @MonotonicNonNull CancellationException cancelledAt;
-    private @Nullable Object owner;
-    private final OwnershipHistory history;
-    private final @Nullable LeakState leakState;
     private boolean started = false;
 
-    public ReceiverFuture() {
-        history = OwnershipHistory.createIfEnabled();
-        if (LeakDetector.ENABLED)
-            LeakDetector.register(this, leakState = new LeakState(this, history));
-        else
-            leakState = null;
-    }
+    protected ReceiverFuture() {}
 
     /* --- --- --- Owned --- --- --- */
 
-    @SuppressWarnings("unchecked") protected R takeOwnership0(Object newOwner) {
-        if (MARK) {
-            unsafeUntracedExchangeOwner0(null, newOwner);
-            if (TRACE && history != null)
-                history.taken(this, newOwner);
-            if (DETECT_LEAKS && leakState != null)
-                leakState.update(newOwner);
-        }
-        return (R)this;
-    }
-
-    @Override public @Nullable R recycle(Object currentOwner) {
-        if (MARK) {
-            unsafeUntracedExchangeOwner0(currentOwner, GARBAGE);
-            if (TRACE && history != null)
-                history.recycled(this);
-            if (DETECT_LEAKS && leakState != null)
-                leakState.update(GARBAGE);
-        }
-        assert upstream != null;
-        Owned.recycle(upstream, this);
-        return null;
-    }
-
-    @SuppressWarnings("unchecked") @Override
-    public Orphan<R> releaseOwnership(Object currentOwner) {
-        if (MARK) {
-            unsafeUntracedExchangeOwner0(currentOwner, null);
-            if (TRACE && history != null)
-                history.released(this);
-            if (DETECT_LEAKS && leakState != null)
-                leakState.update(null);
-        }
-        return (Orphan<R>)this;
-    }
-
-    @SuppressWarnings("unchecked") @Override
-    public @This R transferOwnership(Object currentOwner, Object newOwner) {
-        if (MARK) {
-            unsafeUntracedExchangeOwner0(currentOwner, newOwner);
-            if (TRACE && history != null)
-                history.transfer(this, newOwner);
-            if (DETECT_LEAKS && leakState != null)
-                leakState.update(newOwner);
-        }
-        return (R)this;
-    }
-
-    @Override public @Nullable Object unsafeInternalOwner0() {return owner;}
-    @Override public @Nullable OwnershipHistory unsafeInternalLastOwnershipHistory() {
-        return history;
-    }
-    @Override public void unsafeUntracedExchangeOwner0(@Nullable Object expected,
-                                                       @Nullable Object newOwner) {
-        if (MARK) {
-            if (owner != expected)
-                throw new OwnershipException(this, expected, owner, history);
-            owner = newOwner;
+    @SuppressWarnings("unchecked")
+    protected final ReceiverFutureSidecar<R> sidecar = new ReceiverFutureSidecar<>((R)this);
+    protected static class ReceiverFutureSidecar<R extends ReceiverFuture<?, ?, R>>
+            extends Sidecar<R> {
+        protected ReceiverFutureSidecar(R managed) {super(managed);}
+        @Override public @Nullable Sidecar<R> recycle(Object currentOwner) {
+            internalMarkGarbage(currentOwner);
+            assert managed.upstream != null;
+            Owned.safeRecycle(managed.upstream, managed);
+            return null;
         }
     }
+    @Override public Sidecar<R> internalOwnedSidecar() {return sidecar;}
 
     /**
      * Calls {@code emitter.subscribe(this)} and performs bookkeeping.

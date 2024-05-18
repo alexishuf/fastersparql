@@ -30,7 +30,7 @@ public abstract sealed class CollectingReceiver<B extends Batch<B>>
             implements Orphan<CollectingReceiver<B>> {
         public Concrete(Orphan<? extends Emitter<B, ?>> orphanUpstream) {super(orphanUpstream);}
         @Override public CollectingReceiver<B> takeOwnership(Object newOwner) {
-            return takeOwnership0(newOwner);
+            return sidecar.takeOwnership(newOwner);
         }
     }
 

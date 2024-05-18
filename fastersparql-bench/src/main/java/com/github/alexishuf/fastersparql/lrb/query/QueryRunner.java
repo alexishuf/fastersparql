@@ -255,7 +255,9 @@ public final class QueryRunner {
         private static final class Concrete<B extends Batch<B>>
                 extends DelegateFuture<B> implements Orphan<DelegateFuture<B>> {
             public Concrete(BatchConsumer<B, ?> batchConsumer) {super(batchConsumer);}
-            @Override public DelegateFuture<B> takeOwnership(Object o) {return takeOwnership0(o);}
+            @Override public DelegateFuture<B> takeOwnership(Object o) {
+                return sidecar.takeOwnership(o);
+            }
         }
 
         public Emitter<B, ?> upstream() { return upstream; }

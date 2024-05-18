@@ -642,7 +642,9 @@ public final class Results {
             implements Orphan<ResultsChecker<B>> {
         private final List<List<Term>> acList = new ArrayList<>();
 
-        @Override public ResultsChecker<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        @Override public ResultsChecker<B> takeOwnership(Object o) {
+            return sidecar.takeOwnership(o);
+        }
 
         public Emitter<B, ?> upstream() { return upstream; }
 

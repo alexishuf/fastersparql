@@ -15,7 +15,9 @@ public abstract sealed class DiscardingReceiver<B extends Batch<B>>
     private static final class Concrete<B extends Batch<B>>
             extends DiscardingReceiver<B> implements Orphan<DiscardingReceiver<B>> {
         public Concrete(Orphan<? extends Emitter<B, ?>> upstream) {super(upstream);}
-        @Override public DiscardingReceiver<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        @Override public DiscardingReceiver<B> takeOwnership(Object o) {
+            return sidecar.takeOwnership(o);
+        }
     }
 
     @Override public void onBatch(Orphan<B> batch) {

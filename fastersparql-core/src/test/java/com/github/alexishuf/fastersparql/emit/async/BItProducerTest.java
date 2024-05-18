@@ -94,7 +94,9 @@ public class BItProducerTest {
             private static final class Concrete extends IntsReceiver
                     implements Orphan<IntsReceiver>{
                 public Concrete(Orphan<? extends Emitter<TermBatch, ?>> emitter) {super(emitter);}
-                @Override public IntsReceiver takeOwnership(Object o) {return takeOwnership0(o);}
+                @Override public IntsReceiver takeOwnership(Object o) {
+                    return sidecar.takeOwnership(o);
+                }
             }
 
             @Override public void onBatch(Orphan<TermBatch> orphan) {
