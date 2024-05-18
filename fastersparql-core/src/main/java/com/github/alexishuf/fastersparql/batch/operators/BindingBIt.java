@@ -179,7 +179,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                 else if ((action&PUB_LEFT)  != 0)
                     b.putRow(lb, leftRow);
                 if ((action&CANCEL) != 0) {
-                    inner.close();
+                    inner.tryCancel();
                     inner = empty;
                 }
                 if (inner == empty) {
