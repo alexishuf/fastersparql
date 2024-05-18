@@ -46,6 +46,7 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
         setDaemon(true);
         setPriority(NORM_PRIORITY);
         start();
+        BackgroundTasks.register(this);
     }
 
     public final class ClearElseMake implements IntFunction<T> {
