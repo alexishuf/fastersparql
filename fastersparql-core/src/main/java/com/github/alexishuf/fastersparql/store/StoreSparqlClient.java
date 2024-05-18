@@ -2384,7 +2384,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 Owned.safeRecycle(sLexIt, this);
                 Owned.safeRecycle(pLexIt, this);
                 Owned.safeRecycle(oLexIt, this);
-                left.close();
+                left.tryCancel();
             } finally {
                 try {
                     super.cleanup(cause);
@@ -2392,6 +2392,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     releaseRef();
                 }
             }
+        }
+
+        @Override public void close() {
+            super.close();
+            left.close();
         }
 
         @Override public boolean tryCancel() {
