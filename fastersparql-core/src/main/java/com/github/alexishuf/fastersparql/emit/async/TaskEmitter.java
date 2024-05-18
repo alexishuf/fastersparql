@@ -155,26 +155,52 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
 
     @Override protected void task(EmitterService.Worker worker, int threadId) {
         this.threadId = (short)threadId;
-        int st = state(), termState;
-        if ((st&IS_PENDING_TERM) != 0) {
-            termState = (st&~IS_PENDING_TERM)|IS_TERM;
-        } else if ((st&IS_CANCEL_REQ) != 0) {
-            termState = CANCELLED;
-        } else if ((st&IS_LIVE) != 0) {
+        int st = stateAcquire();
+        if ((st&IS_CANCEL_REQ) != 0)
+            st = doCancel(st);
+        if ((st&IS_PENDING_TERM) != 0)
+            st = doPendingTerm(st);
+        int termState = st;
+        if ((st&(CAN_PRODUCE_AND_DELIVER)) != 0) {
             try {
                 termState = produceAndDeliver(st);
             } catch (Throwable t) {
-                if (this.error == UNSET_ERROR) this.error = t;
+                if (error == UNSET_ERROR)
+                    error = t;
                 termState = FAILED;
             }
-        } else {
-            return; // already terminated
         }
 
-        if ((termState&IS_TERM) != 0)
+        if ((termState& IS_TERM_OR_TERM_DELIVERED) == IS_TERM)
             deliverTermination(st, termState);
-        else if (mustAwake())
+        else if ((st&IS_TERM_DELIVERED) == 0 && mustAwake())
             awake(worker);
+    }
+    private static final int CAN_PRODUCE_AND_DELIVER   = IS_LIVE|IS_PENDING_TERM;
+    private static final int IS_TERM_OR_TERM_DELIVERED = IS_TERM|IS_TERM_DELIVERED;
+
+    /**
+     * Called from {@link #task(EmitterService.Worker, int)} when the state contains the
+     * {@link #IS_CANCEL_REQ} bit.
+     *
+     * @param state the current {@link #state()}
+     * @return the updated current {@link #state()}
+     */
+    protected int doCancel(int state) {
+        moveStateRelease(state, CANCELLED);
+        return statePlain();
+    }
+
+    /**
+     * Called from {@link #task(EmitterService.Worker, int)} when the current state has
+     * the {@link #IS_PENDING_TERM} bit set.
+     *
+     * @param state the current {@link #state()}
+     * @return the updated current {@link #state()}
+     */
+    protected int doPendingTerm(int state) {
+        moveStateRelease(state, (state&~IS_PENDING_TERM)|IS_TERM);
+        return statePlain();
     }
 
     protected final Orphan<B> beforeDelivery(Orphan<B> orphan) {

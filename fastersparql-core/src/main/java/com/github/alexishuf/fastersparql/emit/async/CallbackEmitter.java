@@ -355,7 +355,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
         }
     }
 
-    private int doCancel(int st) {
+    protected int doCancel(int st) {
         if ((st&DONE_CANCEL) != 0)
             return st;
         st = unlock(0, DONE_CANCEL);

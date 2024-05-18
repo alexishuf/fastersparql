@@ -181,6 +181,17 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         return up.cancel();
     }
 
+    @Override protected int doPendingTerm(int state) {
+        // IS_PENDING_TERM is set from receiver methods which by contract are called
+        // after onBatch() and not concurrently with onBatch or with one another.
+        // Therefore, if this thread observed IS_PENDING_TERM, it also observed previous writes
+        // to QUEUE, which allows us to read such writes using plain semantics here.
+        if (plainQueue != null)
+            return state;
+        // else: advance to a terminated state
+        return super.doPendingTerm(state);
+    }
+
     @Override protected void resume() { up.request(requested()); }
 
     @Override protected boolean mustAwake() {
