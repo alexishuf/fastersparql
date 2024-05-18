@@ -2396,6 +2396,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public void close() {
             super.close();
+            lb = Owned.safeRecycle(lb, this);
             left.close();
         }
 
@@ -2499,6 +2500,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         if (hasLexicalJoin) endLexical();
                     }
                     if (bindingNotifier != null) bindingNotifier.notifyBinding(!pub && rEnd);
+                    if (prb != fb && prb != rb && prb != b)
+                        Owned.safeRecycle(prb, this);
                     unlock();
                     locked = false;
                 } while (readyInNanos(b.totalRows(), startNs) > 0);
