@@ -77,9 +77,9 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
 
     @Override public void sync(CountDownLatch latch) {
         if (sync.offer(latch)) {
-            if ((int)PARKED.compareAndExchangeAcquire(this, 1, 0) == 1)
-                Unparker.unpark(this);
+            Unparker.unpark(this);
         } else {
+            latch.countDown();
             assert false : "offer() == false on unbounded queue";
         }
     }
@@ -100,6 +100,7 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
     @Override public void run() {
         if (Thread.currentThread() != this)
             throw new IllegalStateException("run() called from unexpected thread");
+        boolean parking = false;
         //noinspection InfiniteLoopStatement
         while (true) {
             boolean empty = true;
@@ -119,13 +120,15 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
                     }
                 }
             }
-            if (empty) {
-                sync.drain(ANSWER_SYNC);
-                // publish our intent to park to sched(), but only really park if this thread
-                // observed all queues empty AFTER setting PARKED for the first time
-                if ((int)PARKED.compareAndExchangeRelease(this, 0, 1) == 1)
-                    LockSupport.park(this);
-
+            if (empty && sync.drain(ANSWER_SYNC) == 0) {
+                parking = true;
+                if ((int) PARKED.getAndAddRelease(this, 1) == 1) {
+                    LockSupport.park();
+                    PARKED.setRelease(this, 0);
+                }
+            } else if (parking) {
+                parking = false;
+                PARKED.setRelease(this, 0);
             }
         }
     }

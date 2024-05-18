@@ -55,8 +55,8 @@ public abstract class SingleThreadBackgroundTask<T, Q extends MessagePassingQueu
 
     @Override public void sync(CountDownLatch latch) {
         if (sync.offer(latch)) {
-            if ((int)PARKED.compareAndExchangeAcquire(this, 1, 0) == 1)
-                Unparker.unpark(this);
+            PARKED.setRelease(this, 0);
+            Unparker.unpark(this);
         } else {
             assert false : "queue.offer() == false on unbounded queue";
             latch.countDown();
@@ -66,21 +66,30 @@ public abstract class SingleThreadBackgroundTask<T, Q extends MessagePassingQueu
     @Override public final void run() {
         if (Thread.currentThread() != this)
             throw new IllegalStateException("wrong thread");
+        boolean parking = false;
         //noinspection InfiniteLoopStatement
         while (true) {
-            T item = work.relaxedPoll();
-            if (item != null) {
-                try {
-                    handle(item);
-                } catch (Throwable t) {
-                    log.error("{} during {}.handle({})",
-                              t.getClass().getSimpleName(), getName(), item, t);
+            T item = work.poll();
+            if (item == null && sync.drain(ANSWER_SYNC) == 0) {
+                parking     = true;
+                if ((int)PARKED.getAndAddRelease(this, 1) == 1) {
+                    LockSupport.park();
+                    parking = false;
+                    PARKED.setRelease(this, 0);
                 }
             } else {
-                sync.drain(ANSWER_SYNC);
-                PARKED.setRelease(this, 1);
-                if (work.peek() == null)
-                    LockSupport.park();
+                if (parking) {
+                    parking = false;
+                    PARKED.setRelease(this, 0);
+                }
+                if (item != null) {
+                    try {
+                        handle(item);
+                    } catch (Throwable t) {
+                        log.error("{} during {}.handle({})",
+                                t.getClass().getSimpleName(), getName(), item, t);
+                    }
+                }
             }
         }
     }
