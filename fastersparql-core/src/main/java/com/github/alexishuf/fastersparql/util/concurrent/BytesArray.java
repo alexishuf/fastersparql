@@ -94,7 +94,7 @@ public class BytesArray extends AbstractOwned<BytesArray> {
             for (int i = 0; i < arr.length; i++) {
                 Bytes bytes = arr[i];
                 if (bytes != null)
-                    arr[i] = bytes.recycle(this);
+                    arr[i] = bytes.recycle(holder);
             }
             holder.transferOwnership(this, RECYCLED);
         }
