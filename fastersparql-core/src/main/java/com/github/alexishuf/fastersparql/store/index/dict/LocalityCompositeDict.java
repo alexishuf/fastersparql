@@ -150,7 +150,7 @@ public class LocalityCompositeDict extends Dict {
         return l.releaseOwnership(RECYCLED);
     }
 
-    public LocalityLexIt lexIt() { return new LocalityLexIt(lookup(), litSuffixes); }
+    public Orphan<LocalityLexIt> lexIt() { return new LocalityLexIt.Concrete(lookup(), litSuffixes); }
 
     private static final int TL_DICTS_PER_THREAD = 64;
     private static final int TL_DICTS_PER_THREAD_MASK = TL_DICTS_PER_THREAD-1;
@@ -436,15 +436,20 @@ public class LocalityCompositeDict extends Dict {
         private final long[] suffixes;
         private int lexEnd, suffix;
 
-        public LocalityLexIt(Orphan<Lookup> lookup, long[] suffixes) {
+        private LocalityLexIt(Orphan<Lookup> lookup, long[] suffixes) {
             this.lookup = lookup.takeOwnership(this);
             this.suffixes = suffixes;
             this.string = new MutableRope(24);
             end();
         }
 
+        private static final class Concrete extends LocalityLexIt implements Orphan<LocalityLexIt> {
+            private Concrete(Orphan<Lookup> lookup, long[] suffixes) {super(lookup, suffixes);}
+            @Override public LocalityLexIt takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
         @Override public @Nullable LocalityLexIt recycle(Object currentOwner) {
-            internalMarkGarbage(this);
+            internalMarkGarbage(currentOwner);
             lookup.recycle(this);
             string.close();
             return null;

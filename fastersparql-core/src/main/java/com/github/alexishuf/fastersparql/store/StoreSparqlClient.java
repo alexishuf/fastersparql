@@ -1717,6 +1717,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     bb.attach(null, 0);
             }
             lookup = Owned.safeRecycle(lookup, this);
+            for (var i : lexIts)
+                Owned.safeRecycle(i, this);
         }
 
         @Override public StoreBindingEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
@@ -1836,7 +1838,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     if (ENABLED) journal("lexical join of ", extVar, "with", intVar);
                     if (i  < 64) lexBindingCols |= 1L << i;
                     lexItsCols[lexJoins]   = i;
-                    lexIts    [lexJoins++] = dict.lexIt();
+                    lexIts    [lexJoins++] = dict.lexIt().takeOwnership(this);
                 }
                 this.lexBindingCols = lexBindingCols;
 
@@ -2233,15 +2235,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 else                        oTerm = leftLexJoinVar(mFilters, tp.o, leftVars);
                 LocalityCompositeDict.LocalityLexIt sLexIt = null, pLexIt = null, oLexIt = null;
                 if (sTerm != tp.s) {
-                    if (sTerm.isVar()) { s = 0; sLexIt = dict.lexIt(); }
+                    if (sTerm.isVar()) { s = 0; sLexIt = dict.lexIt().takeOwnership(this); }
                     else               { s = lookup.find(sTerm); }
                 }
                 if (pTerm != tp.p) {
-                    if (pTerm.isVar()) { p = 0; pLexIt = dict.lexIt(); }
+                    if (pTerm.isVar()) { p = 0; pLexIt = dict.lexIt().takeOwnership(this); }
                     else               { p = lookup.find(pTerm); }
                 }
                 if (oTerm != tp.o) {
-                    if (oTerm.isVar()) { o = 0; oLexIt = dict.lexIt(); }
+                    if (oTerm.isVar()) { o = 0; oLexIt = dict.lexIt().takeOwnership(this); }
                     else               { o = lookup.find(oTerm); }
                 }
                 this.sLexIt = sLexIt; this.pLexIt = pLexIt; this.oLexIt = oLexIt;
