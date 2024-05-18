@@ -41,7 +41,7 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
 
     @Override protected void cleanup(@Nullable Throwable error) {
         Owned.safeRecycle(processor, this);
-        delegate.close();
+        delegate.tryCancel();
     }
 
     @Override public @Nullable Orphan<B> nextBatch(Orphan<B> orphan) {
@@ -52,7 +52,7 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                     if (isTerminated()) {
                         break;
                     } else if (g.set(processor.processInPlace(g.poll())) == null) {
-                        delegate.close(); // premature end, likely due to LIMIT clause
+                        delegate.tryCancel(); // premature end, likely due to LIMIT clause
                         break;
                     } else if (g.rows() > 0) {
                         break;
