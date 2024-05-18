@@ -105,7 +105,11 @@ public abstract class DelegatedControlBIt<B extends Batch<B>, S extends Batch<S>
         return false;
     }
 
-    @Override public final void close() { tryCancel(); }
+    @Override public final void close() {
+        delegate.close();
+        if (!isTerminated())
+            onTermination(BItCancelledException.get(this));
+    }
 
     @Override public final boolean tryCancel() {
         boolean done = delegate.tryCancel();

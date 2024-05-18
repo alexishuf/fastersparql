@@ -30,6 +30,11 @@ public final class DedupMergeBIt<B extends Batch<B>> extends MergeBIt<B> {
         dedup = Owned.recycle(dedup, this);
     }
 
+    @Override protected void cleanup(@Nullable Throwable cause) {
+        super.cleanup(cause);
+        dedup = Owned.recycle(dedup, this);
+    }
+
     /* --- --- --- customize MergeBIt behavior --- --- --- */
 
     @Override protected @Nullable BatchProcessor<B, ?>
