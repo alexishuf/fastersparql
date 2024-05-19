@@ -177,8 +177,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
         if (rope == null || rope.len == 0)
             return; // no-op
         try {
-            if (batch != null)
-                dropBatch();
+            cleanup(null);
             doFeedPendingTerminationAck(rope);
         } catch (Throwable t) {
             FSException ex = t instanceof FSException e ? e : new InvalidSparqlResultsException(t);
@@ -275,6 +274,13 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             outCols = downstream.vars().size();
         }
         TERMINATED.setRelease(this, false);
+    }
+
+    /**
+     * Release resources currently held by this  parser
+     */
+    public void release() {
+        cleanup(null);
     }
 
     /**
@@ -403,14 +409,6 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             dst.complete(ex);
             cleanup(ex);
         }
-    }
-
-    private void dropBatch() {
-        if (incompleteRow) {
-            incompleteRow = false;
-            batch.abortPut();
-        }
-        batch = Batch.safeRecycle(batch, this);
     }
 
     private void emitLastBatch() {

@@ -54,7 +54,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
-        termParser = termParser.recycle(this);
+        if (termParser != null)
+            termParser = termParser.recycle(this);
         if (partialLine != null)
             partialLine.close();
         if (fedPartialLine != null)

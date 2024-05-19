@@ -491,6 +491,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                             if (reqRowsFrame.refCnt() > 1)
                                 reqRowsFrame.release();
                             reqRowsMsg.close();
+                            parser.release();
                         } catch (Throwable t) {
                             log.error("Error while releasing resources for {}", this, t);
                         } finally {

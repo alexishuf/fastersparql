@@ -1216,7 +1216,10 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override protected void cleanupAfterEndResponse() {
             super.cleanupAfterEndResponse();
-            bindingsParser   = null;
+            if (bindingsParser != null) {
+                bindingsParser.release();
+                bindingsParser   = null;
+            }
             isBindQuery      = false;
             earlyCancel      = false;
             earlyRequest     = -1;
