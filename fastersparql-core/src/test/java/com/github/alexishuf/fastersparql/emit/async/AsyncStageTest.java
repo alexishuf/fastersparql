@@ -84,7 +84,7 @@ class AsyncStageTest {
             for (int i = 0, n = 1+(nextRow&3); i < n && nextRow < end; i++) {
                 nt.clear().append('"').append(nextRow++);
                 b.beginPut();
-                b.putTerm(0, DT_integer, nt, 0, nt.len, true);
+                b.putTerm(0, DT_integer, nt.segment, nt.u8(), 0, nt.len, true);
                 b.commitPut();
             }
             deliver(b.releaseOwnership(this));

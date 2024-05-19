@@ -459,6 +459,12 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         dst.doPutTerm(destCol, sourcedId);
     }
 
+    @Override public void putNullTerm(int col) {
+        StoreBatch dst = tail;
+        if (dst.offerRowBase < 0) throw new IllegalStateException();
+        dst.doPutTerm(col, 0);
+    }
+
     /**
      * Similar to {@link Batch#putConverting(Batch)}, but converts
      * {@link Term}s into {@code sourcedIds} referring to {@code dictId} rather than throwing

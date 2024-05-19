@@ -971,6 +971,16 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         local.copy(0, local.len, tail.locals, dest);
     }
 
+    @Override public void putNullTerm(int col) {
+        var tail = this.tail;
+        if (tail.offerNextLocals < 0)
+            throw new IllegalStateException();
+        int i = tail.rows*tail.cols + col;
+        shared[i] = null;
+        slices[(i<<=1)  ] = 0;
+        slices[ i     +1] = 0;
+    }
+
     @Override public void putTerm(int destCol, CompressedBatch other, int row, int col) {
         short[] oSl = other.slices;
         short oBase = other.slBase(row, col), fLen = oSl[oBase+SL_LEN];
@@ -979,20 +989,29 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, MemorySegment local, long localOff, int localLen, boolean sharedSuffix) {
+    public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
+                        byte @Nullable[] localU8, long localOff, int localLen, boolean sharedSuffix) {
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
-        MemorySegment.copy(local, JAVA_BYTE, localOff, tail.locals, dest, localLen);
+        if (localU8 != null)
+            arraycopy(localU8, (int)(localOff+local.address()), tail.locals, dest, localLen);
+        else
+            MemorySegment.copy(local, JAVA_BYTE, localOff, tail.locals, dest, localLen);
     }
 
     @Override
+    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff, int localLen, boolean sharedSuffix) {
+        int dest = allocTermMaybeChangeTail(col, shared,
+                              localLen|(sharedSuffix?SH_SUFF_MASK : 0));
+        local.copy(localOff, localOff+localLen, locals, dest);
+    }
+
     public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
         arraycopy(local, localOff, tail.locals, dest, localLen);
     }
 
-    @Override
     public void putTerm(int col, FinalSegmentRope shared, SegmentRope local, int localOff,
                         int localLen, boolean sharedSuffix) {
         int dest = allocTermMaybeChangeTail(col, shared,
@@ -1000,7 +1019,6 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
     }
 
-    @Override
     public void putTerm(int col, FinalSegmentRope shared, TwoSegmentRope local, int localOff,
                         int localLen, boolean sharedSuffix) {
         int dest = allocTermMaybeChangeTail(col, shared,

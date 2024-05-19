@@ -322,7 +322,8 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                         case IRI -> {
                             var prefix = SHARED_ROPES.internPrefixOf(v, 0, v.len);
                             int prefixLen = prefix == null ? 0 : prefix.len;
-                            rb.putTerm(col, prefix, v.u8(), prefixLen, v.len-prefixLen, false);
+                            rb.putTerm(col, prefix, v.segment, v.u8(), prefixLen,
+                                       v.len-prefixLen, false);
                         }
                         case LIT -> {
                             byte[] u8 = v.u8();
@@ -340,12 +341,13 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                                 sh = SHARED_ROPES.internDatatype(p.dtSuffix, 0, p.dtSuffix.len);
                                 localLen = sh == null ? v.len : v.len-1;
                             }
-                            rb.putTerm(col, sh, v.u8(), 0, localLen, true);
+                            rb.putTerm(col, sh, v.segment, v.u8(), 0,
+                                       localLen, true);
                         }
                         case BLANK -> {
                             p.dtSuffix.clear().append('_').append(':')
                                       .append(v, 1, v.len-1);
-                            rb.putTerm(col, null, p.dtSuffix.u8(),
+                            rb.putTerm(col, null, p.dtSuffix.segment, p.dtSuffix.u8(),
                                        0, p.dtSuffix.len, false);
                         }
                         default -> throw new UnsupportedOperationException();

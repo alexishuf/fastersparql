@@ -171,7 +171,7 @@ public enum QueryName {
                             var local = tmp.local();
                             int dot = local.skipUntil(0, local.len, '.');
                             rope.clear().append(local, 0, dot);
-                            amp.putTerm(c, tmp.finalShared(), rope.utf8, 0,
+                            amp.putTerm(c, tmp.finalShared(), rope.segment, rope.utf8, 0,
                                         rope.len, true);
                         } else {
                             amp.putTerm(c, node, r, c);

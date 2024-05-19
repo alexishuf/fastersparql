@@ -2,6 +2,9 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -11,6 +14,7 @@ import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 import java.util.List;
 
@@ -387,6 +391,30 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
         var tail = this.tail;
         if (col < 0 || col >= tail.cols) throw new IndexOutOfBoundsException();
         tail.arr[tail.offerRowBase+col] = FinalTerm.asFinal(t);
+    }
+
+    @Override public void putNullTerm(int col) {
+        var tail = this.tail;
+        if (col < 0 || col >= tail.cols) throw new IndexOutOfBoundsException();
+        tail.arr[tail.offerRowBase+col] = null;
+    }
+
+    @Override
+    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local, byte @Nullable [] localU8, long localOff, int localLen, boolean sharedSuffix) {
+        var tail = this.tail;
+        if (col < 0 || col >= tail.cols)
+            throw new IndexOutOfBoundsException(col);
+        FinalTerm term;
+        if ((shared == null || shared.len == 0) && localLen == 0) {
+            term = null;
+        } else {
+            var localRope = new SegmentRopeView().wrap(local, localU8, localOff, localLen);
+            SegmentRope fst, snd;
+            if (sharedSuffix) { fst = localRope; snd =    shared; }
+            else              { fst =    shared; snd = localRope; }
+            term = Term.wrap(fst, snd);
+        }
+        tail.arr[tail.offerRowBase+col] = term;
     }
 
     @Override public void commitPut() {

@@ -474,8 +474,8 @@ class BatchTest {
                         FinalSegmentRope sh = t == null ? null : t.finalShared();
                         boolean sharedSuffixed = t != null && t.sharedSuffixed();
                         MemorySegment u8Seg = MemorySegment.ofArray(u8);
-                        b7.putTerm(c, sh, u8, 1, u8.length-2, sharedSuffixed);
-                        b8.putTerm(c, sh, u8Seg, 1, u8.length-2, sharedSuffixed);
+                        b7.putTerm(c, sh, u8Seg, u8, 1, u8.length-2, sharedSuffixed);
+                        b8.putTerm(c, sh, u8Seg, u8, 1, u8.length-2, sharedSuffixed);
                     }
                     b1.commitPut();
                     for (int c = size.cols-1; c >= 0; c--) {

@@ -1324,6 +1324,9 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      */
     public abstract void putTerm(int col, Term t);
 
+    /** Equivalent to {@link #putTerm(int, Term)} with {@code null}. */
+    public abstract void putNullTerm(int col);
+
     /** Efficient alternative to {@link #putTerm(int, Term)} using {@code batch.get(row, col)} */
     public void putTerm(int destCol, B batch, int row, int col) {
         putTerm(destCol, batch.get(row, col));
@@ -1340,11 +1343,12 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     }
 
     /** Efficient alternative to {@link #putTerm(int, Term)} using {@link TermParser#asTerm()} */
-    public void putTerm(int col, TermParser termParser) {
-        var local = termParser.localBuf();
-        int begin = termParser.localBegin;
-        putTerm(col, termParser.shared(), local, begin,
-                  termParser.localEnd-begin, termParser.sharedSuffixed());
+    public void putTerm(int col, TermParser parser) {
+        var local = parser.localBuf();
+        putTerm(col, parser.shared(), local.segment, local.utf8,
+                parser.localBegin+local.offset,
+                parser.localEnd-parser.localBegin,
+                parser.sharedSuffixed());
     }
 
     /**
@@ -1354,50 +1358,55 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      * @param col destination column of the term
      * @param shared A prefix or suffix to be kept by reference
      * @param local Where the local (i.e., non-shared) prefix/suffix of this term is stored.
+     * @param localU8 the {@code byte[]} that is wrapped by {@code local} or {@code null} if
+     *                {@code local} is a native segment.
      * @param localOff Index of first byte in {@code local} that is part of the term
      * @param localLen number of bytes in {@code local} that constitute the local segment.
      * @param sharedSuffix Whether the shared segment is a suffix
      */
     public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
+                        byte @Nullable [] localU8,
                         long localOff, int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    /** Analogous to {@link #putTerm(int, FinalSegmentRope, MemorySegment, long, int, boolean)} */
-    public void putTerm(int col, FinalSegmentRope shared, SegmentRope local, int localOff,
-                        int localLen, boolean sharedSuffix) {
+    /**
+     * Similar to {@link #putTerm(int, FinalSegmentRope, MemorySegment, byte[], long, int, boolean)},
+     * but will keep a reference to the bytes in {@code local}, if doing so is more efficient for
+     * this {@link Batch} implementation.
+     *
+     * <p><strong>Attention:</strong> {@code local} MUST remain valid for as long as the batch
+     * is alive.</p>
+     */
+    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
+                        byte @Nullable [] localU8,
+                        long localOff, int localLen, boolean sharedSuffix) {
+        putTerm(col, shared, local, localU8, localOff, localLen, sharedSuffix);
+    }
+
+    /**
+     * Sets the {@code col}-th column fo the row being built by the currently active
+     * {@link #beginPut()} with a term that is the concatenation of {@code shared} and
+     * {@code local.sub(localOff, localOff+localLen} (or
+     * {@code local.sub(localOff, localOff+localLen)} and {@code shared},
+     * if {@code sharedSuffix == true}).
+     *
+     * @param col the destination column in the row being built.
+     * @param shared the shared portion of the term, or {@link FinalSegmentRope#EMPTY}
+     * @param local a rope containing the local portion of the term
+     * @param localOff index int {@code local} where the local portion of the term starts
+     * @param localLen length of the local portion of the term
+     * @param sharedSuffix Whether {@code shared} comes after the local portion (literals).
+     */
+    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff, int localLen, boolean sharedSuffix) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
     }
 
-    /** Analogous to {@link #putTerm(int, FinalSegmentRope, MemorySegment, long, int, boolean)} */
-    public void putTerm(int col, FinalSegmentRope shared, TwoSegmentRope local,
-                        int localOff, int localLen, boolean sharedSuffix) {
-        putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
-    }
-
-    /** Analogous to {@link #putTerm(int, FinalSegmentRope, MemorySegment, long, int, boolean)}. */
-    public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff, int localLen,
-                        boolean sharedSuffix) {
-        putTerm(col, makeTerm(shared, local, localOff, localLen, sharedSuffix));
-    }
-
-    private Term makeTerm(FinalSegmentRope shared, MemorySegment local, long localOff,
-                          int localLen, boolean sharedSuffix) {
+    private Term makeTerm(FinalSegmentRope shared, MemorySegment local,
+                          long localOff, int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
         var localRope = RopeFactory.make(localLen).add(local, localOff, localLen).take();
-        SegmentRope fst, snd;
-        if (sharedSuffix) { fst = localRope; snd =    shared; }
-        else              { fst =    shared; snd = localRope; }
-        return Term.wrap(fst, snd);
-    }
-
-    private Term makeTerm(FinalSegmentRope shared, byte[] localU8, int localOff,
-                          int localLen, boolean sharedSuffix) {
-        if ((shared == null || shared.len == 0) && localLen == 0)
-            return null;
-        var localRope = RopeFactory.make(localLen)
-                                   .add(localU8, localOff, localOff+localLen).take();
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }

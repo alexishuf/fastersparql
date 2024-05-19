@@ -116,7 +116,7 @@ class GatherAndScatterTest {
                     for (long e = Math.min(end, next+n); next < e; next++) {
                         b.beginPut();
                         nt.clear().append('"').append(next);
-                        b.putTerm(0, DT_integer, nt.u8(), 0, nt.len, true);
+                        b.putTerm(0, DT_integer, nt.segment, nt.u8(), 0, nt.len, true);
                         b.commitPut();
                     }
                     deliver(b.releaseOwnership(this));

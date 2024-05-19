@@ -284,9 +284,18 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     @Override public void putTerm(int destCol, Term t) {
         B tail = tail();
-        if (tail.offerRowBase < 0) throw new IllegalStateException();
-        if (t != null) throw new UnsupportedOperationException("Cannot put non-null terms. Use putConverting(Batch, int) instead");
+        if (tail.offerRowBase < 0)
+            throw new IllegalStateException();
+        if (t != null)
+            throw new UnsupportedOperationException("Cannot put non-null terms. Use putConverting(Batch, int) instead");
         tail.doPutTerm(destCol, 0);
+    }
+
+    @Override public void putNullTerm(int col) {
+        B tail = this.tail;
+        if (tail.offerRowBase < 0)
+            throw new IllegalStateException();
+        tail.doPutTerm(col, 0);
     }
 
     @Override public final void putTerm(int d, B b, int r, int c) {

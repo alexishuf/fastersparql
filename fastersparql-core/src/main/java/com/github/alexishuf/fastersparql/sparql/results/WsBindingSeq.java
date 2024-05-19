@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 
+import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.util.CSUtils.BASE64_2_BITS;
@@ -21,10 +22,12 @@ public final class WsBindingSeq {
                                      + 1; /*"*/
     private static final String BAD_LEN_MSG = "Value for ?"+VAR+" does not have length == "+ LIT_LEN_LONG;
 
+    private final MemorySegment tmpSeg;
     private final byte[] tmp;
 
     public WsBindingSeq() {
         tmp = new byte[LIT_LEN_LONG];
+        tmpSeg = MemorySegment.ofArray(tmp);
         tmp[0] = '"';
         tmp[LIT_LEN_LONG -1] = '"';
     }
@@ -49,7 +52,8 @@ public final class WsBindingSeq {
             tmp[8] = BITS_2_BASE64[(int) ( seq        & 0x3f)];
             len = 10;
         }
-        batch.putTerm(col, FinalSegmentRope.EMPTY, tmp, 0, len, true);
+        batch.putTerm(col, FinalSegmentRope.EMPTY, tmpSeg, tmp,
+                      0, len, true);
     }
 
     public Term toTerm(long seq) {

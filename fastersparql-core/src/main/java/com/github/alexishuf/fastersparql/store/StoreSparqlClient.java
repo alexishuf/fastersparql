@@ -1344,35 +1344,56 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         private short cols() { return cols; }
 
-        private FinalSegmentRope shared(TwoSegmentRope t, byte fst) {
-            return switch (fst) {
-                case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
-                case '<' -> {
-                    if (t.fstLen == 0 || t.sndLen == 0) yield FinalSegmentRope.EMPTY;
-                    int slot = (int)(t.fstOff & PREFIXES_MASK);
-                    var cached = prefixes[slot];
-                    if (cached == null || cached.offset != t.fstOff) {
-                        cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
-                        prefixes[slot] = cached;
-                    }
-                    yield cached;
-                }
-                case '_' -> FinalSegmentRope.EMPTY;
-                default -> throw new IllegalArgumentException("Not an RDF term");
-            };
-        }
-
         private void putRowConverting(B dest, long[] ids, int cols, int base) {
             dest.beginPut();
-            for (int c = 0; c < cols; c++) {
-                var t = lookup.get(unsource(ids[base + c]));
-                if (t == null) continue;
-                byte fst = t.get(0);
-                var sh = shared(t, fst);
-                int localOff = fst == '<' ? sh.len : 0;
-                dest.putTerm(c, sh, t, localOff, t.len-sh.len, fst == '"');
-            }
+            for (int c = 0; c < cols; c++)
+                putTerm(dest, c, unsource(ids[base+c]), lookup);
             dest.commitPut();
+        }
+    }
+
+    private <B extends Batch<B>>
+    void putTerm(B dst, int col, long unsourcedId, LocalityCompositeDict.Lookup lookup) {
+        TwoSegmentRope t = lookup.get(unsourcedId);
+        if (t == null) {
+            dst.putNullTerm(col);
+            return;
+        }
+        byte fst         = t.get(0);
+        boolean shSuff   = fst == '"';
+        var localSeg     = t.snd;
+        var localOff     = t.sndOff;
+        var localLen     = t.sndLen;
+        var sh           = switch (fst) {
+            case '"' -> {
+                if (t.fstLen == 0)
+                    yield FinalSegmentRope.EMPTY;
+                localSeg = t.fst;
+                localOff = t.fstOff;
+                localLen = t.fstLen;
+                yield SHARED_ROPES.internDatatypeOf(t, 0, t.len);
+            }
+            case '<' -> {
+                if (t.fstLen == 0)
+                    yield FinalSegmentRope.EMPTY;
+                int slot = (int)(t.fstOff&PREFIXES_MASK);
+                var cached = prefixes[slot];
+                if (cached == null || cached.offset != t.fstOff) {
+                    cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
+                    prefixes[slot] = cached;
+                }
+                yield cached;
+            }
+            case '_' -> FinalSegmentRope.EMPTY;
+            default -> throw new IllegalArgumentException("Not an RDF term");
+        };
+        if (sh.len+localLen == t.len) {
+            dst.putTermLocalByReference(col, sh, localSeg, null, localOff,
+                                    t.len-sh.len, shSuff);
+        } else {
+            // split at dictionary is not compatible with split at batch,
+            // causing local part to be sourced from two segments in t
+            dst.putTerm(col, sh, t, shSuff ? 0 : sh.len, t.len-sh.len, shSuff);
         }
     }
 
@@ -1939,13 +1960,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private void putLex(B nextLexBatch, int lexIdx, LocalityCompositeDict.Lookup lookup) {
             long id = lexIts[lexIdx].id;
             int dstCol = lexItsCols[lexIdx];
-            SegmentRope local;
-            if (nextLexBatch instanceof StoreBatch sb) {
+            if (nextLexBatch instanceof StoreBatch sb)
                 sb.putTerm(dstCol, source(id, dictId));
-            } else if ((local = lookup.getLocal(id)) != null) {
-                nextLexBatch.putTerm(dstCol, FinalSegmentRope.asFinal(lookup.getShared(id)), local,
-                                     0, local.len, lookup.sharedSuffixed(id));
-            }
+            else
+                putTerm(nextLexBatch, dstCol, id, lookup);
         }
 
         @Override protected boolean lexContinueRight(BatchBinding binding,
@@ -2538,37 +2556,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             } else {
                 var lookup = dict.lookup().takeOwnership(this);
                 try {
-                    if ( kCol >= 0) convertTerm(rb, kCol,   kId, lookup);
-                    if (skCol >= 0) convertTerm(rb, skCol, skId, lookup);
-                    if ( vCol >= 0) convertTerm(rb, vCol,   vId, lookup);
+                    if ( kCol >= 0) putTerm(rb, kCol,   kId, lookup);
+                    if (skCol >= 0) putTerm(rb, skCol, skId, lookup);
+                    if ( vCol >= 0) putTerm(rb, vCol,   vId, lookup);
                 } finally {
                     lookup.recycle(this);
                 }
             }
             rb.commitPut();
-        }
-
-        private void convertTerm(B dest, byte col, long id, LocalityCompositeDict.Lookup lookup) {
-            TwoSegmentRope t = lookup.get(id);
-            if (t == null) return;
-            byte fst = t.get(0);
-            FinalSegmentRope sh = switch (fst) {
-                case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
-                case '<' -> {
-                    if (t.fstLen == 0 || t.sndLen == 0) yield FinalSegmentRope.EMPTY;
-                    int slot = (int)(t.fstOff & PREFIXES_MASK);
-                    var cached = prefixes[slot];
-                    if (cached == null || cached.offset != t.fstOff) {
-                        cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
-                        prefixes[slot] = cached;
-                    }
-                    yield cached;
-                }
-                case '_' -> FinalSegmentRope.EMPTY;
-                default -> throw new IllegalArgumentException("Not an RDF term");
-            };
-            int localOff = fst == '<' ? sh.len : 0;
-            dest.putTerm(col, sh, t, localOff, t.len-sh.len, fst == '"');
         }
 
         private boolean resetLexIt(LexIt<?> lexIt, byte leftCol) {
