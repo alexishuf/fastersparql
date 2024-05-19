@@ -49,25 +49,24 @@ class CallbackEmitterTest {
     private static abstract sealed class Cb extends CallbackEmitter<CompressedBatch, Cb> {
         private final Semaphore canFeed = new Semaphore(0);
         private final CompressedBatch expected;
-        private final boolean selfCancel, fail;
-        private boolean cancelled, released;
+        private final boolean fail;
+        private volatile boolean cancelled, released;
         private @MonotonicNonNull Future<?> feedTask;
 
-        public static Orphan<Cb> create(Orphan<CompressedBatch> expected, boolean fail, boolean selfCancel) {
-            return new Concrete(expected, fail, selfCancel);
+        public static Orphan<Cb> create(Orphan<CompressedBatch> expected, boolean fail) {
+            return new Concrete(expected, fail);
         }
-        protected Cb(Orphan<CompressedBatch> expected, boolean fail, boolean selfCancel) {
+        protected Cb(Orphan<CompressedBatch> expected, boolean fail) {
             super(COMPRESSED, X, EMITTER_SVC, CREATED, CB_FLAGS);
             this.expected = expected.takeOwnership(this);
             this.fail     = fail;
-            this.selfCancel = selfCancel;
             if (ResultJournal.ENABLED)
                 ResultJournal.initEmitter(this, vars);
         }
 
         private static final class Concrete extends Cb implements Orphan<Cb> {
-            public Concrete(Orphan<CompressedBatch> expected, boolean fail, boolean selfCancel) {
-                super(expected, fail, selfCancel);
+            public Concrete(Orphan<CompressedBatch> expected, boolean fail) {
+                super(expected, fail);
             }
             @Override public Cb takeOwnership(Object o) {return takeOwnership0(o);}
         }
@@ -102,11 +101,6 @@ class CallbackEmitterTest {
             if (fail) {
                 complete(new RuntimeException("test-fail"));
             } else if (cancelled) {
-                cancel(true);
-            } else if (selfCancel) {
-                cancel();
-                while (!cancelled)
-                    canFeed.acquireUninterruptibly();
                 cancel(true);
             } else {
                 complete(null);
@@ -170,14 +164,14 @@ class CallbackEmitterTest {
                     expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
                     expected.commitPut();
                 }
-                cb = cbGuard.set(Cb.create(expected.dup(), failAt <= height,
-                                             cancelAt <= height));
+                cb = cbGuard.set(Cb.create(expected.dup(), failAt <= height));
                 Semaphore ready = new Semaphore(0);
                 Throwable[] errorOrCancel = {null};
                 AtomicInteger concurrentEvents = new AtomicInteger();
                 AtomicBoolean terminated = new AtomicBoolean();
                 var receiver = new Receiver<CompressedBatch>() {
                     private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
+                    private int rows;
 
                     @Override public String label(StreamNodeDOT.Label type) {
                         var sb = StreamNodeDOT.minimalLabel(new StringBuilder(), this);
@@ -195,7 +189,10 @@ class CallbackEmitterTest {
                             assertFalse(terminated.get());
                             if (stats != null) stats.onBatchPassThrough(orphan);
                             cb.request(1);
+                            rows += Batch.peekTotalRows(orphan);
                             actual.set(Batch.quickAppend(actual.detach(), owner, orphan));
+                            if (rows >= cancelAt)
+                                cb.cancel();
                         } finally {
                             concurrentEvents.compareAndExchangeRelease(1, 0);
                         }
@@ -207,7 +204,10 @@ class CallbackEmitterTest {
                             assertFalse(terminated.get());
                             if (stats != null) stats.onBatchPassThrough(batch);
                             cb.request(1);
+                            rows += batch.rows;
                             actual.get().copy(batch);
+                            if (rows >= cancelAt)
+                                cb.cancel();
                         } finally {
                             concurrentEvents.compareAndExchangeRelease(1, 0);
                         }
@@ -260,11 +260,10 @@ class CallbackEmitterTest {
                         fail("Expected onError()");
                     else if (!errorOrCancel[0].getMessage().contains("test-fail"))
                         fail("Actual error is not the expected", errorOrCancel[0]);
-                } else if (cancelAt <= height) {
-                    if (errorOrCancel[0] == null || !(errorOrCancel[0] instanceof FSCancelledException))
-                        fail("Expected FSCancelledException, got", errorOrCancel[0]);
                 } else if (errorOrCancel[0] != null) {
-                    fail("Unexpected error/cancel", errorOrCancel[0]);
+                    if (cancelAt > height || !(errorOrCancel[0] instanceof FSCancelledException))
+                        fail("Unexpected error/cancel", errorOrCancel[0]);
+                    //else: FSCancelledException due to cancel()
                 }
                 assertEquals(expected, actual.get());
                 assertDoesNotThrow(() -> cb.feedTask.get());
