@@ -2414,7 +2414,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public void close() {
             super.close();
-            lb = Owned.safeRecycle(lb, this);
+            lb = Batch.safeRecycle(lb, this);
+            rb = Batch.safeRecycle(rb, this);
             left.close();
         }
 
@@ -2529,8 +2530,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
                     bindingNotifier.bindQuery.metrics.batch(b.totalRows());
-                return b.rows == 0 ? handleEmptyBatch(b) : onNextBatch(b.releaseOwnership(this));
+                B r = b;
+                b = null;
+                return r.rows == 0 ? handleEmptyBatch(r) : onNextBatch(r.releaseOwnership(this));
             } catch (Throwable t) {
+                Batch.safeRecycle(b, this);
                 if (state() == State.ACTIVE)
                     onTermination(t);
                 throw t;

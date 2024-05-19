@@ -188,8 +188,11 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                     else    bindQuery.nonEmptyBinding(seq);
                 }
             } while (readyInNanos(b.totalRows(), startNs) > 0 && !plainState.isTerminated());
-            return b.rows == 0 ? handleEmptyBatch(b) : onNextBatch(b.releaseOwnership(this));
+            B r = b;
+            b = null;
+            return r.rows == 0 ? handleEmptyBatch(r) : onNextBatch(r.releaseOwnership(this));
         } catch (Throwable t) {
+            Batch.safeRecycle(b, this);
             onTermination(t);
             throw t;
         } finally {

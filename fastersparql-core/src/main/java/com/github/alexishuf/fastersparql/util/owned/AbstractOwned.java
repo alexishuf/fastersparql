@@ -6,16 +6,11 @@ import com.github.alexishuf.fastersparql.util.owned.LeakDetector.LeakState;
 import com.github.alexishuf.fastersparql.util.owned.SpecialOwner.Recycled;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.GARBAGE;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
-import static java.lang.Integer.toHexString;
-import static java.lang.System.identityHashCode;
 
 public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned<O> {
-    static final Logger OWNED_LOG = LoggerFactory.getLogger(Owned.class);
     private static final boolean MARK = FSProperties.ownedMark();
     private static final boolean TRACE = OwnershipHistory.ENABLED;
     private static final boolean DETECT_LEAKS = LeakDetector.ENABLED;
@@ -181,15 +176,8 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
     @Override public String toString() {return journalName();}
 
     @Override public String journalName() {
-        if (journalName == null) {
-            var cls = getClass();
-            String name = cls.getSimpleName();
-            if (name.equals("Concrete"))
-                name = cls.getSuperclass().getSimpleName();
-            if (name.isEmpty())
-                name = cls.getName();
-            journalName = name+'@'+toHexString(identityHashCode(this));
-        }
+        if (journalName == null)
+            journalName = OwnedSupport.makeJournalName(this);
         return journalName;
     }
 }

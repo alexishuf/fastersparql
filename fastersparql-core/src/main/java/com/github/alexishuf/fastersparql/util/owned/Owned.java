@@ -6,7 +6,7 @@ import com.github.alexishuf.fastersparql.util.owned.SpecialOwner.Recycled;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import static com.github.alexishuf.fastersparql.util.owned.AbstractOwned.OWNED_LOG;
+import static com.github.alexishuf.fastersparql.util.owned.OwnedSupport.OWNED_LOG;
 
 public interface Owned<O extends Owned<O>> extends JournalNamed {
     /**
@@ -165,11 +165,12 @@ public interface Owned<O extends Owned<O>> extends JournalNamed {
      * @return {@code null}
      */
     static <O> @Nullable O safeRecycle(@Nullable Owned<?> owned, Object currentOwner) {
-        try {
-            if (owned != null)
-                owned.recycle(currentOwner);
-        } catch (Throwable t) {
-            OWNED_LOG.error("Error recycling {}", owned, t);
+        if (owned != null) {
+            try {
+                    owned.recycle(currentOwner);
+            } catch (Throwable t) {
+                OwnedSupport.handleRecycleError(OWNED_LOG, "", owned, t);
+            }
         }
         return null;
     }

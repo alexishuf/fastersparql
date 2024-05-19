@@ -271,7 +271,7 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
                 unlock();
             }
             // recycle offer if we did not already
-            Orphan.recycle(offer);
+            Orphan.safeRecycle(offer);
             unpark(producer);
         }
 

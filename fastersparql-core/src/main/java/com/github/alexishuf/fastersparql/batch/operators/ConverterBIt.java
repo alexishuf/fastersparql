@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.base.DelegatedControlBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
@@ -25,34 +26,42 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
     }
 
     @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
+        B out = null;
         S in = lastIn;
         lastIn = null;
         try {
-            in = delegate.nextBatch(in, this);
-        } catch (Throwable t) {
+            if (isTerminated())
+                return null;
+            lastIn = null;
+            Orphan<S> inOffer = Owned.releaseOwnership(in, this);
+            in = null;
+            in = Orphan.takeOwnership(delegate.nextBatch(inOffer), this);
+            if (in == null) {
+                onTermination(null);
+            } else {
+                out = offer == null ? batchType.create(in.cols).takeOwnership(this)
+                                    : offer.takeOwnership(this).clear(in.cols);
+                offer = null;
+                lock();
+                try {
+                    if (!isTerminated()) { // re-check after lock() for concurrent tryCancel()
+                        var ret = putConverting(out, in).releaseOwnership(this);
+                        lastIn  = in;
+                        out     = null;
+                        in      = null;
+                        onNextBatch(ret);
+                        return ret;
+                    }
+                } finally { unlock(); }
+            }
+        } catch (Throwable t){
             onTermination(t);
             throw t;
+        } finally {
+            if (offer != null) Orphan.safeRecycle(offer);
+            if (out   != null) Batch .safeRecycle(out, this);
+            if (in    != null) Batch .safeRecycle(in,  this);
         }
-        if (in == null) {
-            Orphan.recycle(offer);
-            onTermination(null);
-            return null;
-        }
-        if (!isTerminated()) {
-            B out = offer == null ? batchType.create(in.cols).takeOwnership(this)
-                                  : offer.takeOwnership(this).clear(in.cols);
-            lock();
-            try {
-                if (isTerminated()) {
-                    out.recycle(this);
-                } else {
-                    onNextBatch(offer = putConverting(out, in).releaseOwnership(this));
-                    lastIn = in;
-                    return offer;
-                }
-            } finally { unlock(); }
-        }
-        in.recycle(this);
         return null;
     }
 

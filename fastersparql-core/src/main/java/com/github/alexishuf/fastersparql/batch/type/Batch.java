@@ -80,11 +80,12 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
 
     /** Equivalent to {@link Owned#safeRecycle(Owned, Object)}. */
     public static <B extends Batch<B>> B safeRecycle(@Nullable Batch<?> b, Object currentOwner) {
-        try {
-            if (b != null)
-                b.recycle(currentOwner);
-        } catch (Throwable t) {
-            log.error("Error recycling {}", b.journalName(), t);
+        if (b != null) {
+            try {
+                    b.recycle(currentOwner);
+            } catch (Throwable t) {
+                OwnedSupport.handleRecycleError(log, "", b, t);
+            }
         }
         return null;
     }

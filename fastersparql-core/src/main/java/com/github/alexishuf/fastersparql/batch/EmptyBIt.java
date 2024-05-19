@@ -36,9 +36,9 @@ public final class EmptyBIt<B extends Batch<B>> extends AbstractBIt<B> {
     }
 
     @Override public Orphan<B> nextBatch(@Nullable Orphan<B> b) {
+        Orphan.recycle(b);
         lock();
         try {
-            Orphan.recycle(b);
             if (state() == State.ACTIVE)
                 onTermination(null);
             return null;

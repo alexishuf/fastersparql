@@ -18,7 +18,7 @@ public class SingletonBIt<B extends Batch<B>> extends AbstractBIt<B> {
     }
 
     @Override public Orphan<B> nextBatch(@Nullable Orphan<B> b) {
-         Orphan.recycle(b);
+        Orphan.recycle(b);
         lock();
         try {
             b = Owned.releaseOwnership(batch, this);

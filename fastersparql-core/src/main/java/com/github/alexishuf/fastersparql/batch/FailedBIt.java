@@ -19,9 +19,9 @@ public class FailedBIt<B extends Batch<B>> extends AbstractBIt<B> {
     public FailedBIt(BatchType<B> bt, Throwable error) { this(bt, Vars.EMPTY, error); }
 
     @Override public Orphan<B> nextBatch(@Nullable Orphan<B> orphan) {
+        Orphan.recycle(orphan);
         lock();
         try {
-            Orphan.recycle(orphan);
             if (state() == State.ACTIVE)
                 onTermination(error);
             throw error;

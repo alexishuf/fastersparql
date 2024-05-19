@@ -73,7 +73,10 @@ public class BatchReadyTest {
         public ReadyHelper() { super(TermBatchType.TERM, Vars.of("x")); }
         @Override public long readyInNanos(int r, long start) { return super.readyInNanos(r, start); }
         @Override public @This BIt<TermBatch> tempEager() { return this; }
-        @Override public Orphan<TermBatch> nextBatch(@Nullable Orphan<TermBatch> b) { throw new UnsupportedOperationException(); }
+        @Override public Orphan<TermBatch> nextBatch(@Nullable Orphan<TermBatch> b) {
+            Orphan.recycle(b);
+            throw new UnsupportedOperationException();
+        }
         @Override public String toString() { return "test"; }
     }
 }
