@@ -499,7 +499,10 @@ public class NettySparqlServer implements AutoCloseable{
             st &= ~ST_CANCEL_REQ;
             try {
                 if ((st&CAN_SEND_TERM) == ST_GOT_REQ) {
-                    endResponse(termMessage(errorOrCancelledException));
+                    if (ctx == null)
+                        cleanupAfterEndResponse();
+                    else
+                        endResponse(termMessage(errorOrCancelledException));
                 } else {
                     journal("skip doSendTerm st=", st, ST, "on", this);
                     if (errorOrCancelledException != null)
