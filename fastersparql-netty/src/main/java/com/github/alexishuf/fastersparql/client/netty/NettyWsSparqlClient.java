@@ -481,7 +481,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             while ((int)RELEASE_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
             try {
                 if (ctx == null) {
-                    if ((st & ST_RELEASED) == 0) {
+                    if ((st&ST_RELEASED) == 0) {
                         journal("doRelease", this, ": really release");
                         st |= ST_RELEASED;
                         try {
@@ -491,12 +491,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                             if (reqRowsFrame.refCnt() > 1)
                                 reqRowsFrame.release();
                             reqRowsMsg.close();
-                            releaseRef();
                         } catch (Throwable t) {
                             log.error("Error while releasing resources for {}", this, t);
                         } finally {
                             serializer = Owned.safeRecycle(serializer, this);
                             bbView = null;
+                            releaseRef();
                         }
                     }
                 } else if ((st&ST_CAN_RELEASE) != 0) {
