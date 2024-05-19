@@ -473,7 +473,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                         yield b+1;
                     }
                     case '"' -> {
-                        int dq = r.skipUntilUnescaped(b + 1, e, '"');
+                        int dq = r.skipUntilUnescaped(b + 1, e, (byte)'"');
                         if (dq == e) yield -1;
                         parser.pop();
                         spState.onString(parser, r, b+1, dq);
@@ -499,8 +499,8 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                 case OBJECT -> {
                     switch (c) {
                         case '"' -> {
-                            int dq = r.skipUntilUnescaped(b+1, e, '"');
-                            int colon = r.skipUntil(dq, e, ':');
+                            int dq = r.skipUntilUnescaped(b+1, e, (byte)'"');
+                            int colon = r.skipUntil(dq, e, (byte)':');
                             if (colon == e) yield -1;
                             parser.push(spState.forProperty(parser, r, b+1, dq));
                             yield colon+1;

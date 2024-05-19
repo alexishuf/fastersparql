@@ -146,7 +146,7 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
                         }
                         for (int i = 0, last = columns.length - 1; i < columns.length; i++) {
                             writeSparql(sink, batch, r, columns, i, names, datatypeTails);
-                            sink.append(i == last ? (byte) '\n' : (byte) '\t');
+                            sink.append(i == last ? (byte)'\n' : (byte)'\t');
                         }
                     }
                     ++chunkRows;
@@ -249,7 +249,7 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
             assignNames(batch, row, columns, i, names, datatypeTails);
         for (int i = 0, last = columns.length - 1; i < columns.length; i++) {
             writeSparql(sink, batch, row, columns, i, names, datatypeTails);
-            sink.append(i == last ? (byte) '\n' : (byte) '\t');
+            sink.append(i == last ? (byte)'\n' : (byte)'\t');
         }
     }
 

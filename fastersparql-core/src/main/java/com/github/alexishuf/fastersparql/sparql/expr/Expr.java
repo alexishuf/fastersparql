@@ -1220,7 +1220,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                     List<byte[]> branches = new ArrayList<>();
                     int end = local.skipUntilLast(1, local.len, (byte)'"');
                     for (int i = 1, j; i < end; i = j + 1) {
-                        j = local.skipUntilUnescaped(i, end, '|');
+                        j = local.skipUntilUnescaped(i, end, (byte)'|');
                         branches.add(local.toArray(i, j));
                     }
                     orBranches = branches.toArray(new byte[0][]);
@@ -1311,8 +1311,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 int len = textRope.len;
                 for (byte[] branch : branches) {
                     if (len < branch.length) continue;
-                    char fst0 = (char)branch[0];
-                    char fst1 = (char)(fst0 >= 'A' && fst0 <= 'Z' ? fst0+32 : fst0);
+                    byte fst0 = branch[0];
+                    byte fst1 = fst0 >= 'A' && fst0 <= 'Z' ? (byte)(fst0+32) : fst0;
                     for (int i = 0, j, last = len-branch.length; i <= last; i = j+1) {
                         j = textRope.skipUntil(i, len, fst0, fst1);
                         if (j < len && textRope.hasAnyCase(j, branch)) return TRUE;

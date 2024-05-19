@@ -81,7 +81,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
 
     @Override protected final int handleControl(SegmentRope rope, int begin) {
         for (int end = rope.len(), eol; begin < end && rope.get(begin) == '!'; begin = eol+1) {
-            if ((eol = rope.skipUntil(begin, end, '\n')) == end)
+            if ((eol = rope.skipUntil(begin, end, (byte)'\n')) == end)
                 return suspend(rope, begin, end);
             byte first = begin+1 < end ? rope.get(begin+1) : 0;
             if (first == 'e' && rope.has(begin, END))
@@ -110,7 +110,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     /* --- --- --- helper methods --- --- --- */
 
     private void handlePrefix(SegmentRope r, int begin, int eol) {
-        int nameBegin = begin+PREFIX.length, colon = r.skipUntil(nameBegin, eol, ':');
+        int nameBegin = begin+PREFIX.length, colon = r.skipUntil(nameBegin, eol, (byte)':');
         if (nameBegin >= eol || colon >= eol) throw badPrefix(r, begin, colon);
 
         Term iri = null;
@@ -160,7 +160,7 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     }
 
     private InvalidSparqlResultsException badPrefix(Rope rope, int begin, int colon) {
-        int eol = rope.skipUntil(begin, rope.len(), '\n');
+        int eol = rope.skipUntil(begin, rope.len(), (byte)'\n');
         int nameLen = colon-begin+(PREFIX.length+1);
         String reason = nameLen <= 0 ? "Missing prefix name"
                                      : colon >= eol ? "Missing :" : "Malformed !prefix";

@@ -53,7 +53,7 @@ class ByteBufSinkTest {
     @Test void testAppendBytesAndStrings() {
         var s = new ByteBufSink(UnpooledByteBufAllocator.DEFAULT).touch();
         s.append('0');
-        s.append((byte) '1');
+        s.append((byte)'1');
         s.append(new byte[]{'3', '4'});
         s.append(new byte[]{'4', '5', '6', '7'}, 1, 3);
         s.append("8");

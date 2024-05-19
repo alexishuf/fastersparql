@@ -131,11 +131,11 @@ public sealed class MutableRope extends SegmentRope
             Vector<Byte> cVec = B_SP.broadcast(c);
             for (int j, e = B_SP.loopBound(len); i < e; i += B_SP.length()) {
                 for (var vec = fromArray(B_SP, utf8, i); (j = vec.eq(cVec).firstTrue()) != B_LEN; )
-                    vec = vec.withLane(j, utf8[i + j] = (byte) r);
+                    vec = vec.withLane(j, utf8[i + j] = (byte)r);
             }
         }
         for (int e = len; i < e; ++i)
-            if (utf8[i] == c) utf8[i] = (byte) r;
+            if (utf8[i] == c) utf8[i] = (byte)r;
         return this;
     }
 
@@ -196,7 +196,7 @@ public sealed class MutableRope extends SegmentRope
                     ensureFreeCapacity(len>>1);
                     free = (u8 = u8()).length - len;
                 }
-                u8[len++] = (byte) c;
+                u8[len++] = (byte)c;
             }
             if (sum > 0 && u8[len-1] == '\r')
                 --len; // unget() '\r'
@@ -207,7 +207,7 @@ public sealed class MutableRope extends SegmentRope
 
     public OutputStream asOutputStream() {
         return new OutputStream() {
-            @Override public void write(int b) { append((byte) b); }
+            @Override public void write(int b) { append((byte)b); }
             @Override public void write(byte @NonNull [] b) { append(b); }
             @Override public void write(byte @NonNull [] b, int off, int len) { append(b, off, len); }
         };
@@ -326,7 +326,7 @@ public sealed class MutableRope extends SegmentRope
         var r = Rope.asRope(o);
         ensureFreeCapacity(r.len()+8);
         for (int consumed = 0, i, end = r.len(); consumed < end; consumed = i+1) {
-            i = r.skipUntil(consumed, end, '\n');
+            i = r.skipUntil(consumed, end, (byte)'\n');
             append(r, consumed, i);
             if (i < end)
                 append('\\').append('n');

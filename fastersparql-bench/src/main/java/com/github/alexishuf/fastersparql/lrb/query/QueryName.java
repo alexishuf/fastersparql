@@ -91,7 +91,7 @@ public enum QueryName {
             if (!header.readLine(is))
                 throw new IllegalStateException("Invalid results TSV resource is empty");
             for (int i = 1, j; i < header.len ; i = j+2) {
-                j = header.skipUntil(i, header.len, '\t');
+                j = header.skipUntil(i, header.len, (byte)'\t');
                 if (!vars.add(FinalSegmentRope.asFinal(header, i, j)))
                     throw new IllegalStateException("Duplicate var in TSV resource file");
             }
@@ -133,7 +133,7 @@ public enum QueryName {
             if (obBegin != sparql.len()) {
                 try (var unordered = PooledMutableRope.get()) {
                     unordered.append(sparql, 0, obBegin);
-                    int obEnd = sparql.skipUntil(obBegin + 1, sparql.len, '\n');
+                    int obEnd = sparql.skipUntil(obBegin + 1, sparql.len, (byte)'\n');
                     unordered.append(sparql, obEnd, sparql.len);
                     sparql = FinalSegmentRope.asFinal(unordered);
                 }
@@ -169,7 +169,7 @@ public enum QueryName {
                             if (!node.getView(r, c, tmp))
                                 throw new AssertionError("no term, but shared() != null");
                             var local = tmp.local();
-                            int dot = local.skipUntil(0, local.len, '.');
+                            int dot = local.skipUntil(0, local.len, (byte)'.');
                             rope.clear().append(local, 0, dot);
                             amp.putTerm(c, tmp.finalShared(), rope.segment, rope.utf8, 0,
                                         rope.len, true);

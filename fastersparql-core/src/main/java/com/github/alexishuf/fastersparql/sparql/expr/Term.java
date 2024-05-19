@@ -49,10 +49,10 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     private static final byte   IS_SUFFIX = 0x0000001;
     private static final byte   TYPE_MASK = 0x0000006;
     private static final int     TYPE_BIT = numberOfTrailingZeros(TYPE_MASK);
-    private static final byte    TYPE_LIT = (byte) (Type.LIT.ordinal() << TYPE_BIT);
-    private static final byte    TYPE_VAR = (byte) (Type.VAR.ordinal() << TYPE_BIT);
-    private static final byte  TYPE_BLANK = (byte) (Type.BLANK.ordinal() << TYPE_BIT);
-    private static final byte    TYPE_IRI = (byte) (Type.IRI.ordinal() << TYPE_BIT);
+    private static final byte    TYPE_LIT = (byte)(Type.LIT.ordinal() << TYPE_BIT);
+    private static final byte    TYPE_VAR = (byte)(Type.VAR.ordinal() << TYPE_BIT);
+    private static final byte  TYPE_BLANK = (byte)(Type.BLANK.ordinal() << TYPE_BIT);
+    private static final byte    TYPE_IRI = (byte)(Type.IRI.ordinal() << TYPE_BIT);
 
 
     public static final FinalTerm FALSE = new FinalTerm(DT_BOOLEAN, "\"false", true);
@@ -503,7 +503,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 throw new AssertionError("IRI ending in >>");
             if (len() > 2 && get(1) == '<')
                 throw new AssertionError("IRI starting with <<");
-            if (skipUntil(1, len()-1, '<', '>') != len()-1)
+            if (skipUntil(1, len()-1, (byte)'<', (byte)'>') != len()-1)
                 throw new AssertionError("<> within IRI");
             if (skip(0, len(), UNTIL_SPECIAL_WS) != len())
                 throw new AssertionError("suspicious control char in term");
@@ -844,7 +844,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return tsr;
     }
 
-    @Override public int skipUntil(int begin, int end, char c0) {
+    @Override public int skipUntil(int begin, int end, byte c0) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
@@ -858,7 +858,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return end;
     }
 
-    @Override public int skipUntil(int begin, int end, char c0, char c1) {
+    @Override public int skipUntil(int begin, int end, byte c0, byte c1) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
@@ -1271,7 +1271,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         int endLex = endLex(), required = 0;
         if (endLex == 0) return 0;
         for (int i = 1, j, n; i < endLex; i += n) {
-            j = skipUntil(i, endLex, '\\');
+            j = skipUntil(i, endLex, (byte)'\\');
             n = j-i;
             byte c = j == endLex ? 0 : first.get(j + 1);
             required += n + switch (c) {
@@ -1305,7 +1305,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         int before = dest.len;
         SegmentRope local = first;
         for (int i = 1, j; i < endLex; i = j+2) {
-            j = skipUntil(i, endLex, '\\');
+            j = skipUntil(i, endLex, (byte)'\\');
             dest.append(local, i, j);
             if (j >= endLex) break;
             byte c = local.get(j+1);

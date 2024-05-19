@@ -61,10 +61,10 @@ public class WsBindingSeqBench {
             seedBatch.recycle(this);
             for (int i = 0, begin = 0, len = seedRope.len; begin < len; ++i) {
                 begins[i] = begin;
-                ends[i] = seedRope.skipUntil(begin, len, '\t');
+                ends[i] = seedRope.skipUntil(begin, len, (byte)'\t');
                 if (seedRope.get(begin) != '"') throw new AssertionError("bad begin");
                 if (seedRope.get(ends[i] - 1) != '"') throw new AssertionError("bad end");
-                begin = seedRope.skipUntil(begin, len, '\n') + 1;
+                begin = seedRope.skipUntil(begin, len, (byte)'\n') + 1;
             }
             containers.clear();
             ByteSink<?, ?> sink = ropeTypeHolder.byteSink();

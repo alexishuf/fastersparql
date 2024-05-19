@@ -290,7 +290,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      *         starts is stored in bits {@code [0,32)}, i.e., {@code (int)retVal}.
      */
     public final long skipUntilLineBreak(int begin, int end) {
-        for (int i = begin; (i = skipUntil(i, end, '\r', '\n')) != end; ++i) {
+        for (int i = begin; (i = skipUntil(i, end, (byte)'\r', (byte)'\n')) != end; ++i) {
             byte c = get(i);
             if (c == '\n') return (1L<<32) | i;
             if (c == '\r' && i + 1 < end && get(i + 1) == '\n') return (2L<<32) | i;
@@ -301,7 +301,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     /**
      * Equivalent to {@code skipUntil(begin, end, c0, c0)}.
      */
-    public int skipUntil(int begin, int end, char c0) { return skipUntil(begin, end, c0, c0); }
+    public int skipUntil(int begin, int end, byte c0) { return skipUntil(begin, end, c0, c0); }
 
     /** Whether the byte at index {@code i} is under effect of two-byte escape sequence where the
      * escape char is {@code escape} and the search for escape chars should not progress before
@@ -329,7 +329,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      *         found in {@code [begin, end)}
      * @throws IndexOutOfBoundsException if {@code begin < 0} or {@code end > len()}
      */
-    public int skipUntilUnescaped(int begin, int end, char c) {
+    public int skipUntilUnescaped(int begin, int end, byte c) {
         int i = begin;
         while ((i=skipUntil(i, end, c)) < end && (get(i) != c || isEscaped(i)))
             ++i;
@@ -348,7 +348,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @return The aforementioned {@code i} or {@link Rope#len()} if there is no such {@code i}.
      */
     public final int skipUntilUnescaped(int begin, int end, byte[] sequence) {
-        char f = (char)(0xff&sequence[0]);
+        byte f = sequence[0];
         int i = begin, last = end-sequence.length;
         while (i <= last && (i = skipUntilUnescaped(i, last, f)) <= last && !has(i, sequence))
             ++i;
@@ -359,7 +359,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * If {@code !contains(allowedFirst, get(begin))}, return {@code begin}, else
      * {@code skipUntil(begin+1, end, c)}.
      */
-    public final int requireThenSkipUntil(int begin, int end, int[] allowedFirst, char c) {
+    public final int requireThenSkipUntil(int begin, int end, int[] allowedFirst, byte c) {
         if (end <= begin) return begin;
         byte first = get(begin);
         boolean ok = first > 0 ? (allowedFirst[first >> 5] & (1 << first)) != 0
@@ -380,7 +380,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @param c1 Another of the allowed chars for {@code get(i)}
      * @return The aforementioned {@code i} or {@code end} if there is no such {@code i}
      */
-    public int skipUntil(int begin, int end, char c0, char c1) {
+    public int skipUntil(int begin, int end, byte c0, byte c1) {
         if (end < begin || begin < 0 || end > len) raiseBadRange(begin, end);
         for (byte c; begin < end && (c=get(begin)) != c0 && c != c1;) ++begin;
         return begin;
@@ -400,7 +400,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @return The aforementioned {@code i} or {@code end} if there is no such {@code i}
      */
     public final int skipUntil(int begin, int end, byte[] sequence) {
-        char f = (char)(0xff&sequence[0]);
+        byte f = sequence[0];
         int lastBegin = end - sequence.length;
         while ((begin = skipUntil(begin, end, f)) <= lastBegin && !has(begin, sequence))
             ++begin;
@@ -421,7 +421,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * @return The aforementioned {@code i} or {@code end} if there is no such {@code i}
      */
     public final int skipUntil(int begin, int end, Rope sequence) {
-        char f = (char) sequence.get(0);
+        byte f = sequence.get(0);
         int lastBegin = end-sequence.len();
         while ((begin = skipUntil(begin, end, f)) <= lastBegin && !has(begin, sequence))
             ++begin;
@@ -434,7 +434,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     /**
-     * Similar to {@link Rope#skipUntil(int, int, char, char)} but finds the
+     * Similar to {@link Rope#skipUntil(int, int, byte, byte)} but finds the
      * <strong>LAST</strong> {@code i}.
      */
     public abstract int skipUntilLast(int begin, int end, byte c0, byte c1);
@@ -473,7 +473,7 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * Get the first {@code i} in {@code [begin, end)} where {@code get(i)} is <strong>NOT</strong>
      * in {@code alphabet}.
      *
-     * <p>To obtain behavior akin to {@link Rope#skipUntil(int, int, char)},
+     * <p>To obtain behavior akin to {@link Rope#skipUntil(int, int, byte)},
      * {@link Rope#invert(int[])} the alphabet.</p>
      *
      * <p>Implementations of this method shall not use vectorization and thus

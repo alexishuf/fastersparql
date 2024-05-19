@@ -171,7 +171,7 @@ public class GrepNetty implements Callable<Void> {
                                 if (channelCount > 0)
                                     throw paramEx("--single-channel, but multiple channels match");
                                 // skip channel id line
-                                i = Math.min(len, c.skipUntil(i, len, '\n')+1);
+                                i = Math.min(len, c.skipUntil(i, len, (byte)'\n')+1);
                             }
                             ++channelCount;
                         }
@@ -197,7 +197,7 @@ public class GrepNetty implements Callable<Void> {
             }
             if (i >= len)
                 return len; // not found
-            eol = chunk.skipUntil(i, len, '\n');
+            eol = chunk.skipUntil(i, len, (byte)'\n');
             if (channelId == null || chunk.has(i, channelId)) {
                 if (remote == null || chunk.skipUntil(i, eol, remote) < eol) {
                     if (local == null || chunk.skipUntil(i, eol, local) < eol)
@@ -239,7 +239,7 @@ public class GrepNetty implements Callable<Void> {
         boolean active = filtered.rope.len > 0;
         int i = begin;
         for (int nextLine, arrow, c0; i < len; i = nextLine) {
-            nextLine = Math.min(len, in.skipUntil(i, len, '\n')+1);
+            nextLine = Math.min(len, in.skipUntil(i, len, (byte)'\n')+1);
             if ((c0 = in.get(i)) == ' ') {
                 if (active) filtered.rope.append(in, i+skipOnData, nextLine);
             } else if (c0 == '\n' && in.has(i, END_CH_MARKER)) {

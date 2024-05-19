@@ -141,7 +141,7 @@ public abstract class SegmentRope extends PlainRope {
         return new SegmentRopeView().wrap(this, begin, rLen);
     }
 
-    static long safeSkipUntil(MemorySegment segment, long i, long e, char c0) {
+    static long safeSkipUntil(MemorySegment segment, long i, long e, byte c0) {
         int rLen = (int)(e-i);
         if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
             Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
@@ -153,7 +153,7 @@ public abstract class SegmentRope extends PlainRope {
         while (i < e && segment.get(JAVA_BYTE, i) != c0) ++i;
         return i;
     }
-    static long skipUntil(MemorySegment segment, byte[] utf8, long i, long e, char c0) {
+    static long skipUntil(MemorySegment segment, byte[] utf8, long i, long e, byte c0) {
         if (U == null)
             return safeSkipUntil(segment, i, e, c0);
         int rLen = (int)(e-i);
@@ -172,12 +172,12 @@ public abstract class SegmentRope extends PlainRope {
 
     }
 
-    @Override public int skipUntil(int begin, int end, char c0) {
+    @Override public int skipUntil(int begin, int end, byte c0) {
         rangeLen(begin, end);
         return (int) (skipUntil(segment, utf8, begin+offset, end+offset, c0)-offset);
     }
 
-    static long safeSkipUntil(MemorySegment segment, long i, long e, char c0, char c1) {
+    static long safeSkipUntil(MemorySegment segment, long i, long e, byte c0, byte c1) {
         int rLen = (int)(e-i);
         if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
             Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
@@ -191,7 +191,7 @@ public abstract class SegmentRope extends PlainRope {
         for (byte c; i < e && (c=segment.get(JAVA_BYTE, i)) != c0 && c != c1;) ++i;
         return i;
     }
-    static long skipUntil(MemorySegment segment, byte[] utf8, long i, long e, char c0, char c1) {
+    static long skipUntil(MemorySegment segment, byte[] utf8, long i, long e, byte c0, byte c1) {
         if (U == null)
             return safeSkipUntil(segment, i, e, c0, c1);
         int rLen = (int)(e-i);
@@ -211,7 +211,7 @@ public abstract class SegmentRope extends PlainRope {
         return i-address;
     }
 
-    @Override public int skipUntil(int begin, int end, char c0, char c1) {
+    @Override public int skipUntil(int begin, int end, byte c0, byte c1) {
         rangeLen(begin, end);
         return (int)(skipUntil(segment, utf8, offset+begin, offset+end, c0, c1)-offset);
     }
@@ -297,7 +297,7 @@ public abstract class SegmentRope extends PlainRope {
         return isEscapedPhys(begin+offset, i+offset);
     }
 
-    @Override public int skipUntilUnescaped(int begin, int end, char c) {
+    @Override public int skipUntilUnescaped(int begin, int end, byte c) {
         var segment = this.segment;
         int rLen = rangeLen(begin, end);
         long i = begin + offset;

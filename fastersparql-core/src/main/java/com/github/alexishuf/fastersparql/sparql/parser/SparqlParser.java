@@ -177,7 +177,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
         skipWS();
         int begin = pos;
         if (begin < end && in.get(begin) == '<') {
-            pos = in.requireThenSkipUntil(begin+1, end, Rope.LETTERS, '>');
+            pos = in.requireThenSkipUntil(begin+1, end, Rope.LETTERS, (byte)'>');
             if (pos > begin+1 && pos < end) return Term.valueOf(in, begin, ++pos);
         }
         throw ex("IRI", pos = begin);
@@ -195,7 +195,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
 
     private byte skipWS() {
         while ((pos = in.skipWS(pos, end)) != end && in.get(pos) == '#')
-            pos = in.skipUntil(pos, end, '\n');
+            pos = in.skipUntil(pos, end, (byte)'\n');
         return pos == end ? 0 : in.get(pos);
     }
 

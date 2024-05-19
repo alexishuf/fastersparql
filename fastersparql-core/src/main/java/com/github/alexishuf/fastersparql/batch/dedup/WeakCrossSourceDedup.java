@@ -154,7 +154,7 @@ public abstract sealed class WeakCrossSourceDedup<B extends Batch<B>> extends De
             if (match == -1) { // add row to the table, consuming an insertion point
                 sources = 0;
                 match = begin + bucketInsertion[bucket]; //get insertion index
-                bucketInsertion[bucket] = (byte) ((bucketInsertion[bucket] + 1) % bucketWidth);
+                bucketInsertion[bucket] = (byte)((bucketInsertion[bucket] + 1) % bucketWidth);
                 table.set(match, batch, row);
                 int hashIdx = match << 1;
                 sourcesIdx = hashIdx+1;

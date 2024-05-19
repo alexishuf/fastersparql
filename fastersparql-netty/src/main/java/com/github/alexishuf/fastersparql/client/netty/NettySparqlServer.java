@@ -1015,12 +1015,12 @@ public class NettySparqlServer implements AutoCloseable{
             if (indexOfIgnoreCaseAscii(ct, APPLICATION_X_WWW_FORM_URLENCODED, 0) == 0) {
                 int begin = 0, len = body.len;
                 while (begin < len && !body.hasAnyCase(begin, QUERY_EQ))
-                    begin = body.skipUntil(begin, len, '&')+1;
+                    begin = body.skipUntil(begin, len, (byte)'&')+1;
                 begin += QUERY_EQ.length;
                 if (begin >= len) {
                     sendRequestError(BAD_REQUEST, MISSING_QUERY_FORM_MSG);
                 } else {
-                    unescape(body, begin, body.skipUntil(begin, body.len, '&'), queryRope);
+                    unescape(body, begin, body.skipUntil(begin, body.len, (byte)'&'), queryRope);
                     handleQuery(queryRope);
                 }
             } else if (indexOfIgnoreCaseAscii(ct, APPLICATION_SPARQL_QUERY, 0) == 0) {
@@ -1334,7 +1334,7 @@ public class NettySparqlServer implements AutoCloseable{
 
         private boolean readUnusual(SegmentRope msg) {
             if (msg.has(0, AbstractWsParser.INFO)) {
-                int eol = msg.skipUntil(0, msg.len, '\n');
+                int eol = msg.skipUntil(0, msg.len, (byte)'\n');
                 info = msg.toString(AbstractWsParser.INFO.length, eol);
                 journal("!info ", info, "on", this);
             } else if (msg.has(0, AbstractWsParser.PING)) {
@@ -1391,7 +1391,7 @@ public class NettySparqlServer implements AutoCloseable{
             }
         }
         private void readVarsFrame(SegmentRope msg) {
-            int len = msg.len, eol = msg.skipUntil(0, len, '\n');
+            int len = msg.len, eol = msg.skipUntil(0, len, (byte)'\n');
             if (query == null || earlyCancel || (st&ST_CLOSING) != 0 || eol == len) {
                 abortReadVarsFrame();
                 return;
@@ -1409,7 +1409,7 @@ public class NettySparqlServer implements AutoCloseable{
                         sendRequestError("No var marker for var", null);
                         return;
                     }
-                    j = msg.skipUntil(i, len, '\t',  '\n');
+                    j = msg.skipUntil(i, len, (byte)'\t', (byte)'\n');
                     bindingsVars.add(asFinal(msg, i+1, j));
                 }
                 waitingVars = false;
@@ -1516,7 +1516,7 @@ public class NettySparqlServer implements AutoCloseable{
             }
             onNewRequest();
             if (ex == null || !msg.has(0, ex)) {
-                var cmd = msg.sub(0, msg.skipUntil(0, msg.len, '\n', ' '));
+                var cmd = msg.sub(0, msg.skipUntil(0, msg.len, (byte)'\n', (byte)' '));
                 sendRequestError("Unexpected command: ", cmd);
                 return;
             }

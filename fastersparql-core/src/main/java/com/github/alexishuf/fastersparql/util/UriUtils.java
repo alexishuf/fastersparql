@@ -95,7 +95,7 @@ public class UriUtils {
             switch (state) {
                 case 0 -> {
                     if      (c == '%') state = 1; // begin %-escape
-                    else if (ascii && Rope.contains(FORBIDDEN_QUERYPARAM, (byte) c)) return true;
+                    else if (ascii && Rope.contains(FORBIDDEN_QUERYPARAM, (byte)c)) return true;
                 }
                 case 1 -> {
                     if (!ascii || (code = hexValue((byte)c)) < 0)
@@ -104,7 +104,7 @@ public class UriUtils {
                 }
                 case 2 -> {
                     if (!ascii) return true;
-                    byte nibble = hexValue((byte) c);
+                    byte nibble = hexValue((byte)c);
                     if (nibble < 0 || (code = code << 4 | nibble) > 128)
                         return true; // bad %-escape
                     state = 0; //valid %-escape
@@ -198,7 +198,7 @@ public class UriUtils {
     public static void unescape(@PolyNull PlainRope string, int begin, int end, MutableRope dst) {
         if (string == null || end <= begin)
             return;
-        int i = string.skipUntil(begin, end, '%');
+        int i = string.skipUntil(begin, end, (byte)'%');
         while (i < end) {
             dst.append(string, begin, i);
             if (i + 2 < end) {
@@ -211,7 +211,7 @@ public class UriUtils {
             } else {
                 log.debug("Truncated %-escape on string end: \"{}\"", string);
             }
-            i = string.skipUntil(begin = i+3, end, '%');
+            i = string.skipUntil(begin = i+3, end, (byte)'%');
         }
         dst.append(string, begin, end);
     }

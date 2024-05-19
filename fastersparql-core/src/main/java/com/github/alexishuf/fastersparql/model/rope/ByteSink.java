@@ -41,7 +41,7 @@ public interface ByteSink<S extends ByteSink<S, T>, T> extends AutoCloseable  {
     T takeUntil(int len);
 
     /**
-     * If {@link #take()} implementation relies on mocing an object under manual memory management
+     * If {@link #take()} implementation relies on mocking an object under manual memory management
      * (e.g., reference-counted), this will have the same effects as {@link #take()} on this sink
      * but will also perform the type-specific release required by the internal object used by
      * this sink to hold written bytes.
@@ -125,7 +125,7 @@ public interface ByteSink<S extends ByteSink<S, T>, T> extends AutoCloseable  {
         Rope r = Rope.asRope(o);
         ensureFreeCapacity(r.len()+8);
         for (int consumed = 0, i, end = r.len(); consumed < end; consumed = i+1) {
-            i = r.skipUntil(consumed, end, '\n');
+            i = r.skipUntil(consumed, end, (byte)'\n');
             append(r, consumed, i);
             if (i < end)
                 append('\\').append('n');
@@ -141,16 +141,16 @@ public interface ByteSink<S extends ByteSink<S, T>, T> extends AutoCloseable  {
 
     @This S ensureFreeCapacity(int increment);
 
-    default @This S newline(int spaces) { return append('\n').repeat((byte) ' ', spaces); }
+    default @This S newline(int spaces) { return append('\n').repeat((byte)' ', spaces); }
 
     default @This S indented(int spaces, Object o) {
         Rope r = Rope.asRope(o);
         int end = r.len();
         ensureFreeCapacity(end+(spaces+1)<<3);
-        repeat((byte) ' ', spaces);
+        repeat((byte)' ', spaces);
         for (int i = 0, eol; i < end; i = eol+1) {
             if (i > 0) newline(spaces);
-            append(r, i, eol = r.skipUntil(i, end, '\n'));
+            append(r, i, eol = r.skipUntil(i, end, (byte)'\n'));
         }
         if (end > 0 && r.get(end-1) == '\n') append('\n');
         return (S)this;

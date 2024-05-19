@@ -64,12 +64,12 @@ public final class SortedCompositeDict extends Dict {
                         throw new IOException("Malformed "+dict+": empty string with id != 1");
                 }
                 case '"' -> {
-                    int i = t.skipUntilUnescaped(1, t.len, '"');
-                    if (i == t.len || t.skipUntil(i+1, t.len, '"') != t.len)
+                    int i = t.skipUntilUnescaped(1, t.len, (byte)'"');
+                    if (i == t.len || t.skipUntil(i+1, t.len, (byte)'"') != t.len)
                         throw new IOException("Malformed "+dict+": bad literal at id "+id+" "+t);
                 }
                 case '<' -> {
-                    int i = t.skipUntilUnescaped(0, t.len, '>');
+                    int i = t.skipUntilUnescaped(0, t.len, (byte)'>');
                     if (i != t.len-1)
                         throw new IOException("Malformed "+dict+": bad IRI at id "+id+": "+t);
                 }

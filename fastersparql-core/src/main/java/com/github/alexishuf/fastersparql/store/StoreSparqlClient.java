@@ -1049,7 +1049,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             int cols = outVars.size();
             if (cols > 127)
                 throw new IllegalArgumentException("Too many output columns");
-            this.cols         = (byte) cols;
+            this.cols         = (byte)cols;
             this.tp           = tp;
             this.bindableVars = tp.allVars();
             this.pref = new PrefetchTask.Concrete(dictId, dict, this).takeOwnership(this);
@@ -1483,9 +1483,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //            int oLeftCol = leftVars.indexOf(oTerm);
 //            if ((sLeftCol | pLeftCol | oLeftCol) > 127)
 //                throw new IllegalArgumentException("binding column >127");
-//            this.sLeftCol = (byte) sLeftCol;
-//            this.pLeftCol = (byte) pLeftCol;
-//            this.oLeftCol = (byte) oLeftCol;
+//            this.sLeftCol = (byte)sLeftCol;
+//            this.pLeftCol = (byte)pLeftCol;
+//            this.oLeftCol = (byte)oLeftCol;
 //
 //            // setup tpEmitter
 //            Vars tUseful = new Vars.Mutable(3);
@@ -2281,16 +2281,16 @@ public class StoreSparqlClient extends AbstractSparqlClient
             int oLeftCol = leftVars.indexOf(oTerm);
             if ((sLeftCol|pLeftCol|oLeftCol) > 127)
                 throw new IllegalArgumentException("binding column >127");
-            this.sLeftCol = (byte) sLeftCol;
-            this.pLeftCol = (byte) pLeftCol;
-            this.oLeftCol = (byte) oLeftCol;
+            this.sLeftCol = (byte)sLeftCol;
+            this.pLeftCol = (byte)pLeftCol;
+            this.oLeftCol = (byte)oLeftCol;
             Vars tpFree = new Vars.Mutable(3);
             int tpFreeRolesBits = 0;
             if (sLeftCol < 0 && tp.s.isVar()) { tpFreeRolesBits |= 4; tpFree.add(tp.s); }
             if (pLeftCol < 0 && tp.p.isVar()) { tpFreeRolesBits |= 2; tpFree.add(tp.p); }
             if (oLeftCol < 0 && tp.o.isVar()) { tpFreeRolesBits |= 1; tpFree.add(tp.o); }
             tpFreeRoles = TripleRoleSet.fromBitset(tpFreeRolesBits);
-            this.tpFreeCols = (byte) tpFree.size();
+            this.tpFreeCols = (byte)tpFree.size();
             this.rb = batchType.create(tpFreeCols).takeOwnership(this);
 
             // setup index iterators for tp

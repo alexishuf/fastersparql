@@ -183,7 +183,7 @@ public class TwoSegmentRope extends PlainRope {
         return r;
     }
 
-    @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, char c0) {
+    @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, byte c0) {
         checkRange(begin, end);
         int e = min(end, fstLen), i;
         if (begin < fstLen) {
@@ -197,7 +197,7 @@ public class TwoSegmentRope extends PlainRope {
         return end;
     }
 
-    @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, char c0, char c1) {
+    @SuppressWarnings("unused") @Override public int skipUntil(int begin, int end, byte c0, byte c1) {
         checkRange(begin, end);
         int e = min(end, fstLen), i;
         if (begin < fstLen) {

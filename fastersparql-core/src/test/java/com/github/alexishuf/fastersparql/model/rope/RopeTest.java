@@ -240,8 +240,8 @@ class RopeTest {
                 assertEquals(sb.toString(), rope.toString());
 
                 for (int i = 0; i < len; i++) {
-                    assertEquals(i, rope.skipUntil(i, len, sb.charAt(i)));
-                    assertEquals(i, rope.skipUntil(i, len, sb.charAt(i), '\n'));
+                    assertEquals(i, rope.skipUntil(i, len, (byte)sb.charAt(i)));
+                    assertEquals(i, rope.skipUntil(i, len, (byte)sb.charAt(i), (byte)'\n'));
                     assertEquals(i, rope.skipUntil(i, len, new byte[]{(byte)(0xff&sb.charAt(i))}));
                     int[] until = Rope.invert(Rope.alphabet(sb.substring(i, i + 1)));
                     assertEquals(i, rope.skip(i, len, until));
@@ -295,8 +295,8 @@ class RopeTest {
                 assertTrue(rope.has(i, new byte[]{bVal}));
                 assertTrue(rope.hasAnyCase(i, new byte[]{bVal}));
                 assertTrue(rope.hasAnyCase(i, new byte[]{(byte)toUpperCase(string.charAt(i))}));
-                assertEquals(i, rope.skipUntil(i, string.length(), string.charAt(i)));
-                assertEquals(i, rope.skipUntil(i, string.length(), string.charAt(i), string.charAt(i)));
+                assertEquals(i, rope.skipUntil(i, string.length(), (byte)string.charAt(i)));
+                assertEquals(i, rope.skipUntil(i, string.length(), (byte)string.charAt(i), (byte)string.charAt(i)));
                 assertEquals(i, rope.skipUntil(i, string.length(), new byte[]{bVal}));
 
                 int[] until = Rope.invert(Rope.alphabet(string.substring(i, i + 1)));
@@ -594,10 +594,10 @@ class RopeTest {
     void testSkipUntil(Factory fac) {
         for (Rope r1 : fac.create("\"a.\"", "\"ç.\"", "\"\uD83E\uDE00.\"", "\"\0\r\n\t .\"")) {
             for (int begin = 0; begin <= r1.len()-2; begin++) {
-                assertEquals(r1.len()-2, r1.skipUntil(begin, r1.len(), '.'));
+                assertEquals(r1.len()-2, r1.skipUntil(begin, r1.len(), (byte)'.'));
                 for (Rope r2 : fac.create(r1.sub(0, r1.len() - 2) + "!\"")) {
-                    assertEquals(r1.len()-2, r1.skipUntil(begin, r1.len(), '.', '!'));
-                    assertEquals(r2.len()-2, r2.skipUntil(begin, r2.len(), '.', '!'));
+                    assertEquals(r1.len()-2, r1.skipUntil(begin, r1.len(), (byte)'.', (byte)'!'));
+                    assertEquals(r2.len()-2, r2.skipUntil(begin, r2.len(), (byte)'.', (byte)'!'));
                 }
             }
         }
@@ -616,7 +616,7 @@ class RopeTest {
     void testSkipUntilUnescaped(Factory fac) {
         for (Rope r : fac.create("", "0", "01", "012")) {
             for (int i = 0; i < r.len(); i++) {
-                assertEquals(i, r.skipUntilUnescaped(0, r.len(), (char)r.get(i)));
+                assertEquals(i, r.skipUntilUnescaped(0, r.len(), r.get(i)));
                 assertEquals(i, r.skipUntilUnescaped(0, r.len(), new byte[]{r.get(i)}));
             }
         }
@@ -644,11 +644,11 @@ class RopeTest {
         byte[] tripleQuote = {'\'', '\'', '\''};
 
         for (Rope r : fac.create(single)) {
-            assertEquals(r.len()-1, r.skipUntilUnescaped(1, r.len(), '"'));
+            assertEquals(r.len()-1, r.skipUntilUnescaped(1, r.len(), (byte)'"'));
             assertEquals(r.len()-1, r.skipUntilUnescaped(1, r.len(), simpleQuote));
         }
         for (Rope r : fac.create(singleSuffixed)) {
-            assertEquals(r.len()-2, r.skipUntilUnescaped(1, r.len(), '"'));
+            assertEquals(r.len()-2, r.skipUntilUnescaped(1, r.len(), (byte)'"'));
             assertEquals(r.len()-2, r.skipUntilUnescaped(1, r.len(), simpleQuote));
         }
         for (Rope r : fac.create(triple))
@@ -861,7 +861,7 @@ class RopeTest {
         String uppercase = "\\u0000\\u0009\\u007E\\u007F\\u00A3\\u0418\\u0939\\u20AC\\uD55C\\U00010348";
         for (Rope r : fac.create(lowercase, uppercase)) {
             for (int i = 0, n = 0; i < r.len; i++, n++) {
-                i = r.skipUntil(i, r.len, '\\');
+                i = r.skipUntil(i, r.len, (byte)'\\');
                 if (i == r.len) break;
                 int code = 0;
                 try {

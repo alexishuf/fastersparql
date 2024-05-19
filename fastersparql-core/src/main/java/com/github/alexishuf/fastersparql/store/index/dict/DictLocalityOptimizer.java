@@ -91,7 +91,7 @@ class DictLocalityOptimizer {
             offWidth = embedSharedId || (srcStringsAndFlags & OFF_W_MASK) == 0 ? 8 : 4;
             ByteBuffer bb = SmallBBPool.smallDirectBB().order(LITTLE_ENDIAN);
             try (var ch = FileChannel.open(destPath, WRITE, READ, TRUNCATE_EXISTING, CREATE)) {
-                if (ch.write(bb.clear().put((byte) 0).flip()) != 1) {
+                if (ch.write(bb.clear().put((byte)0).flip()) != 1) {
                     throw new IOException("Could not grow file to required size");
                 }
                 long inTableBytes = OFFS_OFF + (reader.offsCount() << reader.offShift());

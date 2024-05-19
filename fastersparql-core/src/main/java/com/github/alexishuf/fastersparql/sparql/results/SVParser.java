@@ -124,11 +124,11 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
                 if (begin >= end)
                     break;
                 int pseudTermLast = switch (c) {
-                    case '<' -> rope.skipUntil(begin, end, '>');
-                    case '"' -> rope.skipUntilUnescaped(begin+1, end, '"');
+                    case '<' -> rope.skipUntil(begin, end, (byte)'>');
+                    case '"' -> rope.skipUntilUnescaped(begin+1, end, (byte)'"');
                     default  -> begin;
                 };
-                if (rope.skipUntil(pseudTermLast, end, column == lastCol ? '\n' : '\t') == end) {
+                if (rope.skipUntil(pseudTermLast, end, (byte)(column == lastCol ? '\n' : '\t')) == end) {
                     suspend(rope, begin, end);
                     return;
                 } else if (c != '\t' && c != '\n') { //only parse if column is not empty
@@ -158,9 +158,9 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         }
 
         @Override protected int findEOL(Rope rope, int begin, int end) {
-            while (begin < end && (begin = rope.skipUntil(begin, end, '"', '\n')) < end
+            while (begin < end && (begin = rope.skipUntil(begin, end, (byte)'"', (byte)'\n')) < end
                                && rope.get(begin) == '"')
-                begin = rope.skipUntilUnescaped(begin, end, '"')+1;
+                begin = rope.skipUntilUnescaped(begin, end, (byte)'"')+1;
             return Math.min(begin, end);
         }
 
@@ -249,7 +249,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
         /** Find the first {@code i} in {@code [b,e)} where {@code r} has "," or "\r\n". */
         private int skipUntilCsvSep(Rope r, int b, int e) {
-            while ((b = r.skipUntil(b, e, ',', '\r')) < e && r.get(b) != ',') {
+            while ((b = r.skipUntil(b, e, (byte)',', (byte)'\r')) < e && r.get(b) != ',') {
                 if (b+1 < e && r.get(b+1) == '\n') break;
                 ++b;
             }
@@ -350,7 +350,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
         @Override protected int findEOL(Rope rope, int begin, int end) {
             boolean quoted = false;
-            while (begin < end && (begin = rope.skipUntil(begin, end, '"', '\r')) < end) {
+            while (begin < end && (begin = rope.skipUntil(begin, end, (byte)'"', (byte)'\r')) < end) {
                 byte follow = begin+1 < end ? rope.get(begin+1) : 0;
                 if (rope.get(begin) == '"') {
                     if (follow == '"') ++begin;
@@ -377,9 +377,9 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
                 if (termEnd == eol)
                     throw new InvalidSparqlResultsException("Unclosed \" at line 0");
                 //next term starts after first sep after "
-                next = rope.skipUntil(termEnd+1, eol, sep)+1;
+                next = rope.skipUntil(termEnd+1, eol, (byte)sep)+1;
             } else {// unquoted. go to sep or eol
-                termEnd = rope.skipUntil(begin, eol, sep);
+                termEnd = rope.skipUntil(begin, eol, (byte)sep);
                 next = termEnd + 1; // next term starts after sep
             }
             termEnd = rope.rightTrim(begin, termEnd);
@@ -418,8 +418,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     protected int skipUntilUnescapedQuote(Rope rope, int begin, int end) {
         if (eol.len == 1)
-            return rope.skipUntilUnescaped(begin, end, '"');
-        while ((begin = rope.skipUntil(begin, end, '"')) < end
+            return rope.skipUntilUnescaped(begin, end, (byte)'"');
+        while ((begin = rope.skipUntil(begin, end, (byte)'"')) < end
                 && begin+1 < end && rope.get(begin+1) == '"')
             begin += 2;
         return begin;
@@ -454,7 +454,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     protected InvalidSparqlResultsException unclosedQuote() {
         assert partialLine != null;
         int i = partialLine.len;
-        byte esc = (byte) (eol.len == 1 ? '\\' : '"');
+        byte esc = (byte)(eol.len == 1 ? '\\' : '"');
         while ((i = partialLine.reverseSkipUntil(0, i, '"')) > 0
                     && partialLine.get(i-1) != esc)
             --i;
@@ -464,7 +464,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     protected InvalidSparqlResultsException badTerm(Rope rope, int begin, Throwable t) {
         char eoc = eol == Tsv.EOL ? '\t' : ',';
-        int termEnd = rope.skipUntil(begin, rope.len(), eoc, '\n');
+        int termEnd = rope.skipUntil(begin, rope.len(), (byte)eoc, (byte)'\n');
         String actual = rope.sub(begin, termEnd).toString().replace("\r", "\\r")
                             .replace("\n", "\\n").replace("\t", "\\t").replace("\\", "\\\\");
         Vars vars = vars();

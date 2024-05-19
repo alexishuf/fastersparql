@@ -268,7 +268,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
                 byte c = in.get(pos);
                 // on PREFIX, BASE and #, consume whole line
                 if (c > 0 && (PROLOGUE[c>>5] & (1<<c)) != 0)
-                    pos = in.skipUntil(pos, len, '\n');
+                    pos = in.skipUntil(pos, len, (byte)'\n');
                 else break; // else we reached the query verb
             }
             if (pos >= len)
@@ -276,7 +276,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             verbBegin = pos;
             byte[] ex = switch (in.get(pos)) {
                 case 's', 'S' -> { aliasVars = new Vars.Mutable(10); yield SELECT_u8; }
-                case 'a', 'A' -> { publicVars = Vars.EMPTY; verbEnd = in.skipUntil(pos, len, '{'); yield ASK_u8; }
+                case 'a', 'A' -> { publicVars = Vars.EMPTY; verbEnd = in.skipUntil(pos, len, (byte)'{'); yield ASK_u8; }
                 case 'c', 'C' -> { isGraph = true; verbEnd = pos+CONSTRUCT_u8.length+1; yield CONSTRUCT_u8; }
                 case 'd', 'D' -> { isGraph = true; verbEnd = pos+ DESCRIBE_u8.length+1; yield DESCRIBE_u8; }
                 default -> null;
@@ -302,7 +302,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             allVars.add(name);
             if (aliasStart != -1) {
                 aliasVars.add(name);
-                pos = in.skipUntil(pos, len, ')')+1;  // include ')' in varPositions
+                pos = in.skipUntil(pos, len, (byte)')')+1;  // include ')' in varPositions
             }
             addVarPosition(start, pos);
         }
@@ -320,7 +320,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             while ((pos = in.skip(pos, len, STOP_PROJ)) < len && verbEnd == 0) {
                 switch (in.get(pos)) {
                     case '?', '$' -> readVar(-1);
-                    case '#'      -> pos = in.skipUntil(pos, len, '\n');
+                    case '#'      -> pos = in.skipUntil(pos, len, (byte)'\n');
                     case '*'      -> { ++pos; publicVars = allVars; }
                     case '{'      -> verbEnd = pos;
                     case '('      -> readAs();
@@ -346,7 +346,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             while (pos < len) {
                 switch (in.get(pos)) {
                     default       -> skipQuoted();
-                    case '#'      -> pos = in.skipUntil(pos, len, '\n');
+                    case '#'      -> pos = in.skipUntil(pos, len, (byte)'\n');
                     case '?', '$' -> {
                         if (as) {
                             readVar(aliasStart);
@@ -375,7 +375,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
             while ((pos = in.skip(pos, len, STOP_VAR)) < len) {
                 switch (in.get(pos)) {
                     case '?', '$' -> readVar(-1);
-                    case '#'      -> pos = in.skipUntil(pos, len, '\n');
+                    case '#'      -> pos = in.skipUntil(pos, len, (byte)'\n');
                     default       -> skipQuoted();
                 }
             }

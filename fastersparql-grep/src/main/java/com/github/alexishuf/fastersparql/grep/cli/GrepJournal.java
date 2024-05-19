@@ -109,7 +109,7 @@ public class GrepJournal implements Callable<Void> {
     private void selectLanes(SegmentRope chunk) {
         int laneCount = -1;
         for (int begin=0, lane=0, eol, chunkLen = chunk.len; begin < chunkLen; begin=eol+1) {
-            eol = chunk.skipUntil(begin, chunkLen, '|', '\n');
+            eol = chunk.skipUntil(begin, chunkLen, (byte)'|', (byte)'\n');
             if (!selLanes.get(lane)) {
                 if (hasMatch(chunk, begin, eol)) {
                     while (!lock.tryLock()) Thread.onSpinWait(); // too short to park()
@@ -161,7 +161,7 @@ public class GrepJournal implements Callable<Void> {
         var f = allocFilteredChunk(chunk.len, chunk.chunkNumber);
         int revertTo = f.rope.len;
         for (int lane=0, begin=0, chunkLen=chunk.len, eol; begin < chunkLen; begin=eol+1) {
-            eol = chunk.skipUntil(begin, chunk.len, '|', '\n');
+            eol = chunk.skipUntil(begin, chunk.len, (byte)'|', (byte)'\n');
             if (selLanes.get(lane)) {
                 if (lane == 0 || hasMatch(chunk, begin, eol)) {
                     if (lane > 0)

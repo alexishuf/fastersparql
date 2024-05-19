@@ -146,13 +146,13 @@ public abstract sealed class PrefixMap extends AbstractOwned<PrefixMap> {
      * {@code colonIdx}.
      */
     public @Nullable Term expand(Rope str, int begin, int localNameEnd) {
-        int colon = str.skipUntil(begin, localNameEnd, ':');
+        int colon = str.skipUntil(begin, localNameEnd, (byte)':');
         return colon == localNameEnd ? null : expand(str, begin, colon, localNameEnd);
     }
 
     /** Equivalent to {@code expandTerm(str, 0, str.len())}. */
     public @Nullable Term expand(Rope str) {
-        int end = str.len(), colon = str.skipUntil(0, end, ':');
+        int end = str.len(), colon = str.skipUntil(0, end, (byte)':');
         return colon == end ? null : expand(str, 0, colon, end);
     }
 

@@ -271,8 +271,8 @@ public abstract sealed class ExprParser extends AbstractOwned<ExprParser> {
                 if (SYMBOL_INPUTS[j][0] > c)
                     end = j;
             }
-            SYMBOL_INPUTS_RANGE[rangeIdx] = (byte) begin;
-            SYMBOL_INPUTS_RANGE[rangeIdx+1] = (byte) end;
+            SYMBOL_INPUTS_RANGE[rangeIdx] = (byte)begin;
+            SYMBOL_INPUTS_RANGE[rangeIdx+1] = (byte)end;
         }
     }
 
@@ -303,7 +303,7 @@ public abstract sealed class ExprParser extends AbstractOwned<ExprParser> {
         if (symbol != null || term != null) return;
         consumedPos = pos;
         for (pos = in.skipWS(pos, len); pos != len && in.get(pos) == '#';)
-            pos = in.skipWS(in.skipUntil(pos, len, '\n'), len);
+            pos = in.skipWS(in.skipUntil(pos, len, (byte)'\n'), len);
         if (pos == len) {
             symbol = Symbol.EOF;
             return;

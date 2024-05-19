@@ -77,7 +77,7 @@ class MutableRopeTest {
     @Test void testAppend() {
         try (var tmp = PooledMutableRope.get()) {
             assertEquals("0", tmp.append('0').toString());
-            assertEquals("0@", tmp.append((byte) 64).toString());
+            assertEquals("0@", tmp.append((byte)64).toString());
             assertEquals("0@-", tmp.append(Rope.asRope("-")).toString());
             assertEquals("0@-12", tmp.append(Rope.asRope("0123"), 1, 3).toString());
             assertEquals("", tmp.clear().toString());

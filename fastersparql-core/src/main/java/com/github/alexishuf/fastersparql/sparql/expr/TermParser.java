@@ -165,7 +165,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
             }
             case '<'      -> {
                 if (begin+1 >= end) yield Result.EOF;
-                stopped = in.requireThenSkipUntil(begin+1, end, LETTERS, '>');
+                stopped = in.requireThenSkipUntil(begin+1, end, LETTERS, (byte)'>');
                 if      (stopped == end)         yield Result.EOF;
                 else if (in.get(stopped) != '>') yield ambiguousIri(in, begin, end);
                 ++stopped;
@@ -200,7 +200,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                                 yield Result.MALFORMED;
                             }
                             if (in.get(++p) == '<') { // may have long <datatype>
-                                stopped = in.requireThenSkipUntil(++p, end, LETTERS, '>');
+                                stopped = in.requireThenSkipUntil(++p, end, LETTERS, (byte)'>');
                                 if      (stopped == p && p < end) yield Result.MALFORMED;
                                 else if (stopped < end)           ++stopped;
                                 else                              yield Result.EOF;
@@ -226,7 +226,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
     }
 
     private Result ambiguousIri(Rope in, int begin, int end) {
-        int close = in.skipUntil(begin, end, '>');
+        int close = in.skipUntil(begin, end, (byte)'>');
         if (close == end)
             return Result.EOF;
         if (Rope.contains(BAD_IRI_START, in.get(begin+1)))
@@ -639,7 +639,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
     private void unescapePrefixedLocal(MutableRope out, int begin) {
         var in = this.in;
         for (int i, end = stopped; begin < end; begin = i) {
-            out.append(in, begin, i = in.skipUntil(begin, end, '\\'));
+            out.append(in, begin, i = in.skipUntil(begin, end, (byte)'\\'));
             if (++i >= end) break;
             out.append(in.get(i++));
         }

@@ -37,7 +37,7 @@ public class MemorySegmentBench {
         //noinspection resource
         nativeSegment = Arena.global().allocate(SIZE);
         heapSegment = MemorySegment.ofArray(new byte[SIZE]);
-        byte v = (byte) base;
+        byte v = (byte)base;
         for (int i = 0; i < SIZE; i++) {
             array[i] = v++;
             heapBuffer.put(i, v++);

@@ -19,9 +19,9 @@ public class CSUtils {
     public static final byte[] BASE64_2_BITS;
     static {
         byte[] char2value = new byte[128];
-        Arrays.fill(char2value, (byte) -1);
+        Arrays.fill(char2value, (byte)-1);
         for (int value = 0; value < BITS_2_BASE64.length; value++)
-            char2value[BITS_2_BASE64[value]] = (byte) value;
+            char2value[BITS_2_BASE64[value]] = (byte)value;
         BASE64_2_BITS = char2value;
     }
 
