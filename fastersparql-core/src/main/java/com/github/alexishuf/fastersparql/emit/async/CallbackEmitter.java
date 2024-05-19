@@ -362,9 +362,11 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
     protected int doCancel(int st) {
         if ((st&DONE_CANCEL) != 0)
             return st;
+        var queue = this.queue;
+        this.queue = null;
         st = unlock(0, DONE_CANCEL);
         try {
-            queue = Batch.safeRecycle(queue, this);
+            Batch.safeRecycle(queue, this);
             if ((st&PROD_LIVE) == 0) {
                 earlyCancelProducer();
                 moveStateRelease(st, CANCEL_REQUESTED);
