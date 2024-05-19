@@ -860,7 +860,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String toString() {
-            var sb = new StringBuilder().append(journalName()).append(ST.render(st));
+            var sb = new StringBuilder();
+            sb.append(journalName()).append('[').append(ST.render(st)).append(']');
             if (info != null)
                 sb.append("{info=").append(info).append('}');
             return sb.toString();
@@ -951,6 +952,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             super.appendToSimpleLabel(out);
             if (h.info != null) out.append(" info=").append(h.info);
         }
+
+        @Override protected void appendToState(StringBuilder out) {
+            super.appendToState(out);
+            out.append(" h.st=").append(WsHandler.ST.render(h.st));
+        }
+
         /* --- --- --- CallbackEmitter --- --- --- */
 
         @Override protected void        startProducer() { h.sendQuery(); }

@@ -86,6 +86,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
         if (type.showState()) {
             sb.append("\nstate=").append(flags.render(state())).append(", requested=");
             StreamNodeDOT.appendRequested(sb, (long)REQ.getOpaque(this));
+            appendToState(sb);
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
@@ -93,6 +94,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     }
 
     protected void appendToSimpleLabel(StringBuilder out) {}
+    protected void appendToState(StringBuilder out) {}
 
     @Override public Vars              vars() { return vars; }
     @Override public BatchType<B> batchType() { return bt; }
