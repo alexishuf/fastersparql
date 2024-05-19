@@ -314,8 +314,11 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public String journalName() {
-            return "C.QE:"+(lastCh == null ? "null" : lastCh.id().asShortText())
-                          +"@"+Integer.toHexString(System.identityHashCode(this));
+            if (journalName == null) {
+                journalName = "C.QE:"+(lastCh == null ? "null" : lastCh.id().asShortText())
+                            +"@"+Integer.toHexString(System.identityHashCode(this));
+            }
+            return journalName;
         }
 
         @Override protected StringBuilder minimalLabel() {
@@ -358,6 +361,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         }
 
         @Override public void onConnected(Channel ch, NettyHandler handler) {
+            journalName = null;
             lastCh = ch;
             boolean abort;
             int st = lock();

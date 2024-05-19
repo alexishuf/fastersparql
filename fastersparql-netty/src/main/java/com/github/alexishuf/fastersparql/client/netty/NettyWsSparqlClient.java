@@ -927,11 +927,20 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- ChannelBound --- --- --- */
 
         @Override public @Nullable Channel channelOrLast() { return lastChannel; }
-        @Override public void setChannel(Channel ch)       { if (ch != null) lastChannel = ch; }
+        @Override public void setChannel(Channel ch)       {
+            if (ch != null) {
+                lastChannel = ch;
+                journalName = null;
+            }
+        }
 
         @Override public String journalName() {
-            return "C.WE:" + (lastChannel == null ? "null" : lastChannel.id().asShortText())
-                           + '@' + Integer.toHexString(System.identityHashCode(this));
+            if (journalName == null) {
+                journalName = "C.WE:"
+                            + (lastChannel == null ? "null" : lastChannel.id().asShortText())
+                            + '@' + Integer.toHexString(System.identityHashCode(this));
+            }
+            return journalName;
         }
 
         @Override protected StringBuilder minimalLabel() {
