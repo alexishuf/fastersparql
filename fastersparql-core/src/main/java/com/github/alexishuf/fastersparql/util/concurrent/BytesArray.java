@@ -11,6 +11,7 @@ import java.util.function.IntFunction;
 
 import static com.github.alexishuf.fastersparql.batch.type.BatchType.PREFERRED_BATCH_TERMS;
 import static com.github.alexishuf.fastersparql.util.concurrent.LevelAlloc.len2level;
+import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.CONSTANT;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 
 /**
@@ -19,7 +20,9 @@ import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED
  * leak reports.
  */
 public class BytesArray extends AbstractOwned<BytesArray> {
-    public static final BytesArray EMPTY = create(0).takeOwnership(SpecialOwner.CONSTANT);
+    private static final Bytes[] EMPTY_ARR = new Bytes[0];
+    @SuppressWarnings("StaticInitializerReferencesSubClass")
+    public static final BytesArray EMPTY = new Concrete(0).takeOwnership(CONSTANT);
     private static final Fac FAC = new Fac();
     private static final Recycler RECYCLER = new Recycler();
     private static final LevelAlloc<BytesArray> ALLOC;
@@ -41,7 +44,6 @@ public class BytesArray extends AbstractOwned<BytesArray> {
                         .set(batchLevel, batchLevel, Alloc.THREADS*64)
                         .set(0, len2level(PREFERRED_BATCH_TERMS), Alloc.THREADS*32)
         );
-        ALLOC.setZero(BytesArray.FAC.apply(0));
         RECYCLER.pool = ALLOC;
     }
 
@@ -65,7 +67,7 @@ public class BytesArray extends AbstractOwned<BytesArray> {
     public final Bytes[] arr;
 
     public static Orphan<BytesArray> create(int len) { return new Concrete(len); }
-    private BytesArray(int n) {this.arr = new Bytes[n];}
+    private BytesArray(int n) {this.arr = n == 0 ? EMPTY_ARR : new Bytes[n];}
 
     private static final class Concrete extends BytesArray implements Orphan<BytesArray> {
         private Concrete(int n) {super(n);}
@@ -79,7 +81,7 @@ public class BytesArray extends AbstractOwned<BytesArray> {
 
     public static final class Fac implements IntFunction<BytesArray> {
         @Override public BytesArray apply(int n) {
-            return n == 0 ? EMPTY : BytesArray.create(n).takeOwnership(RECYCLED);
+            return BytesArray.create(n).takeOwnership(RECYCLED);
         }
         @Override public String toString() {return "BytesArray.FAC";}
     }
