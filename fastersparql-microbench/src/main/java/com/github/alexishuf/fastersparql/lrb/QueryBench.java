@@ -36,6 +36,8 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.Blackhole;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -54,8 +56,7 @@ import static com.github.alexishuf.fastersparql.FSProperties.OP_WEAKEN_DISTINCT;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.throwAsUnchecked;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.System.setProperty;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
+import static java.util.concurrent.TimeUnit.*;
 
 @State(Scope.Thread)
 @Threads(1)
@@ -65,6 +66,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 @BenchmarkMode({Mode.AverageTime})
 @OutputTimeUnit(MILLISECONDS)
 public class QueryBench {
+    private static final Logger log = LoggerFactory.getLogger(QueryBench.class);
 
     @Param({"S.*"}) private String queries;
 
@@ -126,6 +128,7 @@ public class QueryBench {
     private int lastBenchResult;
     private final BenchmarkEvent jfrEvent = new BenchmarkEvent();
     private Blackhole bh;
+    private int timeoutMs;
 
     private static class BoundCounter<B extends Batch<B>>
             extends QueryRunner.BoundCounter<B, BoundCounter<B>>
@@ -238,7 +241,7 @@ public class QueryBench {
         }
     }
 
-    @Setup(Level.Trial) public void trialSetup() throws IOException {
+    @Setup(Level.Trial) public void trialSetup(BenchmarkParams params) throws IOException {
 //        SegmentRope.ALT = alt;
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
         setProperty(OP_WEAKEN_DISTINCT, Boolean.toString(weakenDistinct));
@@ -291,6 +294,10 @@ public class QueryBench {
             plan.attach(metricsConsumer);
         triggerClassLoadingOfPooled();
 
+        timeoutMs = (int)Math.min(Integer.MAX_VALUE, params.getTimeout().convertTo(MILLISECONDS));
+        int before = Math.min(30_000, timeoutMs/10);
+        watchdogTimeoutNs = NANOSECONDS.convert(timeoutMs-before, MILLISECONDS);
+        benchmarkId = params.id();
         watchdog = new Thread(this::watchdog, "watchdog"+(int)WATCHDOG_NEXT_THREAD_ID.getAndAdd(1));
         watchdog.start();
     }
@@ -374,9 +381,6 @@ public class QueryBench {
         return r;
     }
 
-    private volatile @Nullable Plan watchdogPlan;
-    private @Nullable StreamNode dbgExecution;
-    private static final long WATCHDOG_INTERVAL_NS = 20_000_000_000L;
     private static final VarHandle WATCHDOG_NEXT_THREAD_ID;
     static {
         try {
@@ -386,8 +390,11 @@ public class QueryBench {
         }
     }
     @SuppressWarnings("unused") private static int plainNextWatchdogId;
+    private volatile @Nullable Plan watchdogPlan;
+    private @Nullable StreamNode dbgExecution;
+    private long watchdogTimeoutNs;
+    private String benchmarkId;
     private Thread watchdog;
-    private boolean skipAll;
 
     private void armWatchdog(Plan plan, StreamNode execution) {
         Watchdog.reset();
@@ -408,28 +415,40 @@ public class QueryBench {
                 if (plans.get(i) == plan)
                     query = queryList.get(i);
             }
-            Watchdog.spec(query == null ? "UNNAMED" : query.name()+"."+tag)
+            String name = query == null ? "UNNAMED" : query.name() + "." + tag;
+            File dir = new File(benchmarkId);
+            if (!dir.isDirectory() && !dir.mkdirs()) {
+                log.error("Could not mkdir -p {}{}", dir, dir.isFile() ? ": exists as file" : "");
+                dir = new File("");
+                if (!dir.canWrite()) {
+                    log.error("Current dir {} is not writable", dir.getAbsolutePath());
+                    dir = null;
+                }
+            }
+            Watchdog.Spec spec = Watchdog.spec(name)
                     .plan(plan)
-                    .sparql(query == null ? null : query.opaque().sparql)
-                    .emitterServiceStdOut()
                     .streamNode(streamNode)
-                    .run();
+                    .sparql(query == null ? null : query.opaque().sparql)
+                    .emitterServiceStdOut();
+            if (dir != null)
+                spec.dir(dir);
+            spec.run();
         } catch (Throwable e) {
             System.out.println();
             //noinspection CallToPrintStackTrace
             e.printStackTrace();
         }
-        skipAll = true;
     }
 
     private void watchdog() {
         for (Plan plan; true; ) {
-            while ((plan = watchdogPlan) == null) LockSupport.park(this);
-            StreamNode execution = dbgExecution;
+            while ((plan = watchdogPlan) == null)
+                LockSupport.park(this);
+            var execution = dbgExecution;
 
-            long deadline = System.nanoTime()+WATCHDOG_INTERVAL_NS;
-            while (watchdogPlan == plan && System.nanoTime() < deadline)
-                LockSupport.parkNanos(this, WATCHDOG_INTERVAL_NS);
+            long deadline = System.nanoTime()+watchdogTimeoutNs, rem;
+            while (watchdogPlan == plan && (rem=deadline-System.nanoTime()) > 0)
+                LockSupport.parkNanos(this, rem);
             if (watchdogPlan != plan)
                 continue; // disarmed or armed for another query
             watchdogPlan = null;
@@ -450,50 +469,30 @@ public class QueryBench {
 
     private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
         this.bh = bh;
-        if (skipAll) return lastBenchResult;
-        switch (flowModel) {
-            case ITERATE -> {
-                for (int i = 0, plansCount = plans.size(); i < plansCount; i++) {
-                    Plan plan = plans.get(i);
-                    BIt<?> it = plan.execute(batchType);
-                    armWatchdog(plan, it);
-                    try {
-                        var qry = queryList.get(i);
-                        switch (qry) {
-                            case C1  -> drainC1(it, consumer);
-                            case C2  -> drainC2 (it, consumer);
-                            case C3  -> drainC3 (it, consumer);
-                            case C4  -> drainC4 (it, consumer);
-                            case C5  -> drainC5 (it, consumer);
-                            case C6  -> drainC6 (it, consumer);
-                            case C7  -> drainC7 (it, consumer);
-                            case C8  -> drainC8 (it, consumer);
-                            case C9  -> drainC9 (it, consumer);
-                            case C10  -> drainC10(it, consumer);
-                            default -> QueryRunner.drainWild(it, consumer);
-                        }
+        Plan currentPlan = null;
+        StreamNode streamNode = null;
+        try {
+            switch (flowModel) {
+                case ITERATE -> {
+                    for (Plan plan : plans) {
+                        var it = plan.execute(batchType);
+                        armWatchdog(currentPlan=plan, streamNode=it);
+                        QueryRunner.drainWild(it, consumer, timeoutMs);
                         disarmWatchdog();
-                    } catch (Throwable t) {
-                        disarmWatchdog();
-                        dump(plan, it, "fail");
                     }
-                    if (skipAll) break;
+                }
+                case EMIT -> {
+                    for (Plan plan : plans) {
+                        var em = plan.emit(batchType, Vars.EMPTY);
+                        armWatchdog(currentPlan=plan, streamNode=(StreamNode)em);
+                        QueryRunner.drainWild(em, consumer, timeoutMs);
+                        disarmWatchdog();
+                    }
                 }
             }
-            case EMIT -> {
-                for (Plan plan : plans) {
-                    var em = plan.emit(batchType, Vars.EMPTY);
-                    armWatchdog(plan, (StreamNode)em);
-                    try {
-                        QueryRunner.drainWild(em, consumer);
-                        disarmWatchdog();
-                    } catch (Throwable t) {
-                        disarmWatchdog();
-                        dump(plan, (StreamNode)em, "fail");
-                    }
-                    if (skipAll) break;
-                }
-            }
+        } catch (Throwable t) {
+            disarmWatchdog();
+            dump(currentPlan, streamNode, "fail");
         }
         return checkResult(resultGetter.getAsInt());
     }
