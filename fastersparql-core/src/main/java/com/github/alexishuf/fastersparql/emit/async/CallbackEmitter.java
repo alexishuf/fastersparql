@@ -237,11 +237,15 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override public boolean cancel() {
         boolean first;
+        B queue;
         int st = lock();
         first = (st&GOT_CANCEL_REQ) == 0;
+        queue = this.queue;
+        this.queue = null;
         st = unlock(0, GOT_CANCEL_REQ);
         if (first)
             awake(true);
+        Batch.safeRecycle(queue, this);
         return (st&IS_TERM) == 0;
     }
 
