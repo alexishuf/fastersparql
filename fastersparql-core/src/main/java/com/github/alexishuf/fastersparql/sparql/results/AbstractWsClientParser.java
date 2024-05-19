@@ -49,8 +49,7 @@ public abstract class AbstractWsClientParser<B extends Batch<B>> extends Abstrac
     }
 
     private void dropSentBindings() {
-        if (sentBindings != null)
-            sentBindings.recycle(this);
+        sentBindings = Batch.safeRecycle(sentBindings, this);
         currBindingRow = -1;
         currBinding = -1;
         bindingNotified = true;
