@@ -170,6 +170,15 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 sb.append(" info=").append(info);
         }
 
+        @Override protected void appendStateToLabel(StringBuilder sb) {
+            super.appendStateToLabel(sb);
+            NettyHandler h = handler;
+            if (h == null)
+                sb.append(" handler=null");
+            else
+                sb.append(" handler.st=").append(h.currentState());
+        }
+
         /* --- --- --- ClientStreamNode --- --- -- */
 
         @Override public int      cookie()                   { return cookie; }
@@ -330,6 +339,15 @@ public class NettySparqlClient extends AbstractSparqlClient {
         @Override protected void appendToSimpleLabel(StringBuilder out) {
             super.appendToSimpleLabel(out);
             if (info != null) out.append(" info=").append(info);
+        }
+
+        @Override protected void appendToState(StringBuilder out) {
+            super.appendToState(out);
+            NettyHandler h = handler;
+            if (h != null)
+                out.append(" handler.st=").append(handler.currentState());
+            else
+                out.append(" handler=null");
         }
 
         /* --- --- --- ClientStreamNode --- --- --- */

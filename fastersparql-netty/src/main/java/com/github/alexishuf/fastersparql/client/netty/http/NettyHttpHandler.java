@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelConfig;
@@ -108,8 +109,9 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     private static final int ST_NON_EMPTY       = 0x040;
     private static final int ST_GOT_LAST_CHUNK  = 0x080;
     private static final int ST_CANCELLED       = 0x100;
-    private static final int ST_EARLY_CLOSE     = 0x200;
-    private static final int ST_UNHEALTHY       = 0x400;
+    private static final int ST_AUTOREAD        = 0x200;
+    private static final int ST_EARLY_CLOSE     = 0x400;
+    private static final int ST_UNHEALTHY       = 0x800;
 
     private static final LongRenderer ST = st -> {
         if (st == 0) return "";
@@ -123,6 +125,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         if ((st&ST_NON_EMPTY)       != 0) sb.append("NON_EMPTY,");
         if ((st&ST_GOT_LAST_CHUNK)  != 0) sb.append("GOT_LAST_CHUNK,");
         if ((st&ST_CANCELLED)       != 0) sb.append("CANCELLED,");
+        if ((st&ST_AUTOREAD)        != 0) sb.append("AUTOREAD,");
         if ((st&ST_EARLY_CLOSE)     != 0) sb.append("EARLY_CLOSE,");
         if ((st&ST_UNHEALTHY)       != 0) sb.append("UNHEALTHY,");
         sb.setLength(sb.length()-1);
@@ -132,6 +135,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     public NettyHttpHandler(Executor executor) {
         actions.executor(executor);
     }
+
+    public String currentState() {return ST.render(st);}
 
     private void closeOrRecycleChannel() {
         var ctx = this.ctx;
@@ -318,9 +323,12 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         actions.sched(action);
     }
     private void doSetAutoRead(boolean value) {
+        boolean log = ThreadJournal.ENABLED && (st&ST_AUTOREAD) == (value?ST_AUTOREAD:0);
+        st = (st&~ST_AUTOREAD) | (value ? ST_AUTOREAD : 0);
         if (ctx != null) {
             ctx.channel().config().setAutoRead(value);
-            journal("doSetAutoRead", value?1:0, "st=", st, ST, "on", this);
+            if (log)
+                journal("doSetAutoRead", value?1:0, "st=", st, ST, "on", this);
         }
     }
     @SuppressWarnings("unused") private void doEnableAutoRead() { doSetAutoRead(true); }

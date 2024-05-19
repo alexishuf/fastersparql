@@ -336,7 +336,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             }
             if (queue != null)
                 awake(worker);
-            if (requested() <= 0 && (st&(GOT_CANCEL_REQ)) != 0)
+            if (requested() <= 0 && (st&(IS_LIVE|GOT_CANCEL_REQ)) == IS_LIVE)
                 pauseProducer();
             if (queue == null) {
                 termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
