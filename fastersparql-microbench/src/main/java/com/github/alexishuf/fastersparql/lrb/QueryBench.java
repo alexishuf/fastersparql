@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.lrb;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
-import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
@@ -455,17 +454,6 @@ public class QueryBench {
             dump(plan, execution, watchdog.getName());
         }
     }
-
-    private void drainC1(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC2(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC3(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC4(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC5(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC6(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC7(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC8(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC9(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
-    private void drainC10(BIt<?> it, BatchConsumer<?, ?> consumer) { QueryRunner.drainWild(it, consumer); }
 
     private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
         this.bh = bh;
