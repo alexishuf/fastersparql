@@ -163,6 +163,32 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
     }
 
     /**
+     * A cancel was requested and no more results are expected, only an acknowledgment that the
+     * cancel request was processed, that an error happened while processing the query or that
+     * the query results where complete when the cancel request arrived. If applicable,
+     * implementations of this method will not parse results or employ absolute minimum
+     * effort to sift through results until finding one of the above acknowledgments.
+     *
+     * <p>As in {@link #feedShared(SegmentRope)}, the caller retains ownership of {@code rope}
+     * and implementations must not keep references to {@code rope} or to bytes pointed by
+     * {@code rope} that outlive the duration of this stack frame.</p>
+     */
+    public void feedPendingTerminationAck(SegmentRope rope) {
+        if (rope == null || rope.len == 0)
+            return; // no-op
+        try {
+            if (batch != null)
+                dropBatch();
+            doFeedPendingTerminationAck(rope);
+        } catch (Throwable t) {
+            FSException ex = t instanceof FSException e ? e : new InvalidSparqlResultsException(t);
+            ex.id("parser", journalName());
+            dst.complete(ex);
+            cleanup(ex);
+        }
+    }
+
+    /**
      * Notifies the parser that the input serialization stream has ended without an IO error.
      *
      * <p>This will cause completion of the destination {@link CompletableBatchQueue} via
@@ -306,6 +332,18 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
     protected abstract void doFeedShared(SegmentRope rope) throws TerminatedException, CancelledException ;
 
     /**
+     * Implement the parsing for the serialization end as specificed by
+     * {@link #feedPendingTerminationAck(SegmentRope)}.
+     *
+     * <p>Exceptions thrown by this method will be wrapped as {@link InvalidSparqlResultsException}
+     * and delivered downstream via {@link CompletableBatchQueue#complete(Throwable)}.</p>
+     * @param rope the input serialization
+     */
+    protected void doFeedPendingTerminationAck(SegmentRope rope) {
+        /* most serializations have no concept of such acknowledgements */
+    }
+
+    /**
      * This method will be called by a {@link #feedEnd()} that was not preceded by a
      * {@link #feedError(FSException)}.
      *
@@ -365,6 +403,14 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             dst.complete(ex);
             cleanup(ex);
         }
+    }
+
+    private void dropBatch() {
+        if (incompleteRow) {
+            incompleteRow = false;
+            batch.abortPut();
+        }
+        batch = Batch.safeRecycle(batch, this);
     }
 
     private void emitLastBatch() {

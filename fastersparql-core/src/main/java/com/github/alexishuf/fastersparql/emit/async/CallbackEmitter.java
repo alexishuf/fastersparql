@@ -296,10 +296,12 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                 queue = Batch.quickAppend(queue, this, offer);
             } else {
                 Orphan.recycle(offer); // recycle before throwing
-                if (isCancelled(st) || (st&(IS_CANCEL_REQ|GOT_CANCEL_REQ))!=0)
+                if (isCancelled(st) || (st&(IS_CANCEL_REQ))!=0)
                     throw CancelledException.INSTANCE;
-                else
+                else if ((st&IS_TERM) != 0)
                     throw TerminatedException.INSTANCE;
+                // else: cancel() was called, waiting for an ack via cancel(true)
+                //       throwing could scare the producer away from delivering the ack
             }
         } finally { unlock(); }
         awakeParallel();

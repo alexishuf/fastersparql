@@ -79,6 +79,11 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
         serverSentTermination = false;
     }
 
+    @Override protected void doFeedPendingTerminationAck(SegmentRope rope) {
+        for (int i = 0, len = rope.len; i < len; i = rope.skipUntil(i, len, (byte)'\n')+1)
+            i = handleControl(rope, i);
+    }
+
     @Override protected final int handleControl(SegmentRope rope, int begin) {
         for (int end = rope.len(), eol; begin < end && rope.get(begin) == '!'; begin = eol+1) {
             if ((eol = rope.skipUntil(begin, end, (byte)'\n')) == end)

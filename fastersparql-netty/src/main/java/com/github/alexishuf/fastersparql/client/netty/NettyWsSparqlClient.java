@@ -220,15 +220,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             super.cleanup(cause);
         }
 
-        @Override public boolean tryCancel() {
-            boolean did = super.tryCancel();
-            if (did && bindQuery != null) {
-                bindQuery.bindings.tryCancel();
-                Unparker.unpark(sendBindingsThread);
-            }
-            return did;
-        }
-
         @Override public @This CallbackBIt<B> maxReadyItems(int n) {
             super.maxReadyItems(n);
             if (n > pendingRows)
@@ -254,6 +245,12 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public SegmentRope sparql() { return query.sparql(); }
         @Override public void beforeSendBindQuery() {}
+        @Override public void cancelBindings() {
+            if (bindQuery != null) {
+                bindQuery.bindings.tryCancel();
+                Unparker.unpark(sendBindingsThread);
+            }
+        }
         @Override public String renderState() { return state().name(); }
         @Override public String instanceId() {return String.valueOf(id());}
 
@@ -306,6 +303,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             extends StreamNode, ChannelBound, CompletableBatchQueue<B> {
         SegmentRope sparql();
         void beforeSendBindQuery();
+        void cancelBindings();
         String renderState();
         String instanceId();
     }
@@ -749,12 +747,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         }
 
         public void sendCancel() {
+            parent.cancelBindings();
             if (ctx != null)
                 bsRunnable.sched(AC_SEND_CANCEL);
         }
         private void doSendCancel() {
             assert inEventLoop() : "not in event loop";
             if (ctx != null && (st&(ST_QUERY_SENT|ST_CANCEL_SENT|ST_GOT_TERM)) == ST_QUERY_SENT) {
+                try {
+                    parent.cancelBindings();
+                } catch (Throwable e) { log.error("Ignoring ", e); }
                 var cancel = new TextWebSocketFrame(bbSink.touch().append(CANCEL_LF).take());
                 st  = (st&~ST_SEND_CANCEL) | ST_CANCEL_SENT;
                 ctx.writeAndFlush(cancel);
@@ -843,9 +845,14 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 throw new IllegalStateException(this+" released, cannot handle frame, st="+parent.renderState());
             } else {
                 st |= ST_GOT_FRAMES;
-                try {
-                    parser.feedShared(bbView.wrapAsSingle(f.content()));
-                } catch (BatchQueue.QueueStateException e) { doSendCancel(); }
+                SegmentRope rope = bbView.wrapAsSingle(f.content());
+                if ((st&ST_CANCEL_SENT) != 0) {
+                    parser.feedPendingTerminationAck(rope);
+                } else {
+                    try {
+                        parser.feedShared(rope);
+                    } catch (BatchQueue.QueueStateException e) { doSendCancel(); }
+                }
             }
         }
 
@@ -976,12 +983,16 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void beforeSendBindQuery() {
             long requested = requested();
             assert bindQuery != null;
-            Emitter<B, ?> bindings = leftEmitter;
             if (requested > 0) {
-                int chunk = min(bindings.preferredRequestChunk(),
+                int chunk = min(leftEmitter.preferredRequestChunk(),
                                 preferredRequestChunk());
-                bindings.request(min(requested, chunk>>2));
+                leftEmitter.request(min(requested, chunk>>2));
             }
+        }
+
+        @Override public void cancelBindings() {
+            if (leftEmitter != null)
+                leftEmitter.cancel();
         }
 
         @Override public String renderState() {return flags.render(state());}
