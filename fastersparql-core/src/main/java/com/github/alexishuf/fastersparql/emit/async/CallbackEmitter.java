@@ -91,6 +91,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
     protected static final int GOT_CANCEL_REQ = 0x20000000;
     private   static final int DONE_CANCEL    = 0x10000000;
     private   static final int DO_RESUME      = 0x08000000;
+    private   static final int PAUSED         = 0x04000000;
 
     protected static int CLEAR_ON_REBIND = PROD_LIVE|GOT_CANCEL_REQ |DONE_CANCEL|DO_RESUME;
 
@@ -99,6 +100,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             .flag(GOT_CANCEL_REQ,    "GOT_CANCEL_REQ")
             .flag(DONE_CANCEL,       "DONE_CANCEL")
             .flag(DO_RESUME,         "DO_RESUME")
+            .flag(PAUSED,            "PAUSED")
             .build();
 
     private @Nullable B queue;
@@ -106,7 +108,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner,
                            int initState, Flags flags) {
-        super(batchType, vars, runner, initState, flags);
+        super(batchType, vars, runner, initState|PAUSED, flags);
         assert flags.contains(CB_FLAGS) : "missing CB_FLAGS";
     }
 
@@ -336,8 +338,8 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
             }
             if (queue != null)
                 awake(worker);
-            if (requested() <= 0 && (st&(IS_LIVE|GOT_CANCEL_REQ)) == IS_LIVE)
-                pauseProducer();
+            if (requested() <= 0 && (st&PAUSE_MASK) == PAUSE_VALUE)
+                st = doPause();
             if (queue == null) {
                 termState =  (st&IS_CANCEL_REQ)   != 0 ? CANCELLED
                               : ((st&IS_PENDING_TERM) != 0 ? (st&~IS_PENDING_TERM)|IS_TERM : 0);
@@ -360,6 +362,9 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                 unlock();
         }
     }
+
+    private static final int PAUSE_MASK  = IS_LIVE|GOT_CANCEL_REQ|PAUSED;
+    private static final int PAUSE_VALUE = IS_LIVE;
 
     protected int doCancel(int st) {
         if ((st&DONE_CANCEL) != 0)
@@ -388,13 +393,23 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
         return st;
     }
 
-    private int doResume() {
+    private int doPause() {
         int st;
-        unlock(DO_RESUME, 0);
+        unlock(0, PAUSED);
         try {
-            long n = requested();
-            if (n > 0)
-                resumeProducer(n);
+            pauseProducer();
+        } finally { st = lock(); }
+        return st;
+    }
+
+    private int doResume() {
+        long n = requested();
+        if (n <= 0)
+            return statePlain();
+        int st;
+        unlock(DO_RESUME|PAUSED, 0);
+        try {
+            resumeProducer(n);
         } finally { st = lock(); }
         return st;
     }
