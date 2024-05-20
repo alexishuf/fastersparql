@@ -330,18 +330,8 @@ public class NettySparqlServer implements AutoCloseable{
                     }
                 }
             } else {
-                notifyClosed();
+                doReleaseOrRecycle();
             }
-        }
-        private void notifyClosed() {
-            if ((st&ST_NOTIFIED_CLOSED) != 0)
-                return;
-            shouldBeInEventLoop("notifyClosed");
-            journal("notifyClosed", this);
-            st |= ST_NOTIFIED_CLOSED;
-            var handlersClosed = NettySparqlServer.this.handlersClosed;
-            if (handlersClosed != null)
-                handlersClosed.release();
         }
 
         /* --- --- --- Receiver --- --- --- */
@@ -510,7 +500,7 @@ public class NettySparqlServer implements AutoCloseable{
                 }
             } finally {
                 if ((st&ST_CLOSING) != 0)
-                    notifyClosed();
+                    doReleaseOrRecycle();
             }
         }
         private static final int CAN_SEND_TERM = ST_GOT_REQ | ST_RES_TERMINATED
@@ -750,8 +740,12 @@ public class NettySparqlServer implements AutoCloseable{
                 }
                 releaseResources();
             } finally {
-                if ((st&(ST_CLOSING|ST_NOTIFIED_CLOSED)) == ST_CLOSING)
-                    notifyClosed();
+                if ((st&(ST_CLOSING|ST_NOTIFIED_CLOSED)) == ST_CLOSING) {
+                    st |= ST_NOTIFIED_CLOSED;
+                    journal("notifyClosed", this);
+                    if (handlersClosed != null)
+                        handlersClosed.release();
+                }
                 journal("exit doReleaseOrRecycle", this);
             }
         }
@@ -793,7 +787,7 @@ public class NettySparqlServer implements AutoCloseable{
             journal("channelInactive", this);
             st |= ST_UNHEALTHY;
             if (!cancel() && (st&ST_CLOSING) != 0)
-                notifyClosed();
+                doReleaseOrRecycle();
             ctx.fireChannelInactive();
         }
 
