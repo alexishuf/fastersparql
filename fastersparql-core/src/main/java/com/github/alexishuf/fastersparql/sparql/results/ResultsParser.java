@@ -16,14 +16,12 @@ import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
 import com.github.alexishuf.fastersparql.util.concurrent.JournalNamed;
+import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
@@ -40,23 +38,33 @@ import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.jo
  * @param <B> the row type
  */
 public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed {
-    private static final VarHandle TERMINATED;
-    static {
-        try {
-            TERMINATED = MethodHandles.lookup().findVarHandle(ResultsParser.class, "plainTerminated", boolean.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
     private static final Logger log = LoggerFactory.getLogger(ResultsParser.class);
+
+    private static final byte TERM_NOT           = 0;
+    private static final byte TERM_CANCELLED_ACK = 1;
+    private static final byte TERM_END           = 2;
+    private static final byte TERM_ERROR         = 3;
+    private static final byte TERM_PARSE_ERROR   = 4;
+
+    private static final LongRenderer TERM_RENDER = new LongRenderer() {
+        @Override public String render(long value) {
+            return switch ((int)value) {
+                case TERM_CANCELLED_ACK -> "CANCELLED_ACK";
+                case TERM_END -> "END";
+                case TERM_ERROR -> "ERROR";
+                case TERM_PARSE_ERROR -> "PARSE_ERROR";
+                default -> "[invalid TERM_ value]";
+            };
+        }
+        @Override public String toString() {return "TERM_RENDER";}
+    };
 
     protected B batch;
     protected long rowsParsed;
     protected CompletableBatchQueue<B> dst;
     protected boolean incompleteRow;
     private boolean eager;
-    @SuppressWarnings("unused") private boolean plainTerminated;
+    private byte termFed;
     private final BatchType<B> batchType;
     private int outCols;
     private Namer<Object> namer = DEF_NAMER;
@@ -146,19 +154,30 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
         try {
             if (rope == null || rope.len == 0)
                 return; // no-op
-            if ((boolean)TERMINATED.getAcquire(this))
+            if (termFed == TERM_CANCELLED_ACK)
+               throw CancelledException.INSTANCE;
+            else if (termFed != TERM_NOT)
                 throw TerminatedException.INSTANCE;
             if (batch == null)
                 batch = dst.fillingBatch().takeOwnership(this);
             doFeedShared(rope);
             emitBatch();
         } catch (TerminatedException|CancelledException e) {
-            emitLastBatch();
-            if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true))
-                cleanup(e);
+            cleanup(e);
             throw e;
         } catch (Throwable t) {
             handleFeedSharedError(t);
+        }
+    }
+
+    private boolean offerTermination(byte reason) {
+        if (termFed == TERM_NOT) {
+            journal("set termFed=", reason, TERM_RENDER, "on", this);
+            termFed = reason;
+            return true;
+        } else {
+            journal("skip feed of ", reason, TERM_RENDER, "previous", termFed, TERM_RENDER, "on", this);
+            return false;
         }
     }
 
@@ -196,11 +215,11 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
      * given previous contents fed to {@link #feedShared(SegmentRope)}.</p>
      */
     public final void feedEnd() {
-        if (!(boolean)TERMINATED.getAcquire(this)) {
+        if (termFed == TERM_NOT) {
             if (batch == null)
                 batch = batchType.create(outCols).takeOwnership(this);
             Throwable error = doFeedEnd();
-            if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
+            if (offerTermination(TERM_END)) {
                 emitLastBatch();
                 beforeComplete(error);
                 dst.complete(error);
@@ -218,19 +237,13 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
      * and that no more results follow.
      */
     public final void feedCancelledAck() {
-        if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
-            journal("feedCancelledAck", this);
-            if (batch == null)
-                batch = batchType.create(outCols).takeOwnership(this);
-            Throwable e = doFeedEnd();
-            emitLastBatch();
-            beforeComplete(e != null ? e : CancelledException.INSTANCE);
-            if (e == null) dst.cancel(true);
-            else           dst.complete(e);
-            cleanup(null);
-        } else {
-            journal("terminated, skip feedCancelledAck on", this);
-        }
+        if (!offerTermination(TERM_CANCELLED_ACK))
+            return;
+        journal("feedCancelledAck", this);
+        emitLastBatch();
+        beforeComplete(CancelledException.INSTANCE);
+        dst.cancel(true);
+        cleanup(null);
     }
 
     /**
@@ -242,7 +255,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
      */
     public final void feedError(FSException error) {
         error.id("parser", journalName());
-        if (!(boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
+        if (offerTermination(TERM_ERROR)) {
             emitLastBatch();
             dst.complete(error);
             cleanup(error);
@@ -259,6 +272,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
      * {@link CompletableBatchQueue#complete(Throwable)} call.</p>
      */
     public void reset(CompletableBatchQueue<B> downstream) {
+        journal(this, "reset old/new downstream: ", downstream, dst);
         if (batch != null && batch.rows > 0) {
             if (ThreadJournal.ENABLED)
                 journal("batch.totalRows=", batch.totalRows(), "during reset on", this);
@@ -273,7 +287,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             dst     = downstream;
             outCols = downstream.vars().size();
         }
-        TERMINATED.setRelease(this, false);
+        termFed = TERM_NOT;
     }
 
     /**
@@ -321,9 +335,13 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
      */
     protected void cleanup(@Nullable Throwable cause) {
         if (batch != null) {
+            if (incompleteRow) {
+                incompleteRow = false;
+                batch.abortPut();
+            }
             if (ThreadJournal.ENABLED && batch.rows > 0)
                 journal("batch.totalRows=", batch.totalRows(), "during cleanup of", this);
-            batch = batch.recycle(this);
+            batch = Batch.safeRecycle(batch, this);
         }
     }
 
@@ -372,7 +390,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
     public Vars         vars()      { return dst.vars(); }
     public BatchType<B> batchType() { return dst.batchType(); }
 
-    protected boolean isTerminated() { return (boolean)TERMINATED.getOpaque(this); }
+    protected boolean isTerminated() { return termFed != TERM_NOT; }
 
     public long rowsParsed() { return rowsParsed; }
 
@@ -396,9 +414,7 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
     /*  --- --- --- private helpers --- --- --- */
 
     private void handleFeedSharedError(Throwable t) throws TerminatedException {
-        if ((boolean)TERMINATED.compareAndExchangeRelease(this, false, true)) {
-            log.info("{} already terminated, ignoring {}", this, t.getClass().getSimpleName(), t);
-        } else {
+        if (offerTermination(TERM_PARSE_ERROR)) {
             emitLastBatch();
             if (ThreadJournal.ENABLED) {
                 String msg = t.getMessage();
@@ -408,6 +424,8 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
             ex.id("parser", journalName());
             dst.complete(ex);
             cleanup(ex);
+        } else {
+            log.info("{} already terminated, ignoring {}", this, t.getClass().getSimpleName(), t);
         }
     }
 
