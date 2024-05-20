@@ -702,11 +702,21 @@ public class NettySparqlServer implements AutoCloseable{
                 throw new IllegalStateException("releaseResources on orphan");
             st |= ST_RELEASED;
             queryHandlers.remove(this);
-            bbView.close();
-            bbView = null;
-            parser = parser.recycle(this);
-            if (queryRope != null)
+            if ((int)Q.compareAndExchangeAcquire(this, 0, 1) == 0) {
+                var sendQueue = this.sendQueue;
+                this.sendQueue = null;
+                Q.setRelease(this, 0);
+                Batch.safeRecycle(sendQueue, this);
+            }
+            if (bbView != null) {
+                bbView.close();
+                bbView = null;
+            }
+            Owned.safeRecycle(parser, this);
+            if (queryRope != null) {
                 queryRope.close();
+                queryRope = null;
+            }
         }
 
         protected final void checkReleasedOrOrphan(String action, @Nullable Object actionArg) {
@@ -1094,7 +1104,7 @@ public class NettySparqlServer implements AutoCloseable{
 
         private static final int LONG_MAX_VALUE_LEN = String.valueOf(Long.MAX_VALUE).length();
 
-        protected final WsSerializer serializer = WsSerializer.create().takeOwnership(this);
+        protected WsSerializer serializer = WsSerializer.create().takeOwnership(this);
         protected boolean earlyCancel, waitingVars, isBindQuery;
         protected TextWebSocketFrame endFrame = new TextWebSocketFrame(wrappedBuffer(END));
         protected final MutableRope bindReqRope;
@@ -1233,11 +1243,15 @@ public class NettySparqlServer implements AutoCloseable{
 
         @Override protected void releaseResources() {
             super.releaseResources();
-            serializer.recycle(this);
-            if (cancelFrame != null && cancelFrame.refCnt() > 0)
+            serializer = Owned.safeRecycle(serializer, this);
+            if (cancelFrame != null && cancelFrame.refCnt() > 0) {
                 cancelFrame.release();
-            if (endFrame != null && endFrame.refCnt() > 0)
+                cancelFrame = null;
+            }
+            if (endFrame != null && endFrame.refCnt() > 0) {
                 endFrame.release();
+                endFrame = null;
+            }
             bindReqRope.close();
         }
 
