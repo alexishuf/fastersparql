@@ -458,6 +458,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
                     merger = null;
                 } else {
                     if (!freeVars.equals(mergerFreeVars)) {
+                        Owned.safeRecycle(merger, this);
                         mergerFreeVars = freeVars;
                         merger          = bt.merger(vars, binding.vars, vars).takeOwnership(this);
                     }
