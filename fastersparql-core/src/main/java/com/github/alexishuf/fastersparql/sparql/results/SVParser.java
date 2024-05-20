@@ -26,7 +26,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     private static final Logger log = LoggerFactory.getLogger(SVParser.class);
 
-    protected int nVars;
+    protected boolean isAsk;
     protected final FinalSegmentRope eol;
     protected TermParser termParser;
     protected @Nullable MutableRope partialLine, fedPartialLine;
@@ -35,7 +35,6 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
 
     private SVParser(FinalSegmentRope eol, CompletableBatchQueue<B> destination) {
         super(destination);
-        this.nVars = destination.vars().size();
         this.eol = eol;
         this.termParser = TermParser.create().takeOwnership(this);
     }
@@ -47,7 +46,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         inputColumns = -1;
         column       =  0;
         line         =  0;
-        nVars        = downstream.vars().size();
+        isAsk        = false;
         if (partialLine    != null) partialLine   .clear();
         if (fedPartialLine != null) fedPartialLine.clear();
     }
@@ -115,7 +114,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
                 if ((begin = handleControl(rope, begin)) < end)
                     begin = readVars(rope, begin, end, '\t');
             }
-            if (nVars == 0)
+            if (isAsk)
                 begin = parseAsk(rope, begin, end);
             int lastCol = Math.max(0, inputColumns-1);
             for (byte c = 0; begin < end; ++begin) {
@@ -218,7 +217,7 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
             int begin = 0, end = rope.len();
             if (line == 0)
                 begin = readVars(rope, begin, end, ',');
-            if (nVars == 0)
+            if (isAsk)
                 begin = parseAsk(rope, begin, end);
             while (begin < end) {
                 begin = parseCsv(rope, begin, end);
@@ -394,8 +393,8 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
         }
         inputColumns = offer.size();
         inVar2outVar = ArrayAlloc.intsAtLeast(inputColumns, inVar2outVar);
-        if (nVars == 0 && offer.size() > (offer.contains(WsBindingSeq.VAR) ? 1 : 0))
-            checkAskVars(offer);
+        isAsk = dst.vars().isEmpty() && offer.size() == 1
+             && ASK_VAR.matcher(offer.getFirst().toString()).matches();
         Vars vars = vars();
         for (int i = 0; i < offer.size(); i++)
             inVar2outVar[i] = vars.indexOf(offer.get(i));
@@ -481,17 +480,6 @@ public abstract class SVParser<B extends Batch<B>> extends ResultsParser<B> {
     }
 
     private static final Pattern ASK_VAR = Pattern.compile("(?i)_*(ask)?[_.-]*(Result|Answer|Value)?s?_*");
-    protected void checkAskVars(Vars actual) {
-        String expected = "ASK results parser expected no vars or a single var for a boolean value. ";
-        String msg = null;
-        if (actual.size() > 1) {
-            msg = expected +  "Got " + actual;
-        } else if (actual.size() == 1 && !ASK_VAR.matcher(actual.getFirst().toString()).matches()) {
-            msg = expected + actual.getFirst() + " does not appear to be an ask query result var";
-        }
-        if (msg != null)
-            throw  new InvalidSparqlResultsException(msg);
-    }
 
     protected InvalidSparqlResultsException extraColumns() {
         var msg = String.format("More than %d columns at line %d. Expected %s", inputColumns, line,
