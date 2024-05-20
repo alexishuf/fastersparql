@@ -140,6 +140,11 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
         }
     }
 
+    @Override public void close() {
+        super.close();
+        dropAllQueued();
+    }
+
     /* --- --- --- producer methods --- --- --- */
 
     @Override public @Nullable Orphan<B> pollFillingBatch() {
