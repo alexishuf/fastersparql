@@ -74,9 +74,14 @@ public class RopeEncoder {
         void append(T dst, byte utf8Byte);
     }
     public static final ByteSinkAppender BYTE_SINK_APPENDER = new ByteSinkAppender();
+    public static final MutableRopeAppender MUTABLE_ROPE_APPENDER = new MutableRopeAppender();
     public static final class ByteSinkAppender implements ByteAppend<ByteSink<?, ?>> {
         private ByteSinkAppender() {}
         @Override public void append(ByteSink<?, ?> dst, byte utf8Byte) {dst.append(utf8Byte);}
+    }
+    public static final class MutableRopeAppender implements ByteAppend<MutableRope> {
+        private MutableRopeAppender() {}
+        @Override public void append(MutableRope dst, byte utf8Byte) {dst.append(utf8Byte);}
     }
 
     public static <T> void codePoint2utf8(int code,  ByteAppend<T> append, T dst) {
@@ -114,8 +119,7 @@ public class RopeEncoder {
             } else if (c <= MAX_HIGH_SURROGATE && i+1 < end && isLowSurrogate(c1=cs.charAt(i+1))) {
                 u = Character.toCodePoint(c, c1);
                 ++i;
-            }
-            else {
+            } else {
                 u = 0xfffd; // invalid surrogate pair, REPLACEMENT CHAR
             }
             dstPos = codePoint2utf8(u, dst, dstPos);
@@ -131,6 +135,22 @@ public class RopeEncoder {
             if (c < MIN_SURROGATE || c > MAX_SURROGATE) {
                 u = c;
             } else if (c <= MAX_HIGH_SURROGATE && i+1 < end && isLowSurrogate(c1=cs.charAt(i+1))) {
+                u = Character.toCodePoint(c, c1);
+                ++i;
+            } else {
+                u = 0xfffd; // invalid surrogate pair, REPLACEMENT CHAR
+            }
+            codePoint2utf8(u, append, dst);
+        }
+    }
+    public static <T> void charSequence2utf8(char[] cs, int begin, int end,
+                                             ByteAppend<T> append, T dst) {
+        char c, c1;
+        for (int i = begin, u; i < end; i++) {
+            c = cs[i];
+            if (c < MIN_SURROGATE || c > MAX_SURROGATE) {
+                u = c;
+            } else if (c <= MAX_HIGH_SURROGATE && i+1 < end && isLowSurrogate(c1=cs[i+1])) {
                 u = Character.toCodePoint(c, c1);
                 ++i;
             } else {
