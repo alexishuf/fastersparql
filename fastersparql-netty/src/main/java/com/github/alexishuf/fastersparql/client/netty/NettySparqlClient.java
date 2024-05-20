@@ -217,8 +217,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
             lock();
             try {
                 abort = isTerminated();
-                this.handler = handler;
                 handler.attach(this);
+                this.handler = handler;
             } finally { unlock(); }
             if (abort)
                 throw NettyHttpClient.ABORT_REQUEST;
@@ -385,8 +385,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
             int st = lock();
             try {
                 abort = (st&GOT_CANCEL_REQ) != 0;
-                this.handler = handler;
                 handler.attach(this);
+                this.handler = handler;
             } finally { unlock(); }
             if (abort)
                 throw NettyHttpClient.ABORT_REQUEST; // recycle ch
@@ -501,6 +501,14 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         public void attach(ClientStreamNode<?> downstream) {
             this.downstream = downstream;
+            if (parser != null) {
+                if (parser.batchType().equals(downstream.batchType())) {
+                    forceReset(parser, downstream);
+                } else {
+                    parser.release();
+                    parser = null;
+                }
+            }
         }
 
         private void completeDownstream(@Nullable Throwable cause) {
@@ -555,10 +563,9 @@ public class NettySparqlClient extends AbstractSparqlClient {
                 throw new InvalidSparqlResultsException("No Content-Type in HTTP response");
             var cs = mt.charset(UTF_8);
             decodeCS = cs == null || cs.equals(UTF_8) || cs.equals(US_ASCII) ? null : cs;
-            if (parser != null && parser.format().asMediaType().accepts(mt)
-                    && parser.batchType().equals(downstream.batchType())) {
-                forceReset(parser, downstream);
-            } else {
+            if (parser == null || !parser.format().asMediaType().accepts(mt)) {
+                if (parser != null)
+                    parser.release();
                 parser = ResultsParser.createFor(fromMediaType(mt), downstream);
                 parser.namer(PARSER_NAMER, this);
             }
