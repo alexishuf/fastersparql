@@ -24,7 +24,7 @@ public class StoreSparqlClientFactory implements SparqlClientFactory {
         }
         String[] contents = f.list();
         if (contents == null) {
-            log.debug("StoreSparqlClientFactory rejecting {}: could not list contents", f);
+            log.error("StoreSparqlClientFactory rejecting {}: could not list contents", f);
             return false;
         }
         boolean strings = false, spo = false;
