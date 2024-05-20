@@ -194,7 +194,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             return;
         }
         doCancelCookie = cookie;
-        actions.sched(AC_CANCEL);
+        actions.sched(AC_ENABLE_AUTOREAD|AC_CANCEL);
     }
     @SuppressWarnings("unused") private void doCancel() {
         int cookie = doCancelCookie;
@@ -204,8 +204,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
         }
         if ((st&ST_TERMINATED) != 0)         // terminated
             return;                          // nothing to cancel or notify
-        if (ctx != null)
-            ctx.channel().config().setAutoRead(true);
+        doSetAutoRead(true);
         if ((st&ST_REQ_SENT) != 0) {         // request sent
             st |= ST_CANCELLED|ST_UNHEALTHY; // allow onCancelled, forbid recycling
             if (ctx != null) ctx.close();    // else: channelInactive() already delivered
@@ -474,7 +473,8 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
     }
 
     @Override public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
-        super.channelUnregistered(ctx);
+        actions.runNow();
+        deliverTermination(null);
         actions.runNow();
         actions.executor(ForkJoinPool.commonPool());
         this.ctx = null;
@@ -482,6 +482,7 @@ public abstract class NettyHttpHandler extends SimpleChannelInboundHandler<HttpO
             failureBody.close();
             failureBody = null;
         }
+        super.channelUnregistered(ctx);
     }
 
     @Override public void channelActive(ChannelHandlerContext ctx) throws Exception {
