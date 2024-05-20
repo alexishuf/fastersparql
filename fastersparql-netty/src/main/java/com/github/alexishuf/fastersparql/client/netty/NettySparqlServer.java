@@ -17,6 +17,7 @@ import com.github.alexishuf.fastersparql.emit.async.BItEmitter;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
+import com.github.alexishuf.fastersparql.fed.SparqlServer;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.ContentNegotiator;
 import com.github.alexishuf.fastersparql.model.MediaType;
@@ -85,7 +86,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-public class NettySparqlServer implements AutoCloseable{
+public class NettySparqlServer implements SparqlServer {
     private static final Logger log = LoggerFactory.getLogger(NettySparqlServer.class);
     public static final EventLoopGroupHolder ACCEPT_ELG
             = new EventLoopGroupHolder("NettySparqlServer.ACCEPT_ELG", null,
@@ -154,6 +155,7 @@ public class NettySparqlServer implements AutoCloseable{
                 }).bind(host, port).syncUninterruptibly().channel();
     }
 
+    public String               sparqlPath() { return "/sparql"; }
     public int                        port() { return listenAddress().getPort(); }
     public InetSocketAddress listenAddress() { return (InetSocketAddress)server.localAddress(); }
 

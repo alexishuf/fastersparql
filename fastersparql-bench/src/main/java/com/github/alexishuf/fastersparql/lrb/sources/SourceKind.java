@@ -103,7 +103,7 @@ public enum SourceKind {
             var inner = FS.clientFor(parse(handle.specUrl));
             var server = new NettySparqlServer(serverFlowModel().orElseThrow(), inner,
                     false, "0.0.0.0", 0);
-            String url = augScheme()+"127.0.0.1:"+server.port()+"/sparql";
+            var url = augScheme()+"127.0.0.1:"+server.port()+server.sparqlPath();
             return new SourceHandle(url, source, this, AutoCloseableSet.of(server));
         }
         return handle;
