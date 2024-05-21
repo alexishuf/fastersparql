@@ -56,6 +56,7 @@ import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 import org.slf4j.Logger;
@@ -65,6 +66,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RecursiveAction;
@@ -74,6 +76,7 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_SUFFIXES;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
@@ -109,6 +112,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private final Triples spo, pso, ops;
     private final SingletonFederator federator;
     private final FinalSegmentRope[] prefixes;
+    private final long[] wellKnownDatatypeOffset;
+    private final FinalSegmentRope[] wellKnownDatatype;
     private final boolean hugeDict;
 
     /* --- --- --- lifecycle --- --- --- */
@@ -125,39 +130,101 @@ public class StoreSparqlClient extends AbstractSparqlClient
         log.debug("Loading{} {}...", validate ? "/validating" : "", dir);
         if (!Files.isDirectory(dir))
             throw new FSException(ep, dir+" is not a dir, cannot open store");
-        LocalityCompositeDict dict = null;
+        LocalityCompositeDict dict;
         int dictId = 0;
-        Triples spo = null, pso = null, ops;
+        Triples spo = null, pso = null, ops = null;
+        var suffixScanner = new ScanWellKnownDatatypes();
         try (var exec = newVirtualThreadPerTaskExecutor()) {
-            var dictF = exec.submit(() -> {
-                LocalityCompositeDict d = new LocalityCompositeDict(dir.resolve("strings"));
-                if (validate)
-                    d.validate();
-                return d;
-            });
-            var spoF = exec.submit(() -> loadTriples(dir.resolve("spo"), validate));
-            var psoF = exec.submit(() -> loadTriples(dir.resolve("pso"), validate));
-            var opsF = exec.submit(() -> loadTriples(dir.resolve("ops"), validate));
+            var dictF = exec.submit(() -> new LocalityCompositeDict(dir.resolve("strings")));
+            var spoF  = exec.submit(() -> loadTriples(dir.resolve("spo"), validate));
+            var psoF  = exec.submit(() -> loadTriples(dir.resolve("pso"), validate));
+            var opsF  = exec.submit(() -> loadTriples(dir.resolve("ops"), validate));
             dict = dictF.get();
+            exec.submit(suffixScanner.dict(dict));
+            exec.submit(() -> {
+                if (validate)
+                    dict.validate();
+                return null;
+            });
             dictId = IdTranslator.register(dict);
             spo = spoF.get();
             pso = psoF.get();
             ops = opsF.get();
         } catch (Throwable e) {
-            if (dictId > 0) IdTranslator.deregister(dictId, dict);
-            if (dict != null) dict.close();
+            if (dictId > 0) {
+                var open = dict(dictId);
+                IdTranslator.deregister(dictId, open);
+                open.close();
+            }
             if (spo != null) spo.close();
             if (pso != null) pso.close();
+            if (ops != null) ops.close();
             throw FSException.wrap(ep, e);
-        }
+        } // close() awaits for remaining tasks
         this.dictId = dictId;
         this.dict = dict;
         this.spo = spo;
         this.pso = pso;
         this.ops = ops;
+        this.wellKnownDatatypeOffset = requireNonNull(suffixScanner.offsets);
+        this.wellKnownDatatype       = requireNonNull(suffixScanner.suffixes);
         this.federator = new StoreSingletonFederator(this);
         this.hugeDict = dict.strings() > 40_000_000;
         log.debug("Loaded{} {}...", validate ? "/validated" : "", dir);
+    }
+
+    private final class ScanWellKnownDatatypes implements Runnable {
+        private @MonotonicNonNull LocalityCompositeDict lcd;
+        private final Pair[] pairs;
+        public long[] offsets;
+        public FinalSegmentRope[] suffixes;
+
+        public ScanWellKnownDatatypes() {
+            this.pairs = new Pair[DT_SUFFIXES.length];
+            Arrays.fill(pairs, Pair.MAX_VALUE);
+        }
+
+        public @This ScanWellKnownDatatypes dict(LocalityCompositeDict dict) {
+            this.lcd = dict;
+            return this;
+        }
+
+        private record Pair(long offset, FinalSegmentRope suffix) implements Comparable<Pair> {
+            private static final Pair MAX_VALUE = new Pair(Long.MAX_VALUE, FinalSegmentRope.EMPTY);
+            @Override
+            public int compareTo(@NonNull Pair o) {return Long.compare(offset, o.offset);}
+        }
+
+        @Override public void run() {
+            var l = lcd.shared().lookup().takeOwnership(this);
+            try {
+                int matches = 0;
+                for (FinalSegmentRope suffix : DT_SUFFIXES) {
+                    var view = l.get(l.find(suffix));
+                    if (view != null)
+                        pairs[matches++] = new Pair(view.offset, suffix);
+                }
+                if (matches == 0) {
+                    offsets  = EMPTY_LONG;
+                    suffixes = EMPTY_F_SEG_ROPE;
+                } else {
+                    Arrays.sort(pairs);
+                    var offsets  = new             long[matches];
+                    var suffixes = new FinalSegmentRope[matches];
+                    for (int i = 0; i < matches; i++) {
+                        offsets [i] = pairs[i].offset;
+                        suffixes[i] = pairs[i].suffix;
+                    }
+                    this.offsets  = offsets;
+                    this.suffixes = suffixes;
+                }
+            } finally { Owned.safeRecycle(l, this); }
+        }
+
+        @Override public String toString() {
+            return StoreSparqlClient.this+".ScanWellKnownDatatypes@"
+                    +Integer.toHexString(System.identityHashCode(this));
+        }
     }
 
     private static Triples loadTriples(Path path, boolean validate) throws IOException {
@@ -1371,6 +1438,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 localSeg = t.fst;
                 localOff = t.fstOff;
                 localLen = t.fstLen;
+                long sndOff = t.sndOff, knownOff = -1;
+                for (int i = 0; i < wellKnownDatatypeOffset.length && knownOff < sndOff; i++) {
+                    if ((knownOff=wellKnownDatatypeOffset[i]) == sndOff)
+                        yield wellKnownDatatype[i];
+                }
                 yield SHARED_ROPES.internDatatypeOf(t, 0, t.len);
             }
             case '<' -> {

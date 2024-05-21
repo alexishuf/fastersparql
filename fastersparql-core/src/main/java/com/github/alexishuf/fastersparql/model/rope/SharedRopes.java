@@ -60,7 +60,49 @@ public class SharedRopes {
     public static final FinalSegmentRope DT_JSON               = SHARED_ROPES.internDatatype(RDF_DT+"JSON>");
     public static final FinalSegmentRope DT_PlainLiteral       = SHARED_ROPES.internDatatype(RDF_DT+"PlainLiteral>");
 
+    public static final FinalSegmentRope[] DT_SUFFIXES = new FinalSegmentRope[]  {
+            DT_duration,
+            DT_dateTime,
+            DT_time,
+            DT_date,
+            DT_gYearMonth,
+            DT_gYear,
+            DT_gMonthDay,
+            DT_gDay,
+            DT_gMonth,
+            DT_BOOLEAN,
+            DT_base64Binary,
+            DT_hexBinary,
+            DT_FLOAT,
+            DT_decimal,
+            DT_DOUBLE,
+            DT_anyURI,
+            DT_string,
+            DT_integer,
+            DT_nonPositiveInteger,
+            DT_LONG,
+            DT_nonNegativeInteger,
+            DT_negativeInteger,
+            DT_INT,
+            DT_unsignedLong,
+            DT_positiveInteger,
+            DT_SHORT,
+            DT_unsignedInt,
+            DT_BYTE,
+            DT_unsignedShort,
+            DT_unsignedByte,
+            DT_normalizedString,
+            DT_token,
+            DT_language,
+            DT_langString,
+            DT_HTML,
+            DT_XMLLiteral,
+            DT_JSON,
+            DT_PlainLiteral
+    };
+
     static {
+
         /*  --- --- --- top 48 unique most popular on http://prefix.cc/ */
         SHARED_ROPES.internPrefix("<http://www.loc.gov/mads/rdf/v1#");
         SHARED_ROPES.internPrefix("<http://id.loc.gov/ontologies/bflc/");
