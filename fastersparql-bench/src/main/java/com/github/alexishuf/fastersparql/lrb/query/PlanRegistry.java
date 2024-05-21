@@ -30,6 +30,25 @@ public final class PlanRegistry {
         this.name2node = name2node;
     }
 
+    /**
+     * Create a {@link PlanRegistry} where all queries are mapped to a single {@code QUERY} node
+     * that sends the whole benchmark SPARQL query to {@code http://union/sparql}.
+     */
+    public static PlanRegistry unionSource() {
+        Map<String, Node> map = new HashMap<>();
+        for (QueryName q : QueryName.values()) {
+            Node n = new Node();
+            n.operator = "QUERY";
+            n.operands = List.of();
+            n.params = new HashMap<>(Map.of(
+                    "query", q.opaque().sparql.toString(),
+                    "endpoint", "http://largerdfbench-all/sparql"
+            ));
+            map.put(q.name(), n);
+        }
+        return new PlanRegistry(map);
+    }
+
     public static PlanRegistry parse(File file) throws IOException {
         try (FileInputStream is = new FileInputStream(file)) {
             return parse(is);

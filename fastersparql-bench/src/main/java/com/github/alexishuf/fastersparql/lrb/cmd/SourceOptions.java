@@ -52,7 +52,6 @@ public class SourceOptions {
     @Option(names = "--source", description = "Implementation of sources in the federation")
     public SourceKind srcKind = SourceKind.HDT_FILE;
 
-
     public @Nullable File dataDir;
     @Option(names = "--data-dir",
             description = "Dir containing the data files backing the source triple stores")

@@ -8,6 +8,7 @@
     </appender>
 
     <logger name="com.github.alexishuf.fastersparql" level="INFO"/>
+    <logger name="com.github.alexishuf.fastersparql.org" level="WARN"/>
 
     <root level="WARN">
         <appender-ref ref="STDOUT" />

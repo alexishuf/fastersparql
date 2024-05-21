@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
+import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.BatchKind;
 import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
@@ -45,8 +46,14 @@ class MeasureTest {
     public static final String DATA_DIR_PROP = "fastersparql.bench.test.data-dir";
     private static File dataDir;
     private static final boolean originalCrossDedup = FSProperties.crossDedup();
-    private static boolean hasHDT, hasStore;
-    private static boolean hasAllHDT, hasAllStore;
+    private static boolean hasHDT, hasStore, hasTDB2;
+    private static boolean hasAllHDT, hasAllStore, hasAllTDB2;
+
+    enum PlanType {
+        FEDX,
+        UNION,
+        PLAN
+    }
 
     @BeforeAll
     static void beforeAll() {
@@ -57,12 +64,16 @@ class MeasureTest {
                 .allMatch(s -> new File(dataDir, s.filename(HDT_FILE)).isFile());
         hasStore = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
                 .allMatch(s -> new File(dataDir, s.filename(FS_STORE)).isDirectory());
+        hasTDB2 = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
+                .allMatch(s -> new File(dataDir, s.filename(TDB2)).isFile());
         hasAllHDT = LrbSource.all().stream()
                 .allMatch(s -> new File(dataDir, s.filename(HDT_FILE)).isFile());
         hasAllStore = LrbSource.all().stream()
                 .allMatch(s -> new File(dataDir, s.filename(FS_STORE)).isDirectory());
+        hasAllTDB2 = LrbSource.all().stream()
+                .allMatch(s -> new File(dataDir, s.filename(TDB2)).isDirectory());
         log.info("Loading expected results...");
-        if (hasAllStore || hasAllHDT)
+        if (hasAllStore || hasAllHDT || hasAllTDB2)
             Arrays.stream(QueryName.values()).parallel().forEach(n -> n.expected(COMPRESSED));
     }
 
@@ -108,18 +119,27 @@ class MeasureTest {
         return dir;
     }
 
-    private void doTest(SourceKind sourceKind, boolean jsonPlans, String queries,
+    private void doTest(SourceKind sourceKind, BatchKind batchKind, PlanType planType, String queries,
                         SelectorKind selectorKind,
                         MeasureOptions.ResultsConsumer consumer,
                         FlowModel flowModel) throws IOException {
         int nReps = queries.startsWith("S") ? 4 : queries.startsWith("C") ? 2 : 1;
         boolean isS2 = queries.equals("S2");
-        if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
+        if (planType == PlanType.UNION) {
+            File file = new File(dataDir, LrbSource.LargeRDFBench_all.filename(sourceKind));
+            if (!file.exists()) {
+                log.warn("Missing {}: skipping test of whole query against union source", file);
+                return;
+            }
+        } else if (sourceKind.isHdt() && (!hasHDT || (!isS2 && !hasAllHDT))) {
             log.warn("Skipping test: no HDT files in {}. Set Java property {} to change directory",
-                     dataDir.getAbsolutePath(), DATA_DIR_PROP);
+                    dataDir.getAbsolutePath(), DATA_DIR_PROP);
             return;
-        }
-        if (sourceKind.isFsStore() && (!hasStore || (!isS2 && !hasAllStore))) {
+        } else if (sourceKind.isTdb2() && (!hasTDB2 || (!isS2 && !hasAllTDB2))) {
+            log.warn("Skipping test: no TDB2 dirs in {}. Set Java property {} to change directory",
+                    dataDir.getAbsolutePath(), DATA_DIR_PROP);
+            return;
+        } else if (sourceKind.isFsStore() && (!hasStore || (!isS2 && !hasAllStore))) {
             log.warn("Skipping test: no Store dirs in {}. Set Java property {} to change directory",
                     dataDir.getAbsolutePath(), DATA_DIR_PROP);
             return;
@@ -137,6 +157,7 @@ class MeasureTest {
         List<String> args = new ArrayList<>(List.of("measure",
                 "--queries", queries,
                 "--source", sourceKind.name(),
+                "--batch", batchKind.name(),
                 "--selector", selectorKind.name(),
                 "--data-dir", dataDir.getPath(),
                 "--dest-dir", destDir.getPath(),
@@ -153,10 +174,13 @@ class MeasureTest {
                 "--consumer", consumer.name(),
                 "--flow", flowModel.name()
         ));
-        if (isS2)
+        if (isS2 && planType != PlanType.UNION)
             args.addAll(List.of("--lrb-source", "nyt", "--lrb-source",  "dbpedia-subset"));
-        if (jsonPlans)
-            args.add("--builtin-plans-json");
+        args.addAll(switch (planType) {
+            case FEDX  -> List.of("--builtin-plans-json");
+            case UNION -> List.of("--lrb-source", "LargeRDFBench-all");
+            case PLAN  -> List.of();
+        });
         App.run(args.toArray(String[]::new));
         var measurements = MeasurementCsv.load(new File(destDir, "measurements.csv"));
         assertEquals(nReps*nQueries, measurements.size());
@@ -186,7 +210,7 @@ class MeasureTest {
         beforeAll();
         MeasureTest test = new MeasureTest();
         test.setUp();
-        test.testSQueries(true, FS_STORE);
+        test.testSQueries(PlanType.FEDX, FS_STORE, BatchKind.COMPRESSED);
 
 //        String uriA = "file://" + dataDir + "/LinkedTCGA-A";
 //        String uriM = "file://" + dataDir + "/LinkedTCGA-M";
@@ -238,47 +262,71 @@ class MeasureTest {
 
 
     static Stream<Arguments> test() {
-        List<SourceKind> sources = List.of(FS_STORE, HDT_FILE,
-                HDT_JSON_EMIT, HDT_WS_EMIT,
-                HDT_TSV_IT, HDT_WS_IT,
-                FS_TSV_EMIT, FS_WS_EMIT,
-                FS_JSON_IT, FS_WS_IT);
-        return Stream.of(true, false).flatMap(jsonPlans
-                -> sources.stream().map(src -> arguments(jsonPlans, src)));
+        return Stream.of(
+                arguments(PlanType.FEDX, FS_STORE, BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, FS_STORE, BatchKind.TERM),
+
+                arguments(PlanType.FEDX, HDT_FILE, BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, HDT_FILE, BatchKind.TERM),
+
+                arguments(PlanType.FEDX, HDT_JSON_EMIT, BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, HDT_WS_EMIT,   BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, HDT_TSV_IT,    BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, HDT_WS_IT,     BatchKind.COMPRESSED),
+
+                arguments(PlanType.FEDX, FS_TSV_EMIT, BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, FS_WS_EMIT,  BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, FS_JSON_IT,  BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, FS_WS_IT,    BatchKind.COMPRESSED),
+
+                arguments(PlanType.FEDX, TDB2, BatchKind.COMPRESSED),
+
+                arguments(PlanType.UNION, TDB2,     BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, TDB2,     BatchKind.TERM),
+                arguments(PlanType.UNION, HDT_FILE, BatchKind.COMPRESSED),
+
+                arguments(PlanType.PLAN, FS_STORE,   BatchKind.COMPRESSED),
+                arguments(PlanType.PLAN, FS_STORE,   BatchKind.TERM),
+                arguments(PlanType.PLAN, HDT_FILE,   BatchKind.COMPRESSED),
+                arguments(PlanType.PLAN, HDT_FILE,   BatchKind.TERM),
+                arguments(PlanType.PLAN, FS_WS_EMIT, BatchKind.COMPRESSED),
+                arguments(PlanType.PLAN, FS_WS_EMIT, BatchKind.TERM),
+                arguments(PlanType.PLAN, FS_JSON_IT, BatchKind.COMPRESSED)
+        );
     }
 
     @ParameterizedTest @MethodSource("test")
-    void testS2(boolean jsonPlans, SourceKind sourceKind) throws Exception {
-        doTest(sourceKind, jsonPlans, "S2", SelectorKind.DICT, COUNT, ITERATE);
-        doTest(sourceKind, jsonPlans, "S2", SelectorKind.DICT, COUNT, EMIT);
+    void testS2(PlanType planType, SourceKind sourceKind, BatchKind batchKind) throws Exception {
+        doTest(sourceKind, batchKind, planType, "S2", SelectorKind.DICT, COUNT, ITERATE);
+        doTest(sourceKind, batchKind, planType, "S2", SelectorKind.DICT, COUNT, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
-    void testSQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
+    void testSQueries(PlanType planType, SourceKind sourceKind, BatchKind batchKind) throws Exception {
         disableCrossDedup();
-        doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK, ITERATE);
-        doTest(sourceKind, jsonPlans, "S.*", SelectorKind.ASK, CHECK, EMIT);
+        doTest(sourceKind, batchKind, planType, "S.*", SelectorKind.ASK, CHECK, ITERATE);
+        doTest(sourceKind, batchKind, planType, "S.*", SelectorKind.ASK, CHECK, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
-    void testCQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
+    void testCQueries(PlanType planType, SourceKind sourceKind, BatchKind batchKind) throws Exception {
         disableCrossDedup();
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         String regex = "C.*";
         if (sourceKind.isHdt())
             regex = "C[1-46-9]0?";
-        doTest(sourceKind, jsonPlans, regex, sel, CHECK, ITERATE);
-        doTest(sourceKind, jsonPlans, regex, sel, CHECK, EMIT);
+        doTest(sourceKind, batchKind, planType, regex, sel, CHECK, ITERATE);
+        doTest(sourceKind, batchKind, planType, regex, sel, CHECK, EMIT);
     }
 
     @ParameterizedTest @MethodSource("test")
-    void testBQueries(boolean jsonPlans, SourceKind sourceKind) throws Exception {
+    void testBQueries(PlanType planType, SourceKind sourceKind, BatchKind batchKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
         // B5 takes 20m
         String regex = "B[1234678]";
         if (sourceKind.isHdt())
             regex = "B[123478]";
-        doTest(sourceKind, jsonPlans, regex, sel, COUNT, EMIT);
+        doTest(sourceKind, batchKind, planType, regex, sel, COUNT, EMIT);
     }
 
     @RepeatedTest(10) void testS10Unexpected() throws Exception {

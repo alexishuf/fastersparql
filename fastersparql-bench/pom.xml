@@ -38,7 +38,12 @@
         <dependency>
             <groupId>com.github.alexishuf.fastersparql</groupId>
             <artifactId>fastersparql-netty</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.alexishuf.fastersparql</groupId>
+            <artifactId>fastersparql-jena</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>com.github.alexishuf.fastersparql</groupId>

@@ -226,13 +226,17 @@ public abstract class QueryChecker<B extends Batch<B>>
     }
 
     @Override public void onBatch(Orphan<B> orphan) {
-        B b = queryName.amputateNumbers(orphan).takeOwnership(this);
-        check(b);
-        b.recycle(this);
+        orphan = queryName.amputateNumbers(orphan);
+        B b = queryName.expandUnicodeEscapes(orphan).takeOwnership(this);
+        try {
+            check(b);
+        } finally {
+            b.recycle(this);
+        }
     }
 
     @Override public void onBatchByCopy(B batch) {
-        if (queryName.isAmputateNumberNoOp())
+        if (queryName.isAmputateNumberNoOp() && queryName.isExpandUnicodeEscapesNoOp())
             check(batch);
         else
             super.onBatchByCopy(batch);

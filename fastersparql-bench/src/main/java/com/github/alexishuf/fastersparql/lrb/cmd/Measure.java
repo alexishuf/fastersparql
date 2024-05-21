@@ -15,6 +15,7 @@ import com.github.alexishuf.fastersparql.lrb.query.QueryName;
 import com.github.alexishuf.fastersparql.lrb.query.QueryRunner;
 import com.github.alexishuf.fastersparql.lrb.query.QueryRunner.BatchConsumer;
 import com.github.alexishuf.fastersparql.lrb.sources.FederationHandle;
+import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.rope.OutputStreamSink;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
@@ -74,8 +75,12 @@ public class Measure implements Callable<Void>{
                          .collect(Collectors.toCollection(ArrayList::new));
         Collections.shuffle(tasks, msrOp.random);
 
-        if (msrOp.builtinPlansJson)
+        Set<LrbSource> sources = srcOp.lrbSources();
+        if (sources.size() == 1 && sources.iterator().next().equals(LrbSource.LargeRDFBench_all)) {
+            plans = PlanRegistry.unionSource();
+        } else if (msrOp.builtinPlansJson) {
             plans = PlanRegistry.parseBuiltin();
+        }
         if (msrOp.plansJson != null) {
             if (msrOp.builtinPlansJson)
                 log.error("--builtin-plans-json and --plans-json cannot both be set");
@@ -84,7 +89,7 @@ public class Measure implements Callable<Void>{
         try (var fedHandle = FederationHandle.builder(srcOp.dataDir)
                                              .selKind(srcOp.selKind)
                                              .srcKind(srcOp.srcKind)
-                                             .subset(srcOp.lrbSources())
+                                             .subset(sources)
                                              .waitInit(true).create()) {
             var fed = fedHandle.federation;
             if (plans != null) {

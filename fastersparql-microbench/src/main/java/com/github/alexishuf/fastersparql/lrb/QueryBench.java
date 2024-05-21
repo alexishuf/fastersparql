@@ -45,6 +45,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntSupplier;
 import java.util.stream.Collectors;
@@ -77,6 +78,7 @@ public class QueryBench {
     @Param({"ITERATE", "EMIT"}) FlowModel flowModel;
     @Param({"false", "true"}) boolean weakenDistinct;
     @Param({"true"}) boolean thermalCooldown;
+    @Param({"false"}) boolean unionSource;
 //    @Param({"false","true"}) boolean alt;
 
     public enum SelectorKindType {
@@ -251,12 +253,21 @@ public class QueryBench {
         Path dataDir = Path.of(dataDirPath);
         if (!Files.isDirectory(dataDir))
             throw new IllegalArgumentException("-Dfs.data.dir="+dataDir+" is not a dir");
-        String missingSources = LrbSource.all().stream()
-                .map(s -> s.filename(srcKind))
-                .filter(name -> !Files.exists(dataDir.resolve(name)))
-                .collect(Collectors.joining(", "));
-        if (!missingSources.isEmpty())
-            throw new IOException("Files/dirs missing from "+dataDir+": "+missingSources);
+        Set<LrbSource> sources;
+        if (unionSource) {
+            sources = Set.of(LrbSource.LargeRDFBench_all);
+            String filename = LrbSource.LargeRDFBench_all.filename(srcKind);
+            if (!Files.exists(dataDir.resolve(filename)))
+                throw new IOException("Missing "+filename+" from "+dataDir);
+        } else {
+            sources = LrbSource.all();
+            String missingSources = sources.stream()
+                    .map(s -> s.filename(srcKind))
+                    .filter(name -> !Files.exists(dataDir.resolve(name)))
+                    .collect(Collectors.joining(", "));
+            if (!missingSources.isEmpty())
+                throw new IOException("Files/dirs missing from "+dataDir+": "+missingSources);
+        }
         queryList = new QueryOptions(List.of(queries)).queries();
         if (queryList.isEmpty())
             throw new IllegalArgumentException("No queries selected");
@@ -271,14 +282,16 @@ public class QueryBench {
         // -------------
 
         journal("trialSetup: building federation, dataDir=", dataDir);
-        fedHandle = FederationHandle.builder(dataDirFile).srcKind(srcKind)
+        fedHandle = FederationHandle.builder(dataDirFile)
+                .srcKind(srcKind)
+                .subset(sources)
                 .selKind(selKind.forSource(srcKind))
                 .waitInit(true).create();
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
         FSProperties.refresh();
         journal("trialSetup: builtinPlans=", builtinPlans ? 1 : 0);
-        if (builtinPlans) {
-            var reg = PlanRegistry.parseBuiltin();
+        if (builtinPlans || unionSource) {
+            var reg = unionSource ? PlanRegistry.unionSource() : PlanRegistry.parseBuiltin();
             reg.resolve(fedHandle.federation);
             plans = queryList.stream().map(reg::createPlan).toList();
             String missingPlans = IntStream.range(0, plans.size())

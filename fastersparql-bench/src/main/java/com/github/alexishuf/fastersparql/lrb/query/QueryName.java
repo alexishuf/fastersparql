@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
+import com.github.alexishuf.fastersparql.model.rope.PooledSegmentRopeView;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
@@ -21,6 +22,7 @@ import java.io.IOException;
 import java.util.*;
 
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.LIT;
 import static com.github.alexishuf.fastersparql.sparql.results.ResultsParser.createFor;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -146,9 +148,86 @@ public enum QueryName {
 
     public Plan parsed() { return SparqlParser.parse(opaque()); }
 
-    public boolean isAmputateNumberNoOp() {
-        return this != C7 && this != C8 && this != C10;
+    public boolean isAmputateNumberNoOp() {return this != C7 && this != C8 && this != C10;}
+
+    public boolean isExpandUnicodeEscapesNoOp() {
+        return switch (this) {
+            case S8, S13, S14 -> false;
+            default -> true;
+        };
     }
+
+    public <B extends Batch<B>> Orphan<B> expandUnicodeEscapes(Orphan<B> batch) {
+        if (batch == null || isExpandUnicodeEscapesNoOp())
+            return batch;
+        B fixed = null;
+        try (var view = PooledSegmentRopeView.ofEmpty();
+             var tmp = PooledMutableRope.get()) {
+            while (batch != null) {
+                B out, in = batch.takeOwnership(this);
+                batch = in.detachHead();
+                if (hasUnicodeEscapes(in, view)) {
+                    out = expandUnicodeEscapes(in, view, tmp);
+                    Batch.safeRecycle(in, this);
+                } else {
+                    out = in;
+                }
+                fixed = Batch.quickAppend(fixed, this, out.releaseOwnership(this));
+            }
+        }
+        return fixed.releaseOwnership(this);
+    }
+
+    private <B extends Batch<B>> boolean hasUnicodeEscapes(B in, PooledSegmentRopeView view) {
+        for (int r = 0, rows = in.rows, cols = in.cols; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (in.termType(r, c) == LIT && in.localView(r, c, view)) {
+                    for (int i = 0, len = view.len; i < len; i++) {
+                        i = view.skipUntilUnescaped(i, len, (byte)'\\');
+                        byte u = i+4 > len ? 0 : view.get(i+1);
+                        if (u == 'u' || u == 'U')
+                            return true; // has unicode escape
+                    }
+                }
+            }
+        }
+        return false; // no unicode escape
+    }
+
+    private <B extends Batch<B>> B expandUnicodeEscapes(B in, PooledSegmentRopeView view,
+                                                        PooledMutableRope tmp) {
+        B out = in.type().create(in.cols).takeOwnership(this);
+        for (int r = 0, rows = in.rows, cols = in.cols; r < rows; r++) {
+            out.beginPut();
+            for (int c = 0; c < cols; c++) {
+                if (in.termType(r, c) != LIT || !in.localView(r, c, view)) {
+                    out.putTerm(c, in, r, c);
+                } else {
+                    tmp.clear();
+                    int i = 0, len = view.len;
+                    while (i < len) {
+                        int old = i;
+                        i = view.skipUntilUnescaped(i, len, (byte)'\\');
+                        tmp.append(view, old, i);
+                        int u = i+4 > len ? 0 : view.get(i+1);
+                        if (u == 'u' || u == 'U') {
+                            tmp.appendCodePoint(view.parseCodePoint(i));
+                            i += u == 'u' ? 6 : 10;
+                        } else {
+                            if (i < len)
+                                tmp.append('\\');
+                            ++i;
+                        }
+                    }
+                    out.putTerm(c, in.shared(r, c), tmp.segment, tmp.utf8, 0,
+                                tmp.len, true);
+                }
+            }
+            out.commitPut();
+        }
+        return out;
+    }
+
 
     public <B extends Batch<B>> Orphan<B> amputateNumbers(Orphan<B> in) {
         if (in == null || isAmputateNumberNoOp())

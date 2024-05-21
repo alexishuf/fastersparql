@@ -72,6 +72,8 @@
     <module>fastersparql-microbench</module>
     <module>fastersparql-bom</module>
     <module>fastersparql-grep</module>
+    <module>shade-jena-fuseki</module>
+    <module>fastersparql-jena</module>
   </modules>
 
   <dependencyManagement> <!-- Fix dependency versions -->
@@ -181,7 +183,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
-          <version>3.2.4</version>
+          <version>3.5.3</version>
         </plugin>
         <plugin>
           <groupId>org.skife.maven</groupId>

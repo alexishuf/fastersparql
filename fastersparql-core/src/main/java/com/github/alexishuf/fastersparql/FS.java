@@ -68,7 +68,7 @@ public class FS {
         }
         var best = tagged != null ? tagged : untagged;
         if (best == null) {
-            var msg = "No SparqlClientFactory supports the given endpoint";
+            var msg = "No SparqlClientFactory supports the given endpoint: "+endpoint;
             throw new UnacceptableSparqlConfiguration(endpoint.uri(), EMPTY,
                                                       endpoint.configuration(), msg);
         }
