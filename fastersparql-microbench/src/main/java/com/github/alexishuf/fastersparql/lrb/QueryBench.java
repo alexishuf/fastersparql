@@ -130,6 +130,7 @@ public class QueryBench {
     private final BenchmarkEvent jfrEvent = new BenchmarkEvent();
     private Blackhole bh;
     private int timeoutMs;
+    private boolean skipWarmup;
 
     private static class BoundCounter<B extends Batch<B>>
             extends QueryRunner.BoundCounter<B, BoundCounter<B>>
@@ -344,6 +345,7 @@ public class QueryBench {
         IOUtils.fsync(500_000); // generous timeout because there should be no I/O
 
         var wOpts  = opts.getWarmup();
+        long absurdWarmup = 8*wOpts.getCount()*wOpts.getTime().convertTo(MILLISECONDS);
         boolean warmup  = iterationNumber < wOpts.getCount();
         boolean first = iterationNumber == wOpts.getCount();
         var itOpts = warmup ? wOpts : opts.getMeasurement();
@@ -354,6 +356,7 @@ public class QueryBench {
                  ? (int)Math.min(5_000, estimateMs) // aim for 50% work, 50% idle
                  : (int)Math.min(estimateMs/10, 100); // minimal sleep for background tasks
         if (first) {
+            skipWarmup = false;
             System.gc();
             if (thermalCooldown) {
                 System.out.print("\nThermal cooldown of 5s...");
@@ -366,6 +369,11 @@ public class QueryBench {
         } else {
             if (idle > 1_000 && iterationNumber == 0)
                 System.out.printf("Will sleep %dms before each warmup iteration\n", idle);
+            if (warmup && iterationNumber == 1 && lastIterationMs > absurdWarmup) {
+                skipWarmup = true;
+                System.out.println("First warmup took more than twice the budget for all " +
+                                   "warmup iterations skipping remaining warmup iterations");
+            }
             Async.uninterruptibleSleep(idle);
         }
         iterationStart = System.nanoTime();
@@ -469,6 +477,8 @@ public class QueryBench {
     }
 
     private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
+        if (skipWarmup)
+            return lastBenchResult;
         this.bh = bh;
         Plan currentPlan = null;
         StreamNode streamNode = null;
