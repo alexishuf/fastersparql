@@ -108,6 +108,7 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
                 Batch.safeRecycle(batch, this);
             return retry ? state : COMPLETED;
         } finally {
+            transactional.abort();
             transactional.end();
         }
     }

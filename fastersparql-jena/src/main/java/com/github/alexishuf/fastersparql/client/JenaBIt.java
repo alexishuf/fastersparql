@@ -4,7 +4,7 @@ import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.org.apache.jena.query.TxnType;
+import com.github.alexishuf.fastersparql.org.apache.jena.query.ReadWrite;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Var;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExec;
@@ -38,12 +38,13 @@ public class JenaBIt<B extends Batch<B>> extends UnitaryBIt<B> {
     }
 
     @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
-        transactional.begin(TxnType.READ);
+        transactional.begin(ReadWrite.READ);
         try {
             if (rs == null)
                 start();
             return super.nextBatch(offer);
         } finally {
+            transactional.abort();
             transactional.end();
         }
     }
