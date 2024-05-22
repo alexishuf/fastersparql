@@ -467,7 +467,8 @@ public class QueryBench {
                 LockSupport.park(this);
             var execution = dbgExecution;
 
-            long deadline = System.nanoTime()+(int)(0.8*drainTimeoutMs);
+            long deadline = System.nanoTime()
+                          + NANOSECONDS.convert((int)(0.8*drainTimeoutMs), MILLISECONDS);
             long rem;
             while (watchdogPlan == plan && (rem=deadline-System.nanoTime()) > 0)
                 LockSupport.parkNanos(this, rem);
