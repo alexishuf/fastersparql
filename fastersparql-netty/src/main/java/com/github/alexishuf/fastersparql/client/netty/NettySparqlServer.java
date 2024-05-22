@@ -704,7 +704,7 @@ public class NettySparqlServer implements SparqlServer {
                 bbView.close();
                 bbView = null;
             }
-            Owned.safeRecycle(parser, this);
+            parser = Owned.safeRecycle(parser, this);
             if (queryRope != null) {
                 queryRope.close();
                 queryRope = null;
