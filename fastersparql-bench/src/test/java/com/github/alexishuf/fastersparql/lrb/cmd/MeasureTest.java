@@ -322,7 +322,11 @@ class MeasureTest {
     @ParameterizedTest @MethodSource("test")
     void testBQueries(PlanType planType, SourceKind sourceKind, BatchKind batchKind) throws Exception {
         SelectorKind sel = sourceKind == FS_STORE ? SelectorKind.FS_STORE : SelectorKind.ASK;
-        // B5 takes 20m
+        // aprox. times for EMIT/FS_STORE:
+        // B1, B2, B7 < 5s
+        // B3, B4, B8 < 30s
+        // B6         ~ 2min
+        // B5         ~ 20min
         String regex = "B[1234678]";
         if (sourceKind.isHdt())
             regex = "B[123478]";
