@@ -80,8 +80,23 @@ public abstract class AbstractWsParser<B extends Batch<B>> extends SVParser.Tsv<
     }
 
     @Override protected void doFeedPendingTerminationAck(SegmentRope rope) {
-        for (int i = 0, len = rope.len; i < len; i = rope.skipUntil(i, len, (byte)'\n')+1)
-            i = handleControl(rope, i);
+        if (partialLine != null && partialLine.len > 0)
+            rope = partialLine.append(rope);
+        for (int i = 0, len = rope.len, eol; i < len; i = rope.skipUntil(i, len, (byte)'\n')+1) {
+            if (rope.get(i) != '!')
+                continue; // not a control command
+            if ((eol=rope.skipUntil(i, len, (byte)'\n')) >= len) {
+                i = suspend(rope, i, len);
+                continue; // incomplete line
+            }
+            byte first = rope.get(i+1);
+            if      (first == 'e' && rope.has(i, END))       handleEnd(rope, eol);
+            else if (first == 'e' && rope.has(i, ERROR))     handleError(rope, i, eol);
+            else if (first == 'c' && rope.has(i, CANCELLED)) handleCancelled();
+            else if (first == 'c' && rope.has(i, CANCEL))    handleCancel();
+            else if (first == 'i' && rope.has(i, INFO))      onInfo(rope, i, eol);
+            i = eol;
+        }
     }
 
     @Override protected final int handleControl(SegmentRope rope, int begin) {
