@@ -276,6 +276,8 @@ public abstract class ResultsParser<B extends Batch<B>> implements JournalNamed 
         if (batch != null && batch.rows > 0) {
             if (ThreadJournal.ENABLED)
                 journal("batch.totalRows=", batch.totalRows(), "during reset on", this);
+            if (incompleteRow)
+                batch.abortPut();
             batch.clear();
         }
         incompleteRow   = false;

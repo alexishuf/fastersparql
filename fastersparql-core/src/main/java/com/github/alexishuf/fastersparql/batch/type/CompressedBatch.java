@@ -189,7 +189,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         int len = flaggedLocalLen & LEN_MASK;
         if (len > 0) {
             int required  = dest+len;
-            if (required > tail.locals.length) {
+            if (required > Math.min(Short.MAX_VALUE, tail.locals.length)) {
                 if (tail.rows > 0)
                     return allocTermOnNewTail(destCol, shared, flaggedLocalLen);
                 tail.growLocals(dest, required);
@@ -1028,7 +1028,8 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void commitPut() {
         var tail = this.tail;
-        if (tail.offerNextLocals < 0) throw new IllegalStateException();
+        if (tail.offerNextLocals < 0)
+            throw new IllegalStateException();
         tail.commitPut0();
         assert tail.validate() : "corrupted";
     }
