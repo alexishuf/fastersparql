@@ -30,14 +30,18 @@ class RowBucketTest {
     <B extends Batch<B>, RB extends RowBucket<B, RB>>
     void test(BatchType<B> bt) {
         try (var bucketG = new Guard<RB>(this);
-             var b12T = new BatchGuard<>(TermBatch.of(List.of(i1, i2)), this);
-             var b__12T = new BatchGuard<>(TermBatch.of(asList(null, null), List.of(i1, i2)), this);
-             var b1234T = new BatchGuard<>(TermBatch.of(List.of(i1, i2), List.of(i3, i4)), this);
-             var b3412T = new BatchGuard<>(TermBatch.of(List.of(i3, i4), List.of(i1, i2)), this);
+             var b12TG   = new BatchGuard<TermBatch>(this);
+             var b__12TG = new BatchGuard<TermBatch>(this);
+             var b1234TG = new BatchGuard<TermBatch>(this);
+             var b3412TG = new BatchGuard<TermBatch>(this);
              var b12G    = new BatchGuard<B>(this);
              var b__12G  = new BatchGuard<B>(this);
              var b1234G  = new BatchGuard<B>(this);
              var b3412G  = new BatchGuard<B>(this)) {
+            var b12T   = b12TG.set(TermBatch.of(List.of(i1, i2)));
+            var b__12T = b__12TG.set(TermBatch.of(asList(null, null), List.of(i1, i2)));
+            var b1234T = b1234TG.set(TermBatch.of(List.of(i1, i2), List.of(i3, i4)));
+            var b3412T = b3412TG.set(TermBatch.of(List.of(i3, i4), List.of(i1, i2)));
             @SuppressWarnings("unchecked")
             RB bucket = bucketG.set((Orphan<RB>)bt.createBucket(57, 2));
             assertTrue(bucket.capacity() <= 128);
@@ -47,10 +51,10 @@ class RowBucketTest {
             assertEquals(128, bucket.capacity());
             assertEquals(List.of(), range(0, bucket.capacity()).filter(bucket::has).boxed().toList());
 
-            B b12   = b12G  .set(bt.convertOrCopy(b12T  .get()));
-            B b__12 = b__12G.set(bt.convertOrCopy(b__12T.get()));
-            B b1234 = b1234G.set(bt.convertOrCopy(b1234T.get()));
-            B b3412 = b3412G.set(bt.convertOrCopy(b3412T.get()));
+            B b12   = b12G  .set(bt.convertOrCopy(b12T  ));
+            B b__12 = b__12G.set(bt.convertOrCopy(b__12T));
+            B b1234 = b1234G.set(bt.convertOrCopy(b1234T));
+            B b3412 = b3412G.set(bt.convertOrCopy(b3412T));
             bucket.set(1, b12, 0);
             assertTrue(bucket.equals(1, b12, 0));
             assertTrue(bucket.equals(1, b__12, 1));

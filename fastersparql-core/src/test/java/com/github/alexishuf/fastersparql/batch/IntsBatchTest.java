@@ -61,12 +61,13 @@ public class IntsBatchTest {
     }
 
     @Test void testFill() {
-        try (var ex = new Guard.BatchGuard<TermBatch>(this);
-             var ac = new Guard.BatchGuard<TermBatch>(this)) {
-            ex.set(TermBatch.of(termList(1), termList(2), termList(3)));
-            var b = IntsBatch.fill(ac.set(TERM.create(1)), 1, 2, 3);
-            assertSame(b, ac.get());
-            assertEquals(ex.get(), b);
+        try (var exG = new Guard.BatchGuard<TermBatch>(this);
+             var acG = new Guard.BatchGuard<TermBatch>(this)) {
+            var ex = exG.set(TermBatch.of(termList(1), termList(2), termList(3)));
+            var ac = acG.set(TERM.create(1));
+            var b = IntsBatch.fill(ac, 1, 2, 3);
+            assertSame(b, ac);
+            assertEquals(ex, b);
         }
     }
 

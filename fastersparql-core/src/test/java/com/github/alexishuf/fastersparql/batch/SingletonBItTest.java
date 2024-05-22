@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch;
 
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
@@ -15,10 +16,11 @@ class SingletonBItTest {
 
     @ParameterizedTest @ValueSource(ints = {1, 2, 3})
     void test(int min) {
-        try (var expected = new Guard.BatchGuard<>(intsBatch(23), this);
+        try (var expectedG = new Guard.BatchGuard<TermBatch>(this);
              var g = new ItGuard<>(this, new SingletonBIt<>(intsBatch(23), TERM, X))) {
+            var expected = expectedG.set(intsBatch(23));
             g.it.minBatch(min);
-            assertEquals(expected.get(), g.nextBatch());
+            assertEquals(expected, g.nextBatch());
         }
     }
 }

@@ -193,15 +193,15 @@ class SPSCBItTest extends CallbackBItTest {
 
     @Test void testMaxReadyItems() throws InterruptedException, ExecutionException {
         try (var it = new SPSCBIt<>(TERM, Vars.of("x"), 2);
-             var b1G = new Guard.BatchGuard<>(intsBatch(1), this);
-             var b2G = new Guard.BatchGuard<>(intsBatch(2), this);
-             var b3G = new Guard.BatchGuard<>(intsBatch(3, 4), this);
-             var b4G = new Guard.BatchGuard<>(intsBatch(5, 6), this);
+             var b1G = new Guard.BatchGuard<TermBatch>(this);
+             var b2G = new Guard.BatchGuard<TermBatch>(this);
+             var b3G = new Guard.BatchGuard<TermBatch>(this);
+             var b4G = new Guard.BatchGuard<TermBatch>(this);
              var b5G = new Guard.BatchGuard<TermBatch>(this)) {
-            var b1 = b1G.get();
-            var b2 = b2G.get();
-            var b3 = b3G.get();
-            var b4 = b4G.get();
+            var b1 = b1G.set(intsBatch(1));
+            var b2 = b2G.set(intsBatch(2));
+            var b3 = b3G.set(intsBatch(3, 4));
+            var b4 = b4G.set(intsBatch(5, 6));
             assertTimeout(Duration.ofMillis(5), () -> {
                 it.offer(b1G.take());
                 it.offer(b2G.take());

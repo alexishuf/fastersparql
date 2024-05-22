@@ -99,8 +99,9 @@ class MergeBItTest extends AbstractMergeBItTest {
         try (var s1 = new SPSCBIt<>(TERM, X, itQueueRows());
              var s2 = new SPSCBIt<>(TERM, X, itQueueRows());
              var s3 = new SPSCBIt<>(TERM, X, itQueueRows());
-             var ex = new BatchGuard<>(intsBatch(1, 2, 3), this);
+             var exG = new BatchGuard<TermBatch>(this);
              var g = new ItGuard<>(this, new MergeBIt<>(List.of(s1, s2, s3), TERM, X))) {
+            var ex = exG.set(intsBatch(1, 2, 3));
             g.it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // single-thread, single-source wait
@@ -108,7 +109,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             for (int i = 1; i <= 3; i++) offer(s1, i);
             TermBatch batch = g.nextBatch();
             double ms = (nanoTime() - start) / 1_000_000.0;
-            assertEquals(ex.get(), batch);
+            assertEquals(ex, batch);
             assertTrue(ms > wait-10, "elapsec="+ms+" not above minWait="+wait);
         }
     }
@@ -119,8 +120,9 @@ class MergeBItTest extends AbstractMergeBItTest {
              var s2 = new SPSCBIt<>(TERM, X, itQueueRows());
              var s3 = new SPSCBIt<>(TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2, s3), TERM, X);
-             var exGuard = new BatchGuard<>(intsBatch(11, 12, 13, 14), this);
+             var exGuard = new BatchGuard<TermBatch>(this);
              var acGuard = new BatchGuard<TermBatch>(this)) {
+            var ex = exGuard.set(intsBatch(11, 12, 13, 14));
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // single-thread, two-sources wait
@@ -131,7 +133,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             var ac = acGuard.set(it.nextBatch(null));
             double ms = (nanoTime() - start) / 1_000_000.0;
             assertNotNull(ac);
-            assertEquals(new HashSet<>(exGuard.get().asList()),
+            assertEquals(new HashSet<>(ex.asList()),
                          new HashSet<>(ac.asList()));
             assertTrue(ms > wait-tol, "elapsed="+ms+" <= "+wait+"-"+tol);
         }
@@ -143,8 +145,9 @@ class MergeBItTest extends AbstractMergeBItTest {
              var s2 = new SPSCBIt<>(TERM, X, itQueueRows());
              var s3 = new SPSCBIt<>(TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2, s3), TERM, X);
-             var ex = new BatchGuard<>(intsBatch(21, 22, 23), this);
-             var ac = new BatchGuard<TermBatch>(this)) {
+             var exG = new BatchGuard<TermBatch>(this);
+             var acG = new BatchGuard<TermBatch>(this)) {
+            var ex = exG.set(intsBatch(21, 22, 23));
             it.minBatch(3).minWait(wait, MILLISECONDS);
 
             // multi-thread, multi-source wait
@@ -158,12 +161,12 @@ class MergeBItTest extends AbstractMergeBItTest {
             ofVirtual().start(() -> offer(s1, 21));
             ofVirtual().start(() -> offer(s2, 22));
             ofVirtual().start(() -> offer(s3, 23));
-            ac.set(future.get());
+            var ac = acG.set(future.get());
             double ms = (nanoTime()-start)/1_000_000.0;
             assertTrue(Math.abs(ms-wait) < tol, "elapsed="+ms+" more than 50% off "+wait);
-            assertEquals(3, ac.get().totalRows());
-            assertEquals(new HashSet<>(ex.get().asList()),
-                         new HashSet<>(ac.get().asList()));
+            assertEquals(3, ac.totalRows());
+            assertEquals(new HashSet<>(ex.asList()),
+                         new HashSet<>(ac.asList()));
         }
     }
 
@@ -172,18 +175,19 @@ class MergeBItTest extends AbstractMergeBItTest {
         try (var s1 = new SPSCBIt<>(TERM, X, itQueueRows());
              var s2 = new SPSCBIt<>(TERM, X, itQueueRows());
              var it = new MergeBIt<>(List.of(s1, s2), TERM, X);
-             var ex = new BatchGuard<>(intsBatch(1), this);
-             var ac = new BatchGuard<TermBatch>(this);
+             var exG = new BatchGuard<TermBatch>(this);
+             var acG = new BatchGuard<TermBatch>(this);
              var last = new BatchGuard<TermBatch>(this)) {
+            var ex = exG.set(intsBatch(1));
             it.minBatch(2).minWait(min, MILLISECONDS).maxWait(max, MILLISECONDS);
 
             offer(s1, 1);
             long start = nanoTime();
-            ac.set(it.nextBatch(null));
+            var ac = acG.set(it.nextBatch(null));
             double elapsedMs = (nanoTime() - start) / 1_000_000.0;
             assertTrue(elapsedMs > max - 40 && elapsedMs < max + 40,
                        "elapsedMs="+elapsedMs+" not in (" + min + "," + max + ") range");
-            assertEquals(ex.get(), ac.get());
+            assertEquals(ex, ac);
 
             s1.complete(null);
             s2.complete(null);
@@ -202,16 +206,18 @@ class MergeBItTest extends AbstractMergeBItTest {
     @Test void testOneSingletonOneCallback() {
         var s0 = new SingletonBIt<>(intsBatch(1, 2), TERM, X);
         var s1 = new SPSCBIt<>(TERM, X, 2);
-        try (var b0 = new BatchGuard<>(intsBatch(1, 2), this);
-             var b1 = new BatchGuard<>(intsBatch(3), this);
-             var ac = new BatchGuard<TermBatch>(this);
+        try (var b0G = new BatchGuard<TermBatch>(this);
+             var b1G = new BatchGuard<TermBatch>(this);
+             var acG = new BatchGuard<TermBatch>(this);
              var it = new MergeBIt<>(List.of(s0, s1), TERM, X)) {
-            ac.set(it.nextBatch(null));
-            assertEquals(b0.get(), ac.get());
+            var b0 = b0G.set(intsBatch(1, 2));
+            var b1 = b1G.set(intsBatch(3));
+            var ac = acG.set(it.nextBatch(null));
+            assertEquals(b0, ac);
 
-            Thread.startVirtualThread(() ->  assertDoesNotThrow(() -> s1.offer(b1.take())));
-            ac.set(it.nextBatch(null));
-            assertEquals(b1.get(), ac.get());
+            Thread.startVirtualThread(() ->  assertDoesNotThrow(() -> s1.offer(b1G.take())));
+            ac = acG.set(it.nextBatch(null));
+            assertEquals(b1, ac);
 
             Thread.startVirtualThread(() -> s1.complete(null));
             assertNull(it.nextBatch(null));

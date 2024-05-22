@@ -205,7 +205,9 @@ class CallbackEmitterTest {
                             if (stats != null) stats.onBatchPassThrough(batch);
                             cb.request(1);
                             rows += batch.rows;
-                            actual.get().copy(batch);
+                            CompressedBatch a = actual.take().takeOwnership(this);
+                            a.copy(batch);
+                            actual.set(a);
                             if (rows >= cancelAt)
                                 cb.cancel();
                         } finally {
@@ -265,7 +267,10 @@ class CallbackEmitterTest {
                         fail("Unexpected error/cancel", errorOrCancel[0]);
                     //else: FSCancelledException due to cancel()
                 }
-                assertEquals(expected, actual.get());
+                CompressedBatch tmp = actual.detach();
+                try {
+                    assertEquals(expected, tmp);
+                } finally { actual.set(tmp); }
                 assertDoesNotThrow(() -> cb.feedTask.get());
                 assertFalse(cb.isReleased());
             }

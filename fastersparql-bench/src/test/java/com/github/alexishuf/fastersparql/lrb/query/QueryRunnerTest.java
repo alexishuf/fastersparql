@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class QueryRunnerTest {
     @ParameterizedTest @ValueSource(booleans = {false, true})
     public void testTimeout(boolean emit) {
-        try (var accGuard = new Guard<>(Accumulator.create(TERM), this);
+        try (var accGuard = new Guard<Accumulator<TermBatch>>(this);
              var slow = new AbstractSparqlClient(SparqlEndpoint.parse("http://example.org/sparql")) {
                 @SuppressWarnings("unchecked") @Override
                 protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
@@ -53,7 +53,7 @@ class QueryRunnerTest {
                 @Override protected void doClose() {}
             }) {
             OpaqueSparqlQuery query = new OpaqueSparqlQuery("SELECT * WHERE {?s ?p ?o}");
-            var acc = accGuard.get();
+            var acc = accGuard.set(Accumulator.create(TERM));
             long start = System.nanoTime();
             if (emit)
                 QueryRunner.drain(slow.emit(TERM, query, Vars.EMPTY), acc, 1_000);

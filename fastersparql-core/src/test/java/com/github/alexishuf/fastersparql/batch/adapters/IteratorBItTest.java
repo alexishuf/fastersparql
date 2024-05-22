@@ -50,9 +50,10 @@ class IteratorBItTest extends AbstractBItTest {
         }, TermBatchType.TERM, X);
         bit.minBatch(2).maxWait(Duration.ofMillis(50));
         try (var g = new Guard.ItGuard<>(this, bit);
-             var ex1 = new Guard.BatchGuard<>(intsBatch(1), this);
-             var ex23 = new Guard.BatchGuard<>(intsBatch(2, 3), this)
-        ) {
+             var ex1G = new Guard.BatchGuard<TermBatch>(this);
+             var ex23G = new Guard.BatchGuard<TermBatch>(this)) {
+            var ex1 = ex1G.set(intsBatch(1));
+            var ex23 = ex23G.set(intsBatch(2, 3));
             Semaphore started = new Semaphore(0);
             var batchFuture = new CompletableFuture<TermBatch>();
             Thread.ofVirtual().start(() -> {
@@ -72,11 +73,11 @@ class IteratorBItTest extends AbstractBItTest {
             // nextBatch must complete with a single item.
             // Although the second hasNext() call would return without blocking, there should be
             // no second call since maxWait has been elapsed
-            assertEquals(ex1.get(), batchFuture.get());
+            assertEquals(ex1, batchFuture.get());
 
             // from now on test we can consume the remainder
             assertTimeout(Duration.ofMillis(50), () -> {
-                assertEquals(ex23.get(), bit.nextBatch(null));
+                assertEquals(ex23, bit.nextBatch(null));
                 assertNull(bit.nextBatch(null));
             });
         }
@@ -115,8 +116,10 @@ class IteratorBItTest extends AbstractBItTest {
         bit.minBatch(2).minWait(Duration.ofMillis(2*delay + delay/2));
 
         List<TermBatch> batches = new ArrayList<>();
-        try (var ex123 = new Guard.BatchGuard<>(intsBatch(1, 2, 3), this);
-             var ex4   = new Guard.BatchGuard<>(intsBatch(4),       this)) {
+        try (var ex123G = new Guard.BatchGuard<TermBatch>(this);
+             var ex4G   = new Guard.BatchGuard<TermBatch>(this)) {
+            var ex123 = ex123G.set(intsBatch(1, 2, 3));
+            var ex4 = ex4G.set(intsBatch(4));
             assertTimeout(Duration.ofMillis(delay*(3+1)),
                     () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
             assertTimeout(Duration.ofMillis(delay*(1+1)),
@@ -125,8 +128,7 @@ class IteratorBItTest extends AbstractBItTest {
                     () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
             assertTimeout(Duration.ofMillis(delay),
                     () -> batches.add(takeOwnership(bit.nextBatch(null), this)));
-            assertEquals(Arrays.asList(ex123.get(), ex4.get(), null, null),
-                    batches);
+            assertEquals(Arrays.asList(ex123, ex4, null, null), batches);
         } finally {
             for (TermBatch b : batches)
                 Batch.safeRecycle(b, this);

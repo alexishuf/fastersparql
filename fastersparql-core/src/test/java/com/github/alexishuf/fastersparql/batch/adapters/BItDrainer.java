@@ -165,8 +165,8 @@ public sealed abstract class BItDrainer {
         @Override public <B extends Batch<B>>
         void drain(BIt<B> it, Consumer<B> consumer) {
             try (var g = new Guard.ItGuard<>(this, it.tempEager())) {
-                while (g.advance())
-                    consumer.accept(g.get());
+                for (B b; (b=g.nextBatch()) != null; )
+                    consumer.accept(b);
             }
         }
     }

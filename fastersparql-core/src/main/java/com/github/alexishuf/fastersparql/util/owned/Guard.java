@@ -41,17 +41,6 @@ public sealed class Guard<O extends Owned<O>> implements AutoCloseable {
     }
 
     /**
-     * Access the owned object held by this guard.
-     * @throws OwnershipException if there is no object or if it is not owned by {@code owner}
-     */
-    public final O get() {
-        O owned = this.owned;
-        if (owned == null)
-            throw new OwnershipException(null, owner, null, null);
-        return owned.requireOwner(owner);
-    }
-
-    /**
      *  Removes the owned object from this guard and release it from {@code owner} ownership
      * @throws OwnershipException if there is no object (no {@code set()} or previous
      *                            {@code take()}/{@link #detach()}) or if the owned object is
@@ -71,6 +60,8 @@ public sealed class Guard<O extends Owned<O>> implements AutoCloseable {
         this.owned = null;
         return owned;
     }
+
+
 
     public final @Nullable Orphan<O> poll() {
         O owned = this.owned;
