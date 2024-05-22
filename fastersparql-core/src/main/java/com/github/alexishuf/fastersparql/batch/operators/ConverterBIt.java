@@ -32,7 +32,6 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
         try {
             if (isTerminated())
                 return null;
-            lastIn = null;
             Orphan<S> inOffer = Owned.releaseOwnership(in, this);
             in = null;
             in = Orphan.takeOwnership(delegate.nextBatch(inOffer), this);
