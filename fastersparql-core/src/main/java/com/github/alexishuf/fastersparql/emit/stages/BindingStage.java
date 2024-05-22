@@ -95,6 +95,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private Vars extBindingVars = Vars.EMPTY;
     protected final Vars outVars;
     protected final Vars bindableVars;
+    private @Nullable TerminateTask terminateTask;
     private Throwable error = UNSET_ERROR;
     private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
@@ -177,6 +178,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         Owned.safeRecycle(leftUpstream, this);
         Owned.safeRecycle(rightRecv.merger, rightRecv);
         Owned.safeRecycle(rebindTask, this);
+        Owned.safeRecycle(terminateTask, this);
         rightRecv.upstream.recycle(rightRecv);
         // if this happens before the first startNextBinding(), right upstream will be
         // in CREATED state and the above recycle() will not cause an actual release
@@ -433,7 +435,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     @Override public boolean cancel() {
         journal("cancel()", this);
         int st = lock();
-        boolean cancelLeft = false, cancelRight = false, hasEffect;
+        boolean cancelLeft = false, cancelRight = false, terminateStage = false, hasEffect;
         try {
             hasEffect = (st&(IS_CANCEL_REQ|IS_TERM)) == 0;
             if (hasEffect) {
@@ -444,16 +446,27 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 cancelLeft  = (st&LEFT_TERM) == 0;
                 cancelRight = (st&(RIGHT_STARVED|RIGHT_BINDING)) == 0;
                 if (lb != null && (st&(RIGHT_STARVED|RIGHT_BINDING)) == RIGHT_STARVED) {
-                    // this state holds between the first onBatch() RIGHT_STARVED and the
-                    // RebindTask.task() scheduled at onBatch(). RebindTask will bail due to
-                    // IS_CANCEL_REQ and there will be no termination from the right side,
-                    // which is starved.
-                    st = cancelFutureBindings(); // drop queue and terminateStage() if appropriate
+                    dropLeftQueued();
+                    if (!cancelLeft) {
+                        // left and right are terminated or not started, thus cannot receive
+                        // a cancel(). this state holds between the first this.onBatch() call and
+                        // the RebindTask.task() scheduled at onBatch(). RebindTask will bail
+                        // due to IS_CANCEL_REQ and there will be no termination from the right
+                        // side, which is starved. Calling terminateStage() directly from this
+                        // stack frame can lead to deadlocks, since cancel() callers are not
+                        // expecting to receive calls from upstream during a cancel() call.
+                        terminateStage = true;
+                    }
                 }
             }
         } finally {
             if ((st&LOCKED_MASK) != 0) // cancelFutureBindings()->terminateStage() may unlock()
                 unlock();
+        }
+        if (terminateStage) {
+            if (terminateTask == null)
+                terminateTask = new TerminateTask.Concrete(this).takeOwnership(this);
+            terminateTask.schedule();
         }
         if (cancelLeft)
             leftUpstream.cancel();
@@ -595,7 +608,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             assert (statePlain()&CANCELLED) != 0
                     : "attempt to terminate after non-cancel previous termination";
         }
-        return (state&FLAGS_MASK)|termState;
+        return statePlain()&~LOCKED_MASK;
     }
 
     /* --- --- --- right-side processing --- --- --- */
@@ -721,6 +734,33 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                     st = bs.startNextBinding(st);
             } finally {
                 if ((st&LOCKED_MASK) != 0) bs.unlock();
+            }
+        }
+    }
+
+    private static abstract sealed class TerminateTask extends EmitterService.Task<TerminateTask> {
+        private final BindingStage<?, ?> bs;
+        private TerminateTask(BindingStage<?, ?> bs) {
+            super(EMITTER_SVC, CREATED, TASK_FLAGS);
+            this.bs = bs;
+        }
+        private static final class Concrete extends TerminateTask implements Orphan<TerminateTask> {
+            private Concrete(BindingStage<?, ?> bs) {super(bs);}
+            @Override public TerminateTask takeOwnership(Object o) {return takeOwnership0(o);}
+        }
+
+        void schedule() { awake(true); }
+
+        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+            int st = bs.lock();
+            try {
+                if ((st&(LEFT_TERM|RIGHT_STARVED|RIGHT_TERM)) != 0 && (st&RIGHT_BINDING) == 0
+                        && (bs.lb == null || (st&IS_CANCEL_REQ) != 0)) {
+                    st = bs.terminateStage(st);
+                }
+            } finally {
+                if ((st&LOCKED_MASK) != 0)
+                    bs.unlock();
             }
         }
     }
