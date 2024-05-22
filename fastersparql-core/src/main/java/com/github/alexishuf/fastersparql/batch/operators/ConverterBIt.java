@@ -26,14 +26,17 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
     }
 
     @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
+        if (isTerminated())
+            return null;
         B out = null;
-        S in = lastIn;
-        lastIn = null;
+        S in = null;
+        lock();
+        boolean locked = true;
         try {
-            if (isTerminated())
-                return null;
-            Orphan<S> inOffer = Owned.releaseOwnership(in, this);
-            in = null;
+            Orphan<S> inOffer = Owned.releaseOwnership(lastIn, this);
+            lastIn = null;
+            unlock();
+            locked = false;
             in = Orphan.takeOwnership(delegate.nextBatch(inOffer), this);
             if (in == null) {
                 onTermination(null);
@@ -57,6 +60,7 @@ public class ConverterBIt<B extends Batch<B>, S extends Batch<S>>
             onTermination(t);
             throw t;
         } finally {
+            if (locked) unlock();
             if (offer != null) Orphan.safeRecycle(offer);
             if (out   != null) Batch .safeRecycle(out, this);
             if (in    != null) Batch .safeRecycle(in,  this);
