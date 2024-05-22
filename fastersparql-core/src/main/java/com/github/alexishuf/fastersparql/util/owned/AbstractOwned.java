@@ -35,14 +35,20 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
      * @param newOwner see {@link Orphan#takeOwnership(Object)}.
      */
     @SuppressWarnings("unchecked") protected final O takeOwnership0(Object newOwner) {
+        Object actual = owner;
         if (MARK) {
-            if (owner != null)
-                throw new OwnershipException(this, null, owner, history);
+            if (actual != null)
+                throw new OwnershipException(this, null, actual, history);
             this.owner = newOwner;
             if (TRACE && history != null)
                 history.taken(this, newOwner);
             if (DETECT_LEAKS && leakState != null)
                 leakState.update(newOwner);
+        } else {
+            if (actual != null)
+                throw new OwnershipException(this, null, actual, null);
+            else if (newOwner instanceof Recycled)
+                owner = newOwner;
         }
         return (O)this;
     }
@@ -117,8 +123,8 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
 
     @SuppressWarnings("unchecked")
     @Override public final Orphan<O> releaseOwnership(Object currentOwner) {
+        Object actual = owner;
         if (MARK) {
-            Object actual = owner;
             if (actual != currentOwner)
                 throw new OwnershipException(this, currentOwner, actual, history);
             owner = null;
@@ -126,14 +132,18 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
                 history.released(this);
             if (DETECT_LEAKS && leakState != null)
                 leakState.update(null);
+        } else if (actual != null) {
+            if (actual != currentOwner)
+                throw new OwnershipException(this, currentOwner, actual, null);
+            owner = null;
         }
         return (Orphan<O>)this;
     }
 
     @SuppressWarnings("unchecked")
     @Override public @This O transferOwnership(Object currentOwner, Object newOwner) {
+        Object actual = owner;
         if (MARK) {
-            Object actual = owner;
             if (actual != currentOwner)
                 throw new OwnershipException(this, currentOwner, actual, history);
             owner = newOwner;
@@ -141,21 +151,26 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
                 history.transfer(this, newOwner);
             if (DETECT_LEAKS && leakState != null)
                 leakState.update(newOwner);
+        } else {
+            if (actual != null && actual != currentOwner)
+                throw new OwnershipException(this, currentOwner, actual, null);
+            else if (newOwner instanceof Recycled)
+                owner = newOwner;
+            else if (actual != null)
+                owner = null;
         }
         return (O)this;
     }
 
     protected final @Nullable O internalMarkRecycled(Object currentOwner) {
-        if (MARK) {
-            Object actual = owner;
-            if (actual != currentOwner)
-                throw new OwnershipException(this, currentOwner, actual, history);
-            owner = RECYCLED;
-            if (TRACE && history != null)
-                history.recycled(this);
-            if (DETECT_LEAKS && leakState != null)
-                leakState.update(RECYCLED);
-        }
+        Object actual = owner;
+        if ((MARK || actual != null) && actual != currentOwner)
+            throw new OwnershipException(this, currentOwner, actual, history);
+        owner = RECYCLED;
+        if (TRACE && history != null)
+            history.recycled(this);
+        if (DETECT_LEAKS && leakState != null)
+            leakState.update(RECYCLED);
         return null;
     }
 
@@ -163,7 +178,7 @@ public abstract class AbstractOwned<O extends AbstractOwned<O>> implements Owned
         // Since the object intends to recycle/close its own resources, even if ownership
         // marking is disabled, owner = GARBAGE is still required to prevent double-free issues
         Object actual = owner;
-        if (actual != (MARK ? currentOwner : null))
+        if ((MARK || actual != null) && actual != currentOwner)
             throw new OwnershipException(this, currentOwner, actual, history);
         owner = GARBAGE;
         if (TRACE && history != null)
