@@ -129,7 +129,7 @@ public class QueryBench {
     private int lastBenchResult;
     private final BenchmarkEvent jfrEvent = new BenchmarkEvent();
     private Blackhole bh;
-    private int timeoutMs;
+    private int drainTimeoutMs;
     private boolean skipWarmup;
 
     private static class BoundCounter<B extends Batch<B>>
@@ -307,9 +307,6 @@ public class QueryBench {
             plan.attach(metricsConsumer);
         triggerClassLoadingOfPooled();
 
-        timeoutMs = (int)Math.min(Integer.MAX_VALUE, params.getTimeout().convertTo(MILLISECONDS));
-        int before = Math.min(30_000, timeoutMs/10);
-        watchdogTimeoutNs = NANOSECONDS.convert(timeoutMs-before, MILLISECONDS);
         benchmarkId = params.id();
         watchdog = new Thread(this::watchdog, "watchdog"+(int)WATCHDOG_NEXT_THREAD_ID.getAndAdd(1));
         watchdog.start();
@@ -344,17 +341,22 @@ public class QueryBench {
         BackgroundTasks.sync();
         IOUtils.fsync(500_000); // generous timeout because there should be no I/O
 
-        var wOpts  = opts.getWarmup();
-        long absurdWarmup = 8*wOpts.getCount()*wOpts.getTime().convertTo(MILLISECONDS);
+        var wOpts = opts.getWarmup();
+        var mOpts = opts.getMeasurement();
         boolean warmup  = iterationNumber < wOpts.getCount();
         boolean first = iterationNumber == wOpts.getCount();
-        var itOpts = warmup ? wOpts : opts.getMeasurement();
+        var itOpts = warmup ? wOpts : mOpts;
         long estimateMs = itOpts.getTime().convertTo(MILLISECONDS);
         if (!first && lastIterationMs > estimateMs)
             estimateMs = lastIterationMs;
         int idle = thermalCooldown && !warmup
                  ? (int)Math.min(5_000, estimateMs) // aim for 50% work, 50% idle
                  : (int)Math.min(estimateMs/10, 100); // minimal sleep for background tasks
+        long maxWarmupItMs = 5_000
+                + wOpts.getCount()*wOpts.getTime().convertTo(MILLISECONDS)
+                + mOpts.getCount()*mOpts.getTime().convertTo(MILLISECONDS);
+        long drainTimeoutMs = warmup ? maxWarmupItMs : opts.getTimeout().convertTo(MILLISECONDS);
+        this.drainTimeoutMs = (int)Math.min(Integer.MAX_VALUE, drainTimeoutMs);
         if (first) {
             skipWarmup = false;
             System.gc();
@@ -369,10 +371,10 @@ public class QueryBench {
         } else {
             if (idle > 1_000 && iterationNumber == 0)
                 System.out.printf("Will sleep %dms before each warmup iteration\n", idle);
-            if (warmup && iterationNumber == 1 && lastIterationMs > absurdWarmup) {
+            if (warmup && iterationNumber == 1 && lastIterationMs > maxWarmupItMs) {
                 skipWarmup = true;
-                System.out.println("First warmup took more than twice the budget for all " +
-                                   "warmup iterations skipping remaining warmup iterations");
+                System.out.println("First warmup took more time than expected for the entire " +
+                                   "trial, will skip remaining warmup iterations");
             }
             Async.uninterruptibleSleep(idle);
         }
@@ -412,7 +414,6 @@ public class QueryBench {
     @SuppressWarnings("unused") private static int plainNextWatchdogId;
     private volatile @Nullable Plan watchdogPlan;
     private @Nullable StreamNode dbgExecution;
-    private long watchdogTimeoutNs;
     private String benchmarkId;
     private Thread watchdog;
 
@@ -466,7 +467,8 @@ public class QueryBench {
                 LockSupport.park(this);
             var execution = dbgExecution;
 
-            long deadline = System.nanoTime()+watchdogTimeoutNs, rem;
+            long deadline = System.nanoTime()+(int)(0.8*drainTimeoutMs);
+            long rem;
             while (watchdogPlan == plan && (rem=deadline-System.nanoTime()) > 0)
                 LockSupport.parkNanos(this, rem);
             if (watchdogPlan != plan)
@@ -488,7 +490,7 @@ public class QueryBench {
                     for (Plan plan : plans) {
                         var it = plan.execute(batchType);
                         armWatchdog(currentPlan=plan, streamNode=it);
-                        QueryRunner.drainWild(it, consumer, timeoutMs);
+                        QueryRunner.drainWild(it, consumer, drainTimeoutMs);
                         disarmWatchdog();
                     }
                 }
@@ -496,7 +498,7 @@ public class QueryBench {
                     for (Plan plan : plans) {
                         var em = plan.emit(batchType, Vars.EMPTY);
                         armWatchdog(currentPlan=plan, streamNode=(StreamNode)em);
-                        QueryRunner.drainWild(em, consumer, timeoutMs);
+                        QueryRunner.drainWild(em, consumer, drainTimeoutMs);
                         disarmWatchdog();
                     }
                 }
