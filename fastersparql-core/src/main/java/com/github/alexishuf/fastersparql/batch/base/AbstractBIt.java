@@ -128,10 +128,14 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
             case FAILED    -> {
                 if (!(cause instanceof BItReadCancelledException) || state() == State.ACTIVE) {
                     String msg = cause.toString();
-                    if (IS_DEBUG_ENABLED && !FSCancelledException.isCancel(cause))
+                    if (FSCancelledException.isCancel(cause)) {
+                        if (IS_DEBUG_ENABLED)
+                            log.debug(ON_TERM_TPL, this, msg);
+                    } else if (IS_DEBUG_ENABLED) {
                         log.debug(ON_TERM_TPL, this, msg, cause);
-                    else
+                    } else {
                         log.info(ON_TERM_TPL, this, msg);
+                    }
                 }
             }
         }
