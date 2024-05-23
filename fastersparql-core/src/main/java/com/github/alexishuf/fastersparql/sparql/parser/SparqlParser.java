@@ -75,7 +75,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
 
     @Override protected @Nullable SparqlParser internalMarkGarbage(Object currentOwner) {
         super.internalMarkGarbage(currentOwner);
-        exprParser.recycle(currentOwner);
+        exprParser.recycle(this);
         return null;
     }
 
