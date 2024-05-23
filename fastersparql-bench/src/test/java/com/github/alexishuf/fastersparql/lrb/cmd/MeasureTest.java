@@ -65,7 +65,7 @@ class MeasureTest {
         hasStore = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
                 .allMatch(s -> new File(dataDir, s.filename(FS_STORE)).isDirectory());
         hasTDB2 = Stream.of(LrbSource.DBPedia_Subset, LrbSource.NYT)
-                .allMatch(s -> new File(dataDir, s.filename(TDB2)).isFile());
+                .allMatch(s -> new File(dataDir, s.filename(TDB2)).isDirectory());
         hasAllHDT = LrbSource.all().stream()
                 .allMatch(s -> new File(dataDir, s.filename(HDT_FILE)).isFile());
         hasAllStore = LrbSource.all().stream()
