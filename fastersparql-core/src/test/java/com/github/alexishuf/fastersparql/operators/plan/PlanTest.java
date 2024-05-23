@@ -60,6 +60,20 @@ class PlanTest {
         assertEquals(expected, FS.union(plans.toArray(Plan[]::new)).allVars());
     }
 
+    @Test
+    void testAskToString() {
+        var tpString = "<http://data.nytimes.com/59420554431698042881> <http://data.nytimes.com/elements/topicPage> ?news";
+        var tp       = Results.parseTP(tpString);
+        var reduced  = FS.reduced(FS.project(tp, Vars.EMPTY));
+        var distinct = FS.distinct(FS.project(tp, Vars.EMPTY));
+        var dedup    = FS.dedup(FS.project(tp, Vars.EMPTY));
+
+        String expected = "ASK \n{\n " + tpString + " .\n}";
+        assertEquals(expected, reduced.sparql().toString());
+        assertEquals(expected, distinct.sparql().toString());
+        assertEquals(expected, dedup.sparql().toString());
+    }
+
     @Test void testToAsk() {
         SparqlQuery s0 = new OpaqueSparqlQuery("SELECT * WHERE { ?x a ?y }");
         SparqlQuery s1 = new OpaqueSparqlQuery("SELECT ?x WHERE { ?x a ?y }");

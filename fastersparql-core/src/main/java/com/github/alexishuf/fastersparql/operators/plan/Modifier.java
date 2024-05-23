@@ -128,7 +128,7 @@ public final class Modifier extends Plan {
 
     @Override public SegmentRope sparql() {
         try (var sb = PooledMutableRope.getWithCapacity(256)) {
-            if (projection != null && projection.isEmpty() && limit == 1 && offset == 0) {
+            if (isAsk()) {
                 groupGraphPattern(sb.append(ASK_u8).append(' '), 0, PrefixAssigner.NOP);
             } else {
                 sb.append(SELECT_u8).append(' ');

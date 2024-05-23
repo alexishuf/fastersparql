@@ -257,8 +257,8 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
     }
 
     @Override public boolean isAsk() {
-        return this instanceof Modifier m
-                && m.offset == 0 && m.limit == 1 && m.publicVars().isEmpty();
+        return this instanceof Modifier m && m.publicVars().isEmpty()
+                && (m.distinct != null || (m.limit == 1 && m.offset == 0));
     }
 
     /** This algebra does not support graph queries */
