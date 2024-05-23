@@ -1397,12 +1397,14 @@ public class NettySparqlServer implements SparqlServer {
                 if ((st&ST_RES_STARTED) == 0)
                     startResponse();
                 endResponse(termMessage(CancelledException.INSTANCE));
-            } else {
+            } else if ((st&(ST_GOT_REQ|ST_RES_TERMINATED)) == ST_GOT_REQ) {
                 Object m;
                 if      (query == null)         m = "No query set at readVarsFrame()";
                 else if (serverClosing != null) m = serverClosing;
                 else if ((st&ST_CLOSING) != 0)  m = "Server close()d server-side handler";
                 else                            m = "bindings vars frame missing LF (\\n)";
+                if ((st&ST_RES_STARTED) == 0)
+                    startResponse();
                 sendRequestError(m, null);
             }
         }
