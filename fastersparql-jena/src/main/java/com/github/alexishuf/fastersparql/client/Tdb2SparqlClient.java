@@ -1,10 +1,6 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
-import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
-import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
-import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
-import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -56,16 +52,9 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
         try {
             var query = QueryFactory.create(sparql.sparql().toString());
             exec = QueryExec.dataset(dsg).query(query).build();
-            if (sparql.isAsk()) {
-                var cb = new SPSCBIt<>(bt, Vars.EMPTY);
-                feedAsk(exec, bt, cb);
-                exec = null;
-                return cb;
-            } else {
-                var it = new RefJenaBIt<>(bt, sparql.publicVars(), dsg, exec);
-                exec = null;
-                return it;
-            }
+            var it = new RefJenaBIt<>(bt, sparql.publicVars(), dsg, exec, sparql.isAsk());
+            exec = null;
+            return it;
         } finally {
             if (exec != null) {
                 try {
@@ -75,31 +64,9 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
         }
     }
 
-    private <B extends Batch<B>>
-    void feedAsk(QueryExec exec, BatchType<B> bt, CompletableBatchQueue<B> dst) {
-        acquireRef();
-        Thread.startVirtualThread(() -> {
-            try {
-                if (exec.ask()) {
-                    B b = bt.create(0).takeOwnership(this);
-                    b.beginPut();
-                    b.commitPut();
-                    try {
-                        dst.offer(b.releaseOwnership(this));
-                    } catch (TerminatedException | CancelledException ignored) {}
-                }
-                dst.complete(null);
-            } catch (Throwable t) {
-                dst.complete(t);
-            } finally {
-                releaseRef();
-            }
-        });
-    }
-
     private final class RefJenaBIt<B extends Batch<B>> extends JenaBIt<B> {
-        public RefJenaBIt(BatchType<B> batchType, Vars vars, Transactional transactional, QueryExec exec) {
-            super(batchType, vars, transactional, exec);
+        public RefJenaBIt(BatchType<B> batchType, Vars vars, Transactional transactional, QueryExec exec, boolean ask) {
+            super(batchType, vars, transactional, exec, ask);
             acquireRef();
         }
         @Override protected void cleanup(@Nullable Throwable cause) {

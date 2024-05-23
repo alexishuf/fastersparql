@@ -15,16 +15,22 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class JenaBIt<B extends Batch<B>> extends UnitaryBIt<B> {
+    private static final Var[] EMPTY_VARS = new Var[0];
+
     private final Transactional transactional;
     private QueryExec exec;
+    private boolean started, askResult;
+    private final boolean ask;
     private @MonotonicNonNull RowSet rs;
     private JenaTermParser jenaTermParser = JenaTermParser.create().takeOwnership(this);
-    private Var[] jVars;
+    private Var[] jVars = EMPTY_VARS;
 
-    public JenaBIt(BatchType<B> batchType, Vars vars, Transactional transactional, QueryExec exec) {
+    public JenaBIt(BatchType<B> batchType, Vars vars, Transactional transactional,
+                   QueryExec exec, boolean ask) {
         super(batchType, vars);
         this.transactional = transactional;
-        this.exec = exec;
+        this.exec          = exec;
+        this.ask           = ask;
     }
 
     @Override protected void cleanup(@Nullable Throwable cause) {
@@ -40,7 +46,7 @@ public class JenaBIt<B extends Batch<B>> extends UnitaryBIt<B> {
     @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
         transactional.begin(ReadWrite.READ);
         try {
-            if (rs == null)
+            if (!started)
                 start();
             return super.nextBatch(offer);
         } finally {
@@ -50,14 +56,21 @@ public class JenaBIt<B extends Batch<B>> extends UnitaryBIt<B> {
     }
 
     private void start() {
-        if (rs != null || exec == null)
-            return;
-        rs = exec.select();
-        jVars = rs.getResultVars().toArray(new Var[0]);
+        started = true;
+        if (ask) {
+            askResult = exec.ask();
+        } else {
+            rs = exec.select();
+            jVars = rs.getResultVars().toArray(new Var[0]);
+        }
     }
 
     @Override protected B fetch(B dst) {
         if (rs == null || !rs.hasNext()) {
+            if (rs == null && askResult) {
+                dst.beginPut();
+                dst.commitPut();
+            }
             exhausted = true;
         } else {
             var b = rs.next();
