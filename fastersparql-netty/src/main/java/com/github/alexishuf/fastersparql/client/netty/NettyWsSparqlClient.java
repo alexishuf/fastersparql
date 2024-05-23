@@ -277,6 +277,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                     long req;
                     while ((req=(long)BIND_REQUEST.getAcquire(this)) <= 0 && notTerminated())
                         LockSupport.park();
+                    if (req <= 0)
+                        break; // isTerminated() == true
                     bindings.maxBatch((int) Math.min(Integer.MAX_VALUE, req));
                     var orphan = bindings.nextBatch(null);
                     if (orphan == null)
