@@ -328,7 +328,7 @@ class MeasureTest {
         // B6         ~ 2min
         // B5         ~ 20min
         String regex = "B[1234678]";
-        if (sourceKind.isHdt())
+        if (sourceKind.isHdt() || sourceKind.isServer())
             regex = "B[123478]";
         doTest(sourceKind, batchKind, planType, regex, sel, COUNT, EMIT);
     }
