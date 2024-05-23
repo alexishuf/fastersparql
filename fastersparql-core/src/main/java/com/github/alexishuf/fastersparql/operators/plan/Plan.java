@@ -91,12 +91,12 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
         }
     }
 
-    private static final FinalSegmentRope UNION_SP = FinalSegmentRope.asFinal(" UNION");
-    private static final FinalSegmentRope MINUS_SP = FinalSegmentRope.asFinal("MINUS");
-    private static final FinalSegmentRope LEFT_JOIN_SP = FinalSegmentRope.asFinal("OPTIONAL");
-    private static final FinalSegmentRope EXISTS_SP = FinalSegmentRope.asFinal("FILTER EXISTS");
-    private static final FinalSegmentRope NOT_EXISTS_SP = FinalSegmentRope.asFinal("FILTER NOT EXISTS");
-    private static final FinalSegmentRope FILTER_SP = FinalSegmentRope.asFinal("FILTER");
+    private static final FinalSegmentRope UNION_SP = FinalSegmentRope.asFinal(" UNION ");
+    private static final FinalSegmentRope MINUS_SP = FinalSegmentRope.asFinal("MINUS ");
+    private static final FinalSegmentRope LEFT_JOIN_SP = FinalSegmentRope.asFinal("OPTIONAL ");
+    private static final FinalSegmentRope EXISTS_SP = FinalSegmentRope.asFinal("FILTER EXISTS ");
+    private static final FinalSegmentRope NOT_EXISTS_SP = FinalSegmentRope.asFinal("FILTER NOT EXISTS ");
+    private static final FinalSegmentRope FILTER_SP = FinalSegmentRope.asFinal("FILTER ");
     public Rope sparqlName() {
         return switch (type) {
             case UNION -> UNION_SP;
