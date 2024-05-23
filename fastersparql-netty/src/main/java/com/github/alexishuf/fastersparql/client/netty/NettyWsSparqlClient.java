@@ -586,7 +586,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @SuppressWarnings("unused") private void doSendQuery() {
             assert inEventLoop() : "not in event loop";
-            if ((st&(ST_SEND_CANCEL|ST_CANCEL_SENT|ST_GOT_TERM|ST_CONNECTING)) != 0) {
+            if ((st&(ST_SEND_CANCEL|ST_CANCEL_SENT|ST_GOT_TERM|ST_CONNECTING|ST_RELEASED)) != 0) {
                 journal("skip doSendQuery st=", st, ST, "on", this);
                 return;
             } else if (ctx == null) {
