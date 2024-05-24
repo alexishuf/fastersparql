@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
-import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
 import org.slf4j.Logger;
@@ -221,11 +220,6 @@ public final class EmitterService {
         @Override public void run() {
             if (currentThread() != this)
                 throw new IllegalStateException("wrong thread");
-            try {
-                Affinity.setAffinity(workerId);
-            } catch (Throwable t) {
-                log.error("Could not set CPU affinity");
-            }
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task<?> task = pollTaskLocal();
