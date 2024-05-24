@@ -152,7 +152,7 @@ public class Jsons2Csv implements Callable<Void> {
             if (files == null)
                 throw new IOException("Could not list files in "+dir);
             for (File f : files) {
-                if (f.getName().toLowerCase().endsWith(".json")) {
+                if (f.getName().toLowerCase().endsWith(".json") && f.length() > 0) {
                     try (var reader = new FileReader(f, UTF_8)) {
                         List<JmhResults> list = gson.fromJson(reader, LIST_OF_RESULTS);
                         for (var results : list) {
