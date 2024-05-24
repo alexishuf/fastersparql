@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Dataset;
-import com.github.alexishuf.fastersparql.org.apache.jena.query.Query;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.DatasetGraph;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
@@ -28,6 +27,7 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
     private static final Logger log = LoggerFactory.getLogger(Tdb2SparqlClient.class);
     private final Dataset dataset;
     private final DatasetGraph dsg;
+    private final String displayLocation;
 
     public Tdb2SparqlClient(SparqlEndpoint endpoint) {
         super(endpoint);
@@ -39,6 +39,7 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
         else
             dataset = TDB2Factory.connectDataset(file.getAbsolutePath());
         dsg = Objects.requireNonNull(dataset.asDatasetGraph());
+        displayLocation = file.getName();
     }
 
     @Override public Guard retain() {return new RefGuard();}
@@ -82,8 +83,8 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
 
         private RefJenaEmitter(Tdb2SparqlClient client, BatchType<B> batchType, Vars vars,
                                Transactional transactional,
-                               Query query, QueryExecBuilder execFac) {
-            super(batchType, vars, transactional, query, execFac);
+                               String displayLocation, SparqlQuery query, QueryExecBuilder execFac) {
+            super(batchType, vars, transactional, displayLocation, query, execFac);
             this.client = client;
             client.acquireRef();
         }
@@ -91,9 +92,9 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
         private static final class Concrete<B extends Batch<B>>
                 extends RefJenaEmitter<B> implements Orphan<RefJenaEmitter<B>> {
             private Concrete(Tdb2SparqlClient client, BatchType<B> batchType, Vars vars,
-                               Transactional transactional,
-                               Query query, QueryExecBuilder execFac) {
-                super(client, batchType, vars, transactional, query, execFac);
+                             Transactional transactional,
+                             String displayLocation, SparqlQuery query, QueryExecBuilder execFac) {
+                super(client, batchType, vars, transactional, displayLocation, query, execFac);
             }
             @Override public RefJenaEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}
         }
@@ -108,9 +109,8 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
     @Override
     protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
-        var query = QueryFactory.create(sparql.sparql().toString());
         var execFac = QueryExec.dataset(dsg);
         return new RefJenaEmitter.Concrete<>(this, bt, sparql.publicVars(),
-                                             dsg, query, execFac);
+                                             dsg, displayLocation, sparql, execFac);
     }
 }

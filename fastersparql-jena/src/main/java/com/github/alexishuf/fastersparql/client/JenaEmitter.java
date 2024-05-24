@@ -2,22 +2,26 @@ package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Query;
+import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.TxnType;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Var;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExec;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExecBuilder;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.RowSet;
+import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+
 
 public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E>>
         extends TaskEmitter<B, E> {
@@ -33,19 +37,25 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
     private final QueryExecBuilder execFac;
     private Query currentQuery;
     private @MonotonicNonNull JenaQueryBinder binder;
+    private final String displayLocation;
 
     protected JenaEmitter(BatchType<B> batchType, Vars vars,
                           Transactional transactional,
-                          Query query, QueryExecBuilder execFac) {
+                          String displayLocation,
+                          SparqlQuery query, QueryExecBuilder execFac) {
         super(batchType, vars, EmitterService.EMITTER_SVC, CREATED, TASK_FLAGS);
-        this.transactional = transactional;
-        this.originalQuery = query;
-        this.currentQuery  = query;
-        this.execFac       = execFac;
-        this.prefBatchRows = Math.max(1, bt.preferredRowsPerBatch(outCols));
-        this.jVars         = new Var[vars.size()];
+        var jQuery = QueryFactory.create(query.sparql().toString());
+        // required in order to make jena remember values assigned to variables at rebind():
+        jQuery.setQueryResultStar(false);
+        this.transactional   = transactional;
+        this.displayLocation = displayLocation;
+        this.originalQuery   = jQuery;
+        this.currentQuery    = jQuery;
+        this.execFac         = execFac;
+        this.prefBatchRows   = Math.max(1, bt.preferredRowsPerBatch(outCols));
+        this.jVars           = new Var[vars.size()];
         int outIdx = 0;
-        for (String str : query.getResultVars())
+        for (String str : jQuery.getResultVars())
             jVars[outIdx++] = Var.alloc(str);
     }
 
@@ -56,13 +66,22 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
         super.doRelease();
     }
 
+    @Override protected void appendToSimpleLabel(StringBuilder out) {
+        super.appendToSimpleLabel(out);
+        out.append(' ').append(displayLocation);
+        out.append('\n').append(originalQuery.toString().replace("\n", " "));
+    }
+
     @Override public Vars bindableVars() {return vars;}
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
+        if (EmitterStats.ENABLED && stats != null)
+            stats.onRebind(binding);
         resetForRebind(0, LOCKED_MASK);
         try {
             if (binder == null)
                 binder = new JenaQueryBinder();
+            exec = JenaUtils.safeClose(exec);
             currentQuery = binder.bind(originalQuery, binding);
         } finally {
             unlock();
