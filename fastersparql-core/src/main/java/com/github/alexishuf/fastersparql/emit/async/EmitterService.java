@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
@@ -303,6 +304,15 @@ public final class EmitterService {
         }
     }
 
+    private record OnTick(EmitterService svc) implements Runnable {
+        @Override public void run() {
+            var parked  = svc.parked;
+            var workers = svc.workers;
+            for (int unparked = 1; parked.unparkAny(workers) && unparked < svc.plainSize; )
+                ++unparked;
+        }
+    }
+
     private static final AtomicInteger nextServiceId = new AtomicInteger(1);
     public static final EmitterService EMITTER_SVC
             = new EmitterService(getRuntime().availableProcessors());
@@ -318,18 +328,19 @@ public final class EmitterService {
     }
 
     private final EmitterService.Worker[] workers;
+    private final ParkedSet parked;
     private final int id;
     @SuppressWarnings("unused") private int plainSize;
     private int tasksHead;
     private int tasksMask;
     private EmitterService.Task<?>[] tasks;
-    private int parkedBS;
 
     public EmitterService(int nWorkers) {
         nWorkers = 1 << Math.max(1, 32-Integer.numberOfLeadingZeros(nWorkers-1));
         assert nWorkers <= 0xffff;
         id           = nextServiceId.getAndIncrement();
         workers      = new EmitterService.Worker[nWorkers];
+        parked       = new ParkedSet(nWorkers);
         tasksMask    = 0x1fff;
         tasks        = new EmitterService.Task[tasksMask+1];
         var workerQueue = new EmitterService.Task[(nWorkers+2)*LOCAL_QUEUE_WIDTH];
@@ -340,6 +351,7 @@ public final class EmitterService {
         }
         for (Worker w : workers)
             w.start();
+        Timestamp.onTick(0xd1454270, new OnTick(this));
     }
 
     @Override public String toString() {return "EmitterService-"+id;}
@@ -347,7 +359,7 @@ public final class EmitterService {
     @SuppressWarnings("unused") public String dump() {
         var sb = new StringBuilder().append("EmitterService-").append(id).append('\n');
         sb.append("  shared queue: ").append(plainSize).append(" items\n");
-        sb.append("parkedBS: ").append(Integer.toHexString(parkedBS));
+        sb.append("parkedBS: ").append(parked);
         sb.append('\n');
         for (int i = 0; i < workers.length; i++) {
             var w = workers[i];
@@ -379,12 +391,7 @@ public final class EmitterService {
      * using a {@link LockSupport#unpark(Thread)} instead of {@link Unparker#unpark(Thread)}.
      */
     public boolean unparkStealer() {
-        int id = Integer.numberOfTrailingZeros(parkedBS);
-        if (id <= workers.length) {
-            LockSupport.unpark(workers[id]);
-            return true;
-        }
-        return false;
+        return parked.unparkAny(workers);
     }
 
     private Task<?> pollTaskShared() {
@@ -403,30 +410,18 @@ public final class EmitterService {
     }
 
     private Task<?> takeTaskShared(int workerId) {
-        int size, parkedMask = workerId < 32 ? 1<<workerId : 0, next = 0;
+        int size;
         while (true) {
             while ((size=(int)SIZE.getAndSetAcquire(this, LOCKED)) == LOCKED)
                 onSpinWait();
             if (size > 0) { // has task in queue
                 Task<?> task = tasks[tasksHead];
-                // unset this thread and another thread as parked
-                int bs = parkedBS&~parkedMask;
-                if (size == 1) {
-                    tasksHead = 0;
-                } else {
-                    tasksHead = (tasksHead+1)&tasksMask;
-                    bs &= ~(next=Integer.lowestOneBit(bs));
-                }
-                parkedBS = bs;
+                tasksHead = size == 1 ? 0 : (tasksHead+1)&tasksMask;
                 SIZE.setRelease(this, size-1); // release lock
-                // if there was another parked thread, cheaply unpark it
-                if (next != 0)
-                    Unparker.unpark(workers[Integer.numberOfTrailingZeros(next)]);
                 return task;
             } else {
-                parkedBS |= parkedMask;
                 SIZE.setRelease(this, 0);
-                LockSupport.park(this);
+                parked.park(workerId);
             }
         }
     }
@@ -438,11 +433,9 @@ public final class EmitterService {
         if (size == tasksMask)
             growTasks();
         tasks[(tasksHead+size)&tasksMask] = task;
-        int bs = parkedBS, next = bs & -bs;
-        parkedBS = bs & ~next;
         SIZE.setRelease(this, size+1);
-        if (next != 0)
-            Unparker.unpark(workers[Integer.numberOfTrailingZeros(next)]);
+        if (size == 0)
+            parked.unparkAnyIfAllParked(workers);
     }
 
     private void growTasks() {

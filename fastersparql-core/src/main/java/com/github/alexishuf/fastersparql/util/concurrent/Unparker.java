@@ -13,7 +13,7 @@ public class Unparker {
         unparkerThread.setDaemon(true);
         unparkerThread.setPriority(Thread.NORM_PRIORITY-1);
         unparkerThread.start();
-        Timestamp.ON_TICK = new DrainOnTick();
+        Timestamp.onTick(0xd1454270, new DrainOnTick());
     }
 
     private static final class UnparkerTask implements Runnable {

@@ -4,10 +4,13 @@ import org.checkerframework.checker.index.qual.NonNegative;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.Thread.ofPlatform;
+import static java.lang.Thread.onSpinWait;
 import static java.lang.invoke.MethodHandles.lookup;
 
 public class Timestamp {
@@ -87,21 +90,39 @@ public class Timestamp {
      */
     @SuppressWarnings("unused") public static long tickDelta() { return delta; }
 
-    /* --- --- --- internal --- --- --- */
+    /* --- --- --- add callbacks for the tick event --- --- --- */
 
-    static Runnable ON_TICK = new OnTickNop();
-
-    private static final class OnTickNop implements Runnable {
-        @Override public void run() {}
-        @Override public String toString() {return "OnTickNop";}
+    private static Runnable[] onTickTasks = new Runnable[32];
+    @SuppressWarnings("unused") private static int plainOnTickTasksSize;
+    private static final VarHandle ON_TICK_TASKS_SIZE;
+    static {
+        try {
+            ON_TICK_TASKS_SIZE = MethodHandles.lookup().findStaticVarHandle(Timestamp.class, "plainOnTickTasksSize", int.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
     }
+
+    public static void onTick(int password, Runnable runnable) {
+       if (password != 0xd1454270)
+           throw new IllegalArgumentException("wrong password");
+       int size;
+       while ((size=(int)ON_TICK_TASKS_SIZE.getAndSetAcquire(-1)) == -1) onSpinWait();
+       if (size == onTickTasks.length)
+           onTickTasks = Arrays.copyOf(onTickTasks, onTickTasks.length<<1);
+       onTickTasks[size++] = runnable;
+       ON_TICK_TASKS_SIZE.setRelease(size);
+    }
+
+    /* --- --- --- internal --- --- --- */
 
     private static void tick() {
         long delta = initDelta();
         //noinspection InfiniteLoopStatement
-        for (int i = 0; true; ++i) {
-            ON_TICK.run();
-            if ((i & 511) == 0) {
+        for (int ticks = 0; true; ++ticks) {
+            for (int i = 0, n = plainOnTickTasksSize; i < n; i++)
+                onTickTasks[i].run();
+            if ((ticks & 511) == 0) {
                 long before = System.nanoTime();
                 LockSupport.parkNanos(PERIOD_NS);
                 // compute moving average over last 8 samples (including this)
