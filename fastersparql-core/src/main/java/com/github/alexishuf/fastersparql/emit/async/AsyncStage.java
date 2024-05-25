@@ -13,33 +13,21 @@ import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
 public abstract sealed class AsyncStage<B extends Batch<B>>
-        extends TaskEmitter<B, AsyncStage<B>>
+        extends AsyncTaskEmitter<B, AsyncStage<B>>
         implements Stage<B, B, AsyncStage<B>> {
-    private static final VarHandle QUEUE;
-    static {
-        try {
-            QUEUE       = MethodHandles.lookup().findVarHandle(AsyncStage.class, "plainQueue",       Batch.class);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
     private static final StaticMethodOwner CONSTRUCTOR = new StaticMethodOwner("AsyncStage.init()");
     private static final int IS_ASYNC = 0x40000000;
     private static final Flags ASYNC_FLAGS = TASK_FLAGS.toBuilder()
             .flag(IS_ASYNC, "ASYNC").build();
 
     private final Emitter<B, ?> up;
-    @SuppressWarnings("unused") private @Nullable B plainQueue;
 
     public static <B extends Batch<B>> Orphan<AsyncStage<B>>
     create(Orphan<? extends Emitter<B, ?>> upstream) {
@@ -57,9 +45,8 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
     }
 
     @Override protected void doRelease() {
-        super.doRelease();
-        Batch.safeRecycle((Batch<?>)QUEUE.getAndSetAcquire(this, null), this);
         Owned.safeRecycle(up, this);
+        super.doRelease();
     }
 
     private static final class Concrete<B extends Batch<B>>
@@ -85,7 +72,6 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     @Override public void rebind(BatchBinding b) {
         resetForRebind(0, 0);
-        Batch.safeRecycle((Batch<?>)QUEUE.getAndSetAcquire(this, (Batch<?>)null), this);
         up.rebind(b);
     }
 
@@ -95,7 +81,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     /* --- --- --- Receiver --- --- --- */
 
-    @SuppressWarnings("unchecked") @Override public void onBatch(Orphan<B> orphan) {
+    @Override public void onBatch(Orphan<B> orphan) {
         if (EmitterStats.ENABLED && stats != null)
             stats.onBatchReceived(orphan);
         int state = statePlain();
@@ -105,16 +91,13 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             if (Timestamp.nanoTime() > deadline)
                 setFlagsRelease(IS_ASYNC);
         } else if ((state&IS_TERM) == 0) {
-            B queue = (B)QUEUE.getAndSetAcquire(this, null);
-            B tail = Batch.detachDistinctTail(queue, this);
+            var tail = pollFillingBatch();
             if (tail != null) {
-                QUEUE.setRelease(this, queue); // allow head node to be delivered downstream
-                tail.append(orphan);
-                orphan = tail.releaseOwnership(this);
-                queue = (B)QUEUE.getAndSetAcquire(this, null);
+                B owned = tail.takeOwnership(this);
+                owned.append(orphan);
+                orphan = owned.releaseOwnership(this);
             }
-            QUEUE.setRelease(this, Batch.quickAppend(queue, this, orphan));
-            awakeParallel();
+            quickAppend(orphan);
         } else {
             Orphan.recycle(orphan);
         }
@@ -130,13 +113,10 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             if (Timestamp.nanoTime() > deadline)
                 setFlagsRelease(IS_ASYNC);
         } else {
-            if ((state&IS_TERM) == 0) {//noinspection unchecked
-                B queue = (B)QUEUE.getAndSetAcquire(this, null);
-                if (queue == null)
-                    queue = bt.create(batch.cols).takeOwnership(this);
-                queue.copy(batch);
-                QUEUE.setRelease(this, queue);
-                awakeParallel();
+            if ((state&IS_TERM) == 0) {
+                B dst = takeFillingOrCreate().takeOwnership(this);
+                dst.copy(batch);
+                quickAppend(dst.releaseOwnership(this));
             }
         }
     }
@@ -172,38 +152,13 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
         }
     }
 
-    /* --- --- --- TaskEmitter --- --- --- */
-
+    /* --- --- --- AsyncTaskEmitter --- --- --- */
 
     @Override public boolean cancel() {
-        //noinspection unchecked
-        Batch.safeRecycle((B)QUEUE.getAndSetAcquire(this, null), this);
+        if ((dropAllQueuedAndGetState()&IS_TERM) != 0)
+            return false;
         return up.cancel();
     }
 
-    @Override protected int doPendingTerm(int state) {
-        // IS_PENDING_TERM is set from receiver methods which by contract are called
-        // after onBatch() and not concurrently with onBatch or with one another.
-        // Therefore, if this thread observed IS_PENDING_TERM, it also observed previous writes
-        // to QUEUE, which allows us to read such writes using plain semantics here.
-        if (plainQueue != null)
-            return state;
-        // else: advance to a terminated state
-        return super.doPendingTerm(state);
-    }
-
     @Override protected void resume() { up.request(requested()); }
-
-    @Override protected boolean mustAwake() {
-        return (statePlain()&IS_PENDING_TERM) != 0 || plainQueue != null;
-    }
-
-    @Override protected int produceAndDeliver(int state) {
-        //noinspection unchecked
-        B queue = (B)QUEUE.getAndSetAcquire(this, null);
-        if (queue != null)
-            deliver(queue.releaseOwnership(this));
-        return plainQueue != null || (state&IS_PENDING_TERM) == 0 ? state
-                : (state&~IS_PENDING_TERM) | IS_TERM;
-    }
 }
