@@ -158,19 +158,20 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         requireAlive();
         if (rows == 0 && next != null)
             return false; // empty batch cannot have successor node
-        var actualTail = this;
-        for (B b = next; b != null; b = b.next) {
-            b.requireAlive();
-            actualTail = b;
-            if (b.cols != cols)
-                return false; // mismatching cols
-            if (b.rows == 0 && b.next != null)
-                return false;  // intermediary nodes should not be empty
+        B tail = this.tail;
+        if (tail == null)
+            return false; // tail cannot be null
+        if (tail.next != null)
+            return false; // tail is not the last node
+        for (B b = next, prev = (B)this; b != null; b = (prev=b).next) {
+            b.requireOwner(prev);
             if (b.next == null && b.tail != b)
-                return false; // actual tail has tail field not set to self
+                return false; // actual tail does not have itself as tail
+            if (b.tail != tail)
+                return false; // wrong tail
+            if (b.rows == 0 && b.next != null)
+                return false; // only the tail node can be empty
         }
-        if (actualTail != this.tail)
-            return false; // tail field at head must be the actual tail node
         for (var b = this; b != null; b = b.next) {
             if (!b.validateNode(validation))
                 return false;
@@ -264,16 +265,6 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         return tail;
     }
 
-    protected B setTail(Orphan<B> orphanNewTail) {
-        B oldTail    = this.tail;
-        B newTail    = orphanNewTail.takeOwnership(oldTail);
-        oldTail.tail = null;
-        oldTail.next = newTail;
-        this.tail    = newTail;
-        newTail.tail = newTail;
-        return newTail;
-    }
-
     /**
      * Null-safe equivalent to {@code before.append(after)}.
      *
@@ -324,26 +315,28 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
                                   && before.copySingleNodeIfFast(peek))) {
             peek.recycle(null);
         } else {
-            before.quickAppend0(after);
+            before.setTail(after);
         }
         assert before.validate();
         return before;
     }
 
-    protected void quickAppend0(Orphan<B> nonEmpty) {
-        B oldTail = this.tail, head = nonEmpty.takeOwnership(oldTail), newTail = head.tail;
-        oldTail.next = head;
-        oldTail.tail = newTail;
-        this.tail = newTail;
+    protected B setTail(Orphan<B> head) {
+        return setTail0(head.takeOwnership(tail));
     }
 
-    protected @Nullable B quickAppend0(B nonEmpty) {
-        B oldTail = this.tail, newTail = nonEmpty.tail;
-        nonEmpty.requireOwner(oldTail);
-        oldTail.next = nonEmpty;
-        oldTail.tail = newTail;
-        this.tail = newTail;
+    protected @Nullable B setTailAndReturnNull(B head) {
+        setTail0(head. requireOwner(tail));
         return null;
+    }
+
+    private B setTail0(B head) {
+        B oldTail = this.tail, newTail = head.tail;
+        oldTail.tail = newTail;
+        oldTail.next = head;
+        for (@SuppressWarnings("unchecked") B n = (B)this; n != oldTail && n != null; n = n.next)
+            n.tail = newTail;
+        return newTail;
     }
 
     /**
@@ -1244,14 +1237,14 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
 
     @SuppressWarnings("unchecked") private Orphan<B> detachDistinctTail0() {
         B oldTail = this.tail;
-        B nTail = (B)this;
-        for (B n = next; n != null && n != oldTail; n = nTail.next)
-            nTail = n;
-        oldTail    = nTail.next; // defense against corruption or concurrent append
-        this.tail  = nTail;
-        nTail.tail = nTail;
-        nTail.next = null;
-        return oldTail.releaseOwnership(nTail);
+        B newTail = (B)this;
+        for (B n = next; n != null && n != oldTail; n = newTail.next)
+            newTail = n;
+        oldTail      = newTail.next; // defense against corruption or concurrent append
+        newTail.next = null;
+        for (B n = (B)this; n != null; n = n.next)
+            n.tail = newTail;
+        return oldTail.releaseOwnership(newTail);
     }
 
     /** Remove if {@code this.tail} is not {@code this}, detach it and recycle it. */

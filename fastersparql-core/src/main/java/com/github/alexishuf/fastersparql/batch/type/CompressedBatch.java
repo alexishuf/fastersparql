@@ -157,13 +157,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         return (short)(row*cols2+col2);
     }
 
-    private CompressedBatch createTail() {
-        CompressedBatch tail = this.tail, b = COMPRESSED.create(cols).takeOwnership(tail);
-        tail.tail = b;
-        tail.next = b;
-        this.tail = b;
-        return b;
-    }
+    private CompressedBatch createTail() {return setTail(COMPRESSED.create(cols));}
 
     /**
      * Tries to set a term at (rows, offerCol) and if succeeds increments {@code offerCol}.
@@ -215,7 +209,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
 
         int localsReq = (flaggedLocalLen&LEN_MASK) + partialLocalsLen;
         if (localsReq > LEN_MASK)
-            raiseRowTooWide(prev, tail);
+            raiseRowTooWide();
         if (localsReq > tail.locals.length)
             tail.growLocals(0, min(LEN_MASK, localsLen+(flaggedLocalLen&LEN_MASK)));
 
@@ -230,10 +224,9 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         return allocTermMaybeChangeTail(destCol, shared, flaggedLocalLen);
     }
 
-    private void raiseRowTooWide(CompressedBatch prev, CompressedBatch tail) {
-        prev.next = tail.recycle(prev);
-        prev.tail = prev;
-        this.tail = prev;
+    private void raiseRowTooWide() {
+        assert tail.rows == 0 && tail != this : "tail must be distinct and empty";
+        Orphan.safeRecycle(detachDistinctTail());
         throw new IllegalArgumentException("row local segments are too wide");
     }
 
@@ -1151,7 +1144,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 }
             }
             if (src != null)
-                src = quickAppend0(src);
+                src = setTailAndReturnNull(src);
             assert validate() : "corrupted";
         } finally {
             if (src    != null)    src.recycle(dst);
@@ -1709,43 +1702,45 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 inOrphan = p.projectInPlace(inOrphan);
                 p = null;
             }
-            CompressedBatch in = inOrphan.takeOwnership(this);
-            if (in.rows*outColumns == 0)
-                return filterEmpty(in).releaseOwnership(this);
+            CompressedBatch filtered = inOrphan.takeOwnership(this);
+            if (filtered.rows*outColumns == 0)
+                return filterEmpty(filtered).releaseOwnership(this);
             if (!rowFilter.isNoOp()) {
-                CompressedBatch b = in, prev = in;
-                short cols = in.cols, rows;
+                short cols   = filtered.cols, rows;
                 var decision = DROP;
-                while (b != null) {
+                var next     = filtered;
+                filtered     = null;
+                while (next != null) {
+                    var b    = next;
+                    next     = Orphan.takeOwnership(next.detachHead(), this);
                     rows     = b.rows;
                     decision = DROP;
                     int d    = 0;
-                    FinalSegmentRope[] shared = b.shared;
-                    short      [] slices = b.slices;
                     for (short r = 0, start; r < rows && decision != TERMINATE; r++) {
                         start = r;
                         while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
                         if (r > start) {
                             int n = (r-start)*cols, srcPos = start*cols;
-                            arraycopy(shared, srcPos, shared, d, n);
-                            arraycopy(slices, srcPos<<1, slices, d<<1, n<<1);
+                            arraycopy(b.shared, srcPos, b.shared, d, n);
+                            arraycopy(b.slices, srcPos<<1, b.slices, d<<1, n<<1);
                             d += (short) n;
                         }
                     }
                     b.rows = (short) (d / cols);
-                    if (d == 0 && b != in)  // remove b from linked list
-                        b = filterInPlaceSkipEmpty(b, prev);
+                    if      (d == 0)           b.recycle(this);
+                    else if (filtered == null) filtered = b;
+                    else                       filtered.setTail(b.releaseOwnership(this));
                     if (decision == TERMINATE) {
                         cancelUpstream();
-                        if (b.next  != null) b.next = b.next.recycle(b);
-                        if (in.rows == 0)    in     = in.recycle(this);
+                        filtered = Batch.safeRecycle(filtered, this);
                     }
-                    b = (prev = b).next;
                 }
-                in = filterInPlaceEpilogue(in, prev);
+                assert filtered == null || filtered.validate() : "corrupted";
+                if (filtered == null && decision != TERMINATE)
+                    filtered = batchType.create(outColumns).takeOwnership(this);
             }
-            var resultOrphan = Owned.releaseOwnership(in, this);
-            if (p != null && in != null && in.rows > 0)
+            var resultOrphan = Owned.releaseOwnership(filtered, this);
+            if (p != null && filtered != null && filtered.rows > 0)
                 resultOrphan = p.projectInPlace(resultOrphan);
             return resultOrphan;
         }

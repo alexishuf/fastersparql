@@ -121,13 +121,7 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
         } catch (Throwable ignored) {assert false : "markGarbage() failed";}
     }
 
-    private TermBatch createTail() {
-        TermBatch tail = this.tail, b = TERM.create(cols).takeOwnership(tail);
-        tail.tail = b;
-        tail.next = b;
-        this.tail = b;
-        return b;
-    }
+    private TermBatch createTail() { return setTail(TERM.create(cols)); }
 
     /**
      * Creates a batch that holds {@code lst} <strong>BY REFERENCE</strong>. {@code lst} must
@@ -335,7 +329,7 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
                 }
             }
             if (src != null)
-                src = quickAppend0(src);
+                src = setTailAndReturnNull(src);
         } finally {
             if (src   != null)     src.recycle(dst);
             if (orphan != null) orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
@@ -705,40 +699,44 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
                 inOrphan = p.projectInPlace(inOrphan);
                 p = null;
             }
-            var in = inOrphan.takeOwnership(this);
-            if (in.rows*outColumns == 0)
-                return filterEmpty(in).releaseOwnership(this);
+            var filtered = inOrphan.takeOwnership(this);
+            if (filtered.rows*outColumns == 0)
+                return filterEmpty(filtered).releaseOwnership(this);
             if (!rowFilter.isNoOp()) {
-                TermBatch b = in, prev = in;
-                short cols = in.cols;
+                var next     = filtered;
+                short cols   = filtered.cols, rows;
                 var decision = DROP;
-                while (b != null) {
-                    int rows = b.rows, d = 0;
-                    Term[] arr = b.arr;
+                filtered     = null;
+                while (next != null) {
+                    var b    = next;
+                    next     = Orphan.takeOwnership(next.detachHead(), this);
+                    rows     = b.rows;
                     decision = DROP;
+                    int d    = 0;
                     for (int r = 0; r < rows && decision != TERMINATE; r++) {
                         int start = r;
                         while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
                         if (r > start) {
                             int n = (r-start)*cols, srcPos = start*cols;
-                            arraycopy(arr, srcPos, arr, d, n);
+                            arraycopy(b.arr, srcPos, b.arr, d, n);
                             d += n;
                         }
                     }
                     b.rows = (short) (d / cols);
-                    if (d == 0 && b != in)  // remove b from linked list
-                        b = filterInPlaceSkipEmpty(b, prev);
+                    if      (d == 0)           b.recycle(this);
+                    else if (filtered == null) filtered = b;
+                    else                       filtered.setTail(b.releaseOwnership(this));
                     if (decision == TERMINATE) {
                         cancelUpstream();
-                        if (b.next  != null) b.next = b.next.recycle(b);
-                        if (in.rows ==    0) in     = in.recycle(this);
+                        next = Batch.safeRecycle(next, this);
                     }
-                    b = (prev = b).next;
                 }
-                in = filterInPlaceEpilogue(in, prev);
+                assert filtered == null || filtered.validate() : "corrupted";
+                if (filtered == null && decision != TERMINATE)
+                    filtered = batchType.create(outColumns).takeOwnership(this);
             }
-            var resultOrphan = Owned.releaseOwnership(in, this);
-            if (p != null && in != null && in.rows > 0)
+            var resultOrphan = Owned.releaseOwnership(filtered, this);
+            if (p != null && filtered != null && filtered.rows > 0)
                 resultOrphan = p.projectInPlace(resultOrphan);
             return resultOrphan;
         }

@@ -139,24 +139,6 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
 
     public abstract Orphan<B> filterInPlace(Orphan<B> in);
 
-    protected final B filterInPlaceSkipEmpty(B b, B prev) {
-        prev.next = b.dropHead(b == prev ? this : prev);
-        return prev;
-    }
-
-    protected final B filterInPlaceEpilogue(B in, B last) {
-        if (in != null) {
-            in  .tail = last;
-            last.tail = last;
-            if (in.rows == 0) {
-                if (in.next == null) in.cols = outColumns;
-                else                 in = in.dropHead(this);
-            }
-            assert in == null || in.validate();
-        }
-        return in;
-    }
-
     protected B filterEmpty(@Nullable B in) {
         if (in == null) return null;
         short survivors = 0;

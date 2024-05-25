@@ -125,13 +125,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
 
-    protected B createTail() {
-        B tail = this.tail, b = idType().create(cols).takeOwnership(tail);
-        tail.tail = b;
-        tail.next = b;
-        this.tail = b;
-        return b;
-    }
+    protected B createTail() {return setTail(idType().create(cols));}
 
     /* --- --- --- term-level access --- --- --- */
 
@@ -260,7 +254,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 }
             }
             if (src != null)
-                src = quickAppend0(src);
+                src = setTailAndReturnNull(src);
         } finally {
             if (   src != null)    src.recycle(dst);
             if (orphan != null) orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
@@ -667,41 +661,44 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                 inOrphan = p.projectInPlace(inOrphan);
                 p = null;
             }
-            var in = inOrphan.takeOwnership(this);
-            if (in.rows*outColumns == 0)
-                return filterEmpty(in).releaseOwnership(this);
+            var filtered = inOrphan.takeOwnership(this);
+            if (filtered.rows*outColumns == 0)
+                return filterEmpty(filtered).releaseOwnership(this);
             if (!rowFilter.isNoOp()) {
-                B b = in, prev = in;
-                short cols = in.cols, rows;
+                short cols   = filtered.cols, rows;
                 var decision = DROP;
-                while (b != null) {
-                    rows          = b.rows;
-                    int d         = 0;
-                    long[] ids    = b.arr;
+                B next       = filtered;
+                filtered     = null;
+                while (next != null) {
+                    var b    = next;
+                    next     = Orphan.takeOwnership(next.detachHead(), this);
+                    rows     = b.rows;
                     decision = DROP;
+                    int d    = 0;
                     for (short r = 0, start; r < rows && decision != TERMINATE; r++) {
                         start = r;
                         while (r < rows && (decision = rowFilter.drop(b, r)) == KEEP) ++r;
                         if (r > start) {
                             int n = (r-start)*cols, srcPos = start*cols;
-                            arraycopy(ids, srcPos, ids, d, n);
+                            arraycopy(b.arr, srcPos, b.arr, d, n);
                             d += (short) n;
                         }
                     }
                     b.rows = (short) (d / cols);
-                    if (d == 0 && b != in)  // remove b from linked list
-                        b = filterInPlaceSkipEmpty(b, prev);
+                    if      (d == 0)           Batch.safeRecycle(b, this);
+                    else if (filtered == null) filtered = b;
+                    else                       filtered.setTail(b.releaseOwnership(this));
                     if (decision == TERMINATE) {
                         cancelUpstream();
-                        if (b.next != null) b.next = b.next.recycle(b);
-                        if (in.rows ==   0) in     = in.recycle(this);
+                        next = Batch.safeRecycle(next, this);
                     }
-                    b = (prev = b).next;
                 }
-                in = filterInPlaceEpilogue(in, prev);
+                assert filtered == null || filtered.validate() : "corrupted";
+                if (filtered == null && decision != TERMINATE)
+                    filtered = batchType.create(outColumns).takeOwnership(this);
             }
-            var resultOrphan = Owned.releaseOwnership(in, this);
-            if (p != null && in != null && in.rows > 0)
+            var resultOrphan = Owned.releaseOwnership(filtered, this);
+            if (p != null && filtered != null && filtered.rows > 0)
                 resultOrphan = p.projectInPlace(resultOrphan);
             return resultOrphan;
         }
