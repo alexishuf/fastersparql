@@ -183,7 +183,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         int len = flaggedLocalLen & LEN_MASK;
         if (len > 0) {
             int required  = dest+len;
-            if (required > Math.min(Short.MAX_VALUE, tail.locals.length)) {
+            if (required > min(Short.MAX_VALUE, tail.locals.length)) {
                 if (tail.rows > 0)
                     return allocTermOnNewTail(destCol, shared, flaggedLocalLen);
                 tail.growLocals(dest, required);
@@ -242,7 +242,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         this.localsSeg     = localsHandle.segment;
         this.shared        = shared;
         this.slices        = slices;
-        this.termsCapacity = (short)Math.min(shared.length, slices.length>>1);
+        this.termsCapacity = (short) min(shared.length, slices.length>>1);
         if (cols > termsCapacity)
             throw new IllegalArgumentException("termsCapacity < cols");
         updateLeakDetectorRefCapacity();
@@ -621,7 +621,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         if (fstLen + sndLen == 0) return;
 
         if (begin < fstLen)
-            dest.append(fst, fstU8, fstOff+begin, Math.min(fstLen, end)-begin);
+            dest.append(fst, fstU8, fstOff+begin, min(fstLen, end)-begin);
         if (end > fstLen) {
             begin = max(0, begin-fstLen);
             dest.append(snd, sndU8, sndOff+begin, max(0, (end-fstLen)-begin));
@@ -835,7 +835,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         // check if tail has enough space
         dTerm = (short)(tail.rows*cols);
         if (dTerm+cols > tail.termsCapacity
-                || tail.localsLen+lLen >= Math.min(tail.locals.length, LEN_MASK)) {
+                || tail.localsLen+lLen >= min(tail.locals.length, LEN_MASK)) {
             return false;
         }
 
@@ -1088,7 +1088,9 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 o.requireAlive();
                 short lDst = dst.localsLen;
                 short tCap = (short) (dst.termsCapacity - dst.rows * cols);
-                if (o.rows * cols > tCap || lDst + o.localsLen >= LEN_MASK)
+                short lCap = dst.rows == 0 ? LEN_MASK
+                           : (short)min(dst.locals.length, LEN_MASK);
+                if (o.rows * cols > tCap || lDst + o.localsLen >= lCap)
                     dst = coldCopyNode(o);
                 else
                     dst.doAppend(o, o.rows, o.localsLen);
@@ -1136,8 +1138,10 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             while (orphan != null) {
                 src = orphan.takeOwnership(dst);
                 orphan = null;
-                short lDst = dst.localsLen, tCap = (short)(dst.termsCapacity - dst.rows*cols);
-                if (src.rows*cols <= tCap && lDst+src.localsLen < Short.MAX_VALUE) {
+                short dstRows = dst.rows, lDst = dst.localsLen;
+                short tCap = (short)(dst.termsCapacity - dstRows*cols);
+                short lCap = dstRows == 0 ? LEN_MASK : (short)min(dst.locals.length, LEN_MASK);
+                if (src.rows*cols <= tCap && lDst+src.localsLen < lCap) {
                     dst.doAppend(src, src.rows, src.localsLen);
                     orphan = src.detachHead();
                     src = src.recycle(dst);
@@ -1204,12 +1208,14 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         o.requireAlive();
 
         CompressedBatch dst = tail();
-        short dstTerm = (short) (dst.rows * cols), lLen = (short) o.localBytesUsed(row);
+        short dstTerm = (short) (dst.rows * cols), lLen = (short)o.localBytesUsed(row);
         int lReq = dst.localsLen + lLen;
-        if (dstTerm+cols > dst.termsCapacity || lReq > Short.MAX_VALUE) {
-            dst = createTail();
-            lReq = lLen;
-            dstTerm = 0;
+        if (dstTerm != 0) {
+            if (dstTerm+cols > dst.termsCapacity || lReq > min(LEN_MASK, dst.locals.length)) {
+                dst = createTail();
+                lReq = lLen;
+                dstTerm = 0;
+            }
         }
         if (lReq > dst.locals.length)
             dst.growLocals(lReq-lLen, lReq);
@@ -1383,7 +1389,8 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 for (short r = 0, rRows = right.rows, rBase=0; r < rRows; r++, rBase+=rc) {
                     rlr = rightLocalsReq(sources, rsl, rc, r, llr);
                     int lReq = lDst + (hasLeftLocals ? 0 : llr) + rlr;
-                    if (dPos+dc > dCap || lReq > LEN_MASK) {
+                    int lMax = tail.rows == 0 ? LEN_MASK : min(tail.locals.length, LEN_MASK);
+                    if (dPos+dc > dCap || lReq > lMax) {
                         tail.rows = (short)(dPos/dc);
                         dCap = (tail = createTail(dst)).termsCapacity;
                         dPos = lDst = 0;
@@ -1471,7 +1478,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                     } else {
                         dZero = (short)(tail.rows*tail.cols);
                         int lReq = (lDst=tail.localsLen)+in.localsLen;
-                        int lCap = Math.min(LEN_MASK, tail.locals.length);
+                        int lCap = min(LEN_MASK, tail.locals.length);
                         if (dZero+tail.cols > tail.termsCapacity || lReq > lCap) {
                             if (dZero == 0 && tail.cols < tail.termsCapacity) {
                                 tail.growLocals(lDst, lReq);
