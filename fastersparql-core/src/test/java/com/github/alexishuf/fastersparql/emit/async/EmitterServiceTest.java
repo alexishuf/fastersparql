@@ -42,7 +42,7 @@ class EmitterServiceTest {
 
         public void request() {
             requested = REQUEST_SIZE;
-            awake(false);
+            awake();
         }
 
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
@@ -56,7 +56,7 @@ class EmitterServiceTest {
                 ++local;
                 test.shared.getAndIncrement();
                 if (--requested > 0)
-                    awake(worker);
+                    awakeSameWorker(worker);
                 else if (requested == 0)
                     test.countersStopped.release();
                 else

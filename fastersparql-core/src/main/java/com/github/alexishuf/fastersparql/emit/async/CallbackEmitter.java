@@ -234,7 +234,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override protected final void resume() {
         setFlagsRelease(DO_RESUME);
-        awake(false);
+        awake();
     }
 
     @Override public boolean cancel() {
@@ -246,7 +246,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
         this.queue = null;
         st = unlock(0, GOT_CANCEL_REQ);
         if (first)
-            awake(true);
+            awakeSameWorker();
         Batch.safeRecycle(queue, this);
         return (st&IS_TERM) == 0;
     }
@@ -337,7 +337,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
                 st = lock();
             }
             if (queue != null)
-                awake(worker);
+                awakeSameWorker(worker);
             if (requested() <= 0 && (st&PAUSE_MASK) == PAUSE_VALUE)
                 st = doPause();
             if (queue == null) {

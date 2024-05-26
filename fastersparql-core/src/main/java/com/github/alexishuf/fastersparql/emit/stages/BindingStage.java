@@ -749,7 +749,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             @Override public TerminateTask takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
-        void schedule() { awake(true); }
+        void schedule() { awakeSameWorker(); }
 
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
             int st = bs.lock();

@@ -36,7 +36,7 @@ public final class EmitterService {
     private static final Logger log = LoggerFactory.getLogger(EmitterService.class);
 
     /**
-     * An arbitrary task ({@link #task(Worker, int)}) that can be repeatedly re-scheduled via {@link #awake(boolean)}.
+     * An arbitrary task ({@link #task(Worker, int)}) that can be repeatedly re-scheduled via {@link #awakeSameWorker()}.
      */
     public abstract static class Task<S extends Stateful<S>> extends Stateful<S> {
         private static final VarHandle SCHEDULED;
@@ -67,46 +67,36 @@ public final class EmitterService {
         }
 
         /**
-         * Ensures that after this call, {@link #task(Worker, int)} will execute at least once. Such execution
-         * may start and complete before the return of this call.
+         * Ensures that after this call, {@link #task(Worker, int)} will execute at least once.
          *
-         * @param onCurrentWorker if {@code true} and this method is called from within a
-         *                        worker thread (even if not during execution of
-         *                        {@code this.}{@link #task(Worker, int)}), then will try to enqueue
-         *                        {@code this} task into the worker-local task queue, from which
-         *                        other worker cannot steal from. If {@code this} is also the task
-         *                        being currently executed, the local queue will be used even
-         *                        if this parameter is {@code false}. If the worker-local queue
-         *                        is full, {@code this} will be offered to a shared queue,
-         *                        enabling other worker threads to execute it.
+         * <p>{@link #task(Worker, int)} will not be called from within this call, But it may
+         * be called in paralle from another worker thread before this call returns.</p>
+         *
+         * <p>This method will prefer enqueuing {@code this} into a worker-private queue if
+         * the calling thread is a worker thread. Such queue is not shared with other worker
+         * and thus does not suffer from contention. Tasks only move out of the worker-private
+         * queue if the worker thread evicts them due to imbalance or due to a
+         * {@link #yieldWorker(Thread)} call.</p>
          */
-        protected final void awake(boolean onCurrentWorker) {
+        protected final void awakeSameWorker() {
             if ((int)SCHEDULED.getAndAddRelease(this, 1) != 0)
                 return; // already queued
-            if (currentThread() instanceof Worker w && (onCurrentWorker || this == w.current)) {
-                if (w.offerTaskLocal(this))
-                    return;
-            }
+            if (currentThread() instanceof Worker w && w.offerTaskLocal(this))
+                return; // queued into local list
             emitterSvc.putTaskShared(this);
         }
 
         /**
-         * Similar to {@link #awake(boolean)} with {@code onCurrentWorker=false}, but even
-         * if this method is called from a {@link Worker} currently executing
-         * {@code this.}{@link #task(Worker, int)}, {@code this} will be enqueued on a queue
-         * subject to work stealing.
+         * Equivalent to {@link #awakeSameWorker()} but assumes {@link Thread#currentThread()}
+         * is {@code currentWorker}. This should be used when a {@link #task(Worker, int)}
+         * whishes to continue processing later and is returning now only to be polite and
+         * allow other tasks to execute.
+         *
+         * <p><strong>Attention:</strong>{@code currentWorker} MUST BE
+         * {@link Thread#currentThread()}. If not, {@code this} or other tasks might be silently
+         * dropped from the queue and will thus starve for all eternity.</p>
          */
-        protected final void awakeParallel() {
-            if ((int)SCHEDULED.getAndAddRelease(this, 1) == 0)
-                emitterSvc.putTaskShared(this);
-        }
-
-        /**
-         * Equivalent to {@link #awake(boolean)} with {@code onCurrentWorker=true}.
-         * @param currentWorker The {@link Thread#currentThread()}, which is also given as
-         *                      an argument to {@link Task#task(Worker, int)}.
-         */
-        protected final void awake(Worker currentWorker) {
+        protected final void awakeSameWorker(Worker currentWorker) {
             if ((int)SCHEDULED.getAndAddRelease(this, 1) == 0) {
                 if (!currentWorker.offerTaskLocal(this))
                     emitterSvc.putTaskShared(this);
@@ -114,9 +104,45 @@ public final class EmitterService {
         }
 
         /**
+         * Ensures that after this call, {@link #task(Worker, int)} will execute at least once.
+         *
+         * <p>{@link #task(Worker, int)} will not be called from within this call, But it may
+         * be called in paralle from another worker thread before this call returns.</p>
+         *
+         * <p>If the calling thread is a worker thread that is currently executing {@code this},
+         * i.e., {@code this.}{@link #task(Worker, int)} is in the stack trace that leads
+         * to this call, {@code this} will be enqueued in the worker-private queue. Else, enqueue
+         * on a queue that is shared among all workers. </p>
+         */
+        protected final void awake() {
+            if ((int)SCHEDULED.getAndAddRelease(this, 1) != 0)
+                return; // already enqueued
+            if (currentThread() instanceof Worker w && w.current == this && w.offerTaskLocal(this))
+                return; // enqueued on worker-private queue
+            emitterSvc.putTaskShared(this);
+        }
+
+        /**
+         * Ensures that after this call, {@link #task(Worker, int)} will execute at least once.
+         *
+         * <p>{@link #task(Worker, int)} will not be called from within this call, But it may
+         * be called in paralle from another worker thread before this call returns.</p>
+         *
+         * <p>This method will always enqueue {@code this} into a queue that is shared with
+         * all worker threads, even if called from a worker thread. This reduces the average
+         * latency until {@link #task(Worker, int)} is called, at the expense of increased
+         * contention at the queue. Use this method when the intent of the {@link Task} is
+         * to offload computation, not simply "do this when you can".</p>
+         */
+        protected final void awakeParallel() {
+            if ((int)SCHEDULED.getAndAddRelease(this, 1) == 0)
+                emitterSvc.putTaskShared(this);
+        }
+
+        /**
          * Arbitrary code that does whatever is the purpose of this task. Implementations
-         * must not block and should {@link #awake(boolean)} and return instead of running loops. If
-         * this runs in response to an {@link #awake(boolean)}, it will run in a worker thread of the
+         * must not block and should {@link #awakeSameWorker()} and return instead of running loops. If
+         * this runs in response to an {@link #awakeSameWorker()}, it will run in a worker thread of the
          * {@link EmitterService} set at construction. If running due to {@link #runNow()}, it
          * may be called from an external thread. Whatever the trigger, there will be no parallel
          * executions of this method for a single {@link Task} instance.

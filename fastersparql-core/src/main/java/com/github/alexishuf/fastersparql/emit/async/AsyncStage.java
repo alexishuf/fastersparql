@@ -127,7 +127,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             deliverTermination(st, COMPLETED);
         } else {
             moveStateRelease(st, PENDING_COMPLETED);
-            awake(true);
+            awakeSameWorker();
         }
     }
 
@@ -137,7 +137,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             deliverTermination(st, CANCELLED);
         } else {
             moveStateRelease(st, PENDING_CANCELLED);
-            awake(true);
+            awakeSameWorker();
         }
     }
 
@@ -148,7 +148,7 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             deliverTermination(st, FAILED);
         } else {
             moveStateRelease(st, PENDING_FAILED);
-            awake(true);
+            awakeSameWorker();
         }
     }
 

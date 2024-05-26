@@ -158,7 +158,7 @@ public class GatheringEmitter<B extends Batch<B>>
             }
         } finally { st = unlock(); }
         if (moveStateRelease(st, termState))
-            awake(true);
+            awakeSameWorker();
     }
 
 

@@ -106,7 +106,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
         boolean done = false;
         int st = statePlain();
         if ((st&IS_CANCEL_REQ) != 0 || (done=moveStateRelease(st, CANCEL_REQUESTING)))
-            awake(true);
+            awakeSameWorker();
         return done;
     }
 
@@ -148,7 +148,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     }
 
     protected void resume() {
-        awake(false);
+        awake();
     }
 
     protected abstract int produceAndDeliver(int state);
@@ -176,7 +176,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
         if ((termState& IS_TERM_OR_TERM_DELIVERED) == IS_TERM)
             deliverTermination(st, termState);
         else if ((st&IS_TERM_DELIVERED) == 0 && mustAwake())
-            awake(worker);
+            awakeSameWorker(worker);
     }
     private static final int CAN_PRODUCE_AND_DELIVER   = IS_LIVE|IS_PENDING_TERM;
     private static final int IS_TERM_OR_TERM_DELIVERED = IS_TERM|IS_TERM_DELIVERED;

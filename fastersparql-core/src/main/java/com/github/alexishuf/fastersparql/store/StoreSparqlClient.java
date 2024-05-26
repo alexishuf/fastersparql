@@ -1082,7 +1082,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 asyncDone = r--;
             }
             if (notEnd)
-                awake(worker);
+                awakeSameWorker(worker);
         }
     }
 
