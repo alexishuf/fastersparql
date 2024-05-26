@@ -1739,7 +1739,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                     else                       filtered.setTail(b.releaseOwnership(this));
                     if (decision == TERMINATE) {
                         cancelUpstream();
-                        filtered = Batch.safeRecycle(filtered, this);
+                        next = Batch.safeRecycle(next, this);
                     }
                 }
                 assert filtered == null || filtered.validate() : "corrupted";
