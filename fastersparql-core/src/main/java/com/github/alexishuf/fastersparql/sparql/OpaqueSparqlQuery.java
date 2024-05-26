@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 
 import java.util.Arrays;
@@ -225,7 +226,7 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         }
     }
 
-    private static final class Scan implements AutoCloseable {
+    private static final class Scan implements SafeCloseable {
         final SegmentRope in;
         int pos;
         final int len;

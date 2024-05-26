@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 /**
@@ -30,12 +31,12 @@ import com.github.alexishuf.fastersparql.util.owned.Orphan;
  * a SPARQL SELECT, as there are other choices in jena, RDF4J, hdt-java and so on.</p>
  *
  */
-public interface SparqlClient extends AutoCloseable {
+public interface SparqlClient extends SafeCloseable {
     /** The endpoint queried by this {@link SparqlClient}. */
     SparqlEndpoint endpoint();
 
     /** Delays the effects of {@link SparqlClient#close()} until after {@link Guard#close()} */
-    interface Guard extends AutoCloseable {
+    interface Guard extends SafeCloseable {
         /**
          * Closes or allows {@link SparqlClient#close()} to effectively close the client.
          *

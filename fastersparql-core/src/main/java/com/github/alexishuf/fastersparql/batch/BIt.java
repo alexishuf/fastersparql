@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsFeeder;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -14,7 +15,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-public interface BIt<B extends Batch<B>> extends AutoCloseable, StreamNode {
+public interface BIt<B extends Batch<B>> extends SafeCloseable, StreamNode {
     /**
      * Value to use with {@link BIt#minWait(long, TimeUnit)} when one desires the lowest possible
      * wait time without introducing wasteful overhead.

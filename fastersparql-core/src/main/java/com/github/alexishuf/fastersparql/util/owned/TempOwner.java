@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.owned;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
@@ -13,7 +14,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  *     } // will enforce owned has the same owner it had before new TmpOwner()
  * }</pre>
  */
-public class TempOwner<O extends Owned<O>> implements AutoCloseable {
+public class TempOwner<O extends Owned<O>> implements SafeCloseable {
     private final @Nullable Object oldOwner;
     private final O owned;
     private final Thread thread;

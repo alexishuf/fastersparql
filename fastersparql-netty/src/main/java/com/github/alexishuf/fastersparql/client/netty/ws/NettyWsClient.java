@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.exceptions.FSServerException;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
@@ -25,7 +26,7 @@ import java.util.concurrent.Executor;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
-public class NettyWsClient implements AutoCloseable {
+public class NettyWsClient implements SafeCloseable {
     private final EventLoopGroupHolder elgHolder;
     private final Bootstrap bootstrap;
     private final @Nullable SimpleChannelPool pool;

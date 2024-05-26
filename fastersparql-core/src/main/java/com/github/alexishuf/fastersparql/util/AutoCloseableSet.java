@@ -8,7 +8,7 @@ import java.util.Collection;
 import static java.util.Arrays.asList;
 
 public class AutoCloseableSet<T extends AutoCloseable> extends ArrayList<T>
-        implements AutoCloseable {
+        implements SafeCloseable {
     private static final AutoCloseableSet<?> EMPTY = new AutoCloseableSet<>();
     private boolean parallelClose = false;
 

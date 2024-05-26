@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.store.index.triples;
 
 import com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import jdk.incubator.vector.VectorMask;
 
 import java.io.IOException;
@@ -17,7 +18,7 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static jdk.incubator.vector.IntVector.fromMemorySegment;
 import static jdk.incubator.vector.IntVector.zero;
 
-public class Triples extends OffsetMappedLEValues implements AutoCloseable {
+public class Triples extends OffsetMappedLEValues implements SafeCloseable {
     public static final long NKEYS_MASK = 0x00ffffffffffffffL;
     public static final long OFF_W_MASK = 0x0100000000000000L;
     public static final long  ID_W_MASK = 0x0200000000000000L;

@@ -1,7 +1,8 @@
 package com.github.alexishuf.fastersparql.fed;
 
-public interface SparqlServer extends AutoCloseable  {
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
+
+public interface SparqlServer extends SafeCloseable {
     String sparqlPath();
     int port();
-    @Override void close();
 }

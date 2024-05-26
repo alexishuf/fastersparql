@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -80,7 +81,7 @@ public class Optimizer extends CardinalityEstimator {
         }
     }
 
-    private static final class State implements AutoCloseable {
+    private static final class State implements SafeCloseable {
         private static final int BYTES = 16 + 14*4 + 2*8
                 + 2*Vars.BYTES + 3*(16+8) /*ArrayList*/
                 + ArrayBinding.BYTES

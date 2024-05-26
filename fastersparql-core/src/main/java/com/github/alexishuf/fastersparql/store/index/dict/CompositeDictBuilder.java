@@ -2,13 +2,14 @@ package com.github.alexishuf.fastersparql.store.index.dict;
 
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
 
-public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
+public class CompositeDictBuilder implements SafeCloseable, NTVisitor {
     private static final Logger log = LoggerFactory.getLogger(CompositeDictBuilder.class);
 
     private final Path tempDir, destDir;
@@ -50,7 +51,7 @@ public class CompositeDictBuilder implements AutoCloseable, NTVisitor {
         return secondPass = new SecondPass(Dict.loadStandalone(sharedPath));
     }
 
-    public class SecondPass implements AutoCloseable, NTVisitor {
+    public class SecondPass implements SafeCloseable, NTVisitor {
         private final DictSorter sorter;
         private final Dict sharedDict;
         private final Dict.AbstractLookup<?> shared;

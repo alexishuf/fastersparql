@@ -2,10 +2,11 @@ package com.github.alexishuf.fastersparql.lrb.sources;
 
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 
 import java.util.Objects;
 
-public final class SourceHandle implements AutoCloseable {
+public final class SourceHandle implements SafeCloseable {
     public final String specUrl;
     public final LrbSource source;
     public final SourceKind kind;

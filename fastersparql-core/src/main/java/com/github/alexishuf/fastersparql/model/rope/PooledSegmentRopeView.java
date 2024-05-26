@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import org.checkerframework.checker.mustcall.qual.Owning;
@@ -10,7 +11,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
-public class PooledSegmentRopeView extends PooledSegmentRopeView0 implements AutoCloseable {
+public class PooledSegmentRopeView extends PooledSegmentRopeView0 implements SafeCloseable {
     private static final int BYTES = SegmentRopeView.BYTES + 2*4 + 64;
     private static final boolean DEBUG = PooledSegmentRopeView.class.desiredAssertionStatus();
     private static final Supplier<PooledSegmentRopeView> FAC = new Supplier<>() {

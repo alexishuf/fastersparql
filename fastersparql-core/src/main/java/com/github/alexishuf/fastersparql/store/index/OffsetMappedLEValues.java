@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.store.index;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sun.misc.Unsafe;
@@ -25,7 +26,7 @@ import static java.nio.ByteOrder.LITTLE_ENDIAN;
  * <p>This class purpose is to simplify writing code where width of offsets and values
  * is only known at runtime. It uses {@link Unsafe} internally.</p>
  */
-public abstract class OffsetMappedLEValues implements AutoCloseable {
+public abstract class OffsetMappedLEValues implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(OffsetMappedLEValues.class);
     private static final long   INT_MASK = 0x00000000ffffffffL;
     private static final long SHORT_MASK = 0x000000000000ffffL;

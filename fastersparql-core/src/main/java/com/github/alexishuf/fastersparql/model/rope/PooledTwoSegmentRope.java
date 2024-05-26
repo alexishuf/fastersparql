@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 
@@ -9,7 +10,7 @@ import java.util.function.Supplier;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_SEGMENT;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_UTF8;
 
-public class PooledTwoSegmentRope extends PooledTwoSegmentRope0 implements AutoCloseable {
+public class PooledTwoSegmentRope extends PooledTwoSegmentRope0 implements SafeCloseable {
     private static final boolean DEBUG = PooledTwoSegmentRope.class.desiredAssertionStatus();
     private static final int BYTES = TwoSegmentRope.BYTES + (2*4) + 64;
     private static final Supplier<PooledTwoSegmentRope> FAC = PooledTwoSegmentRope::new;

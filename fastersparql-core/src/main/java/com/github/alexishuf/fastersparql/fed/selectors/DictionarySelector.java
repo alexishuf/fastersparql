@@ -13,6 +13,7 @@ import com.github.alexishuf.fastersparql.store.index.dict.DictSorter;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityStandaloneDict;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
@@ -51,7 +52,7 @@ public class DictionarySelector extends Selector {
         return l;
     }
 
-    private class Lookup implements AutoCloseable {
+    private class Lookup implements SafeCloseable {
         private static final int BYTES = 16 + 4*4 + 2* LocalityCompositeDict.Lookup.BYTES;
         LocalityStandaloneDict.Lookup predicates, classes;
         private boolean live = false;

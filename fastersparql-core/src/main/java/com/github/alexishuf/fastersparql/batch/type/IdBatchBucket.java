@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.util.BS;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
@@ -204,7 +205,7 @@ public abstract sealed class IdBatchBucket<B extends IdBatch<B>>
         return new It();
     }
 
-    public class It implements Iterator<B>, AutoCloseable {
+    public class It implements Iterator<B>, SafeCloseable {
         private B tmp = type.create(cols).takeOwnership(this);
         private int row = 0;
         private boolean filled = false;

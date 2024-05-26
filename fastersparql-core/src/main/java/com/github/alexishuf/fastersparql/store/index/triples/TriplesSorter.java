@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.store.index.triples;
 
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
 import com.github.alexishuf.fastersparql.store.index.Sorter;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.slf4j.Logger;
@@ -127,7 +128,7 @@ public class TriplesSorter extends Sorter<TriplesBlock> {
         }
     }
 
-    private static final class Merger implements AutoCloseable {
+    private static final class Merger implements SafeCloseable {
         private static final int COUNT_KEYS = 0;
         private static final int WRITE_IDS = 1;
 

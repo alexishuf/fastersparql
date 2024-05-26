@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
 import com.github.alexishuf.fastersparql.store.index.Sorter;
 import com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -198,7 +199,7 @@ public class DictSorter extends Sorter<Path> implements NTVisitor {
 
     /* --- --- --- internals --- --- --- */
 
-    private static final class Merger implements AutoCloseable {
+    private static final class Merger implements SafeCloseable {
         private final SortedStandaloneDict[] blockDicts;
         private final SortedStandaloneDict.Lookup[] blocks;
         private final SegmentRope[] currStrings;

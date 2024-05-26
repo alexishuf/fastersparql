@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.store.index;
 
 import com.github.alexishuf.fastersparql.store.index.dict.DictSorter;
 import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,7 @@ import static com.github.alexishuf.fastersparql.util.concurrent.Async.*;
 import static java.lang.invoke.MethodHandles.lookup;
 
 
-public class Sorter<T> implements AutoCloseable {
+public class Sorter<T> implements SafeCloseable {
     private static final VarHandle REC_BLOCK, WRITING;
     static {
         try {
@@ -136,7 +137,7 @@ public class Sorter<T> implements AutoCloseable {
         return result;
     }
 
-    public interface BlockJob<T> extends AutoCloseable {
+    public interface BlockJob<T> extends SafeCloseable {
         @Override void close();
         default boolean isEnd() { return false; }
         @SuppressWarnings("BooleanMethodIsAlwaysInverted") boolean isEmpty();

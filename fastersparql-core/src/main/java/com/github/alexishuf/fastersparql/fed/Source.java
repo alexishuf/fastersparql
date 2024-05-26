@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.tomlj.TomlTable;
 
 import java.io.IOException;
@@ -19,7 +20,7 @@ import java.util.List;
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.closeAll;
 
 @SuppressWarnings("ClassCanBeRecord")
-public final class Source implements AutoCloseable {
+public final class Source implements SafeCloseable {
     /* --- --- --- keys dictionary --- --- --- */
     public static final String TYPE = "type";
     public static final String SPARQL_TYPE = "sparql";

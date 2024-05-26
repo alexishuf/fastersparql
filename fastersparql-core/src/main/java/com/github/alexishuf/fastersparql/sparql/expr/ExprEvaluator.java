@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 
 /**
  * An evaluator evaluates some {@link Expr} replacing vars with values from a given
@@ -12,8 +13,6 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
  * triggered its {@link #evaluate(Batch, int)} call. Implementations do not check for concurrency
  * or reentrancy, thus their presence might lead to unpredictable outcomes. </p>
  */
-public interface ExprEvaluator extends AutoCloseable {
+public interface ExprEvaluator extends SafeCloseable {
     Term evaluate(Batch<?> batch, int row);
-
-    @Override void close();
 }

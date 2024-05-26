@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.fed.Federation;
 import com.github.alexishuf.fastersparql.fed.Source;
 import com.github.alexishuf.fastersparql.fed.Spec;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -24,7 +25,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.util.ExceptionCondenser.closeAll;
 
-public class FederationHandle implements AutoCloseable {
+public class FederationHandle implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(FederationHandle.class);
     public final Federation federation;
     private final AutoCloseableSet<SourceHandle> sourceHandles;

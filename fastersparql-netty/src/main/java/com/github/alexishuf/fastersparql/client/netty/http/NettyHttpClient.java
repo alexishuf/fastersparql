@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyChannelDebugger;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
@@ -30,7 +31,7 @@ import java.util.function.Supplier;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
 
-public final class NettyHttpClient implements AutoCloseable {
+public final class NettyHttpClient implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(NettyHttpClient.class);
     private final static boolean DEBUG = FSNettyProperties.debugClientChannel();
 

@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
@@ -226,7 +227,7 @@ public abstract sealed class TermBatchBucket
         return new It();
     }
 
-    private class It implements Iterator<TermBatch>, AutoCloseable {
+    private class It implements Iterator<TermBatch>, SafeCloseable {
         private TermBatch tmp = TERM.create(cols).takeOwnership(this);
         private int row = 0;
         private boolean filled = false;

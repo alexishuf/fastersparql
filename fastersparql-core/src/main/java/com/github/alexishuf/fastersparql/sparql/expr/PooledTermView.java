@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -10,7 +11,7 @@ import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 
-public final class PooledTermView extends PooledTermView0 implements AutoCloseable {
+public final class PooledTermView extends PooledTermView0 implements SafeCloseable {
     private static final int BYTES = TermView.BYTES + 2*4 + 64;
     private static final boolean DEBUG = PooledTermView.class.desiredAssertionStatus();
     private static final SegmentRope EMPTY_STRING_LOCAL = EMPTY_STRING.local();

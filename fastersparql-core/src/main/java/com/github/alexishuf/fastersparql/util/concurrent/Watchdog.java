@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.util.CloseShieldOutputStream;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.TeeOutputStream;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -28,7 +29,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.*;
 
 @SuppressWarnings("UnusedReturnValue")
-public class Watchdog implements AutoCloseable {
+public class Watchdog implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(Watchdog.class);
     private static final VarHandle DEADLINE;
     private static final MethodHandle ncdDumpAndReset;

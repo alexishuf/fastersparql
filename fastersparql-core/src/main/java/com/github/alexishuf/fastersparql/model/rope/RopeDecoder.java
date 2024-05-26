@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 
@@ -13,7 +14,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
 
-public class RopeDecoder implements AutoCloseable {
+public class RopeDecoder implements SafeCloseable {
     public static final int BYTES = 16 + 4*4 + 20+128;
     private static final boolean DEBUG = RopeDecoder.class.desiredAssertionStatus();
     private static final Supplier<RopeDecoder> FAC = new Supplier<>() {

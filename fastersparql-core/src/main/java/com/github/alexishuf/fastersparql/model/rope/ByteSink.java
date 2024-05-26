@@ -1,12 +1,13 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
 
 @SuppressWarnings("unchecked")
-public interface ByteSink<S extends ByteSink<S, T>, T> extends AutoCloseable  {
+public interface ByteSink<S extends ByteSink<S, T>, T> extends SafeCloseable {
     /**
      * Copy or move the bytes written to this {@link ByteSink} as an instance of {@code T}.
      *

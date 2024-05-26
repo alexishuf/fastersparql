@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.exceptions.FSCancelledException;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
@@ -23,7 +24,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 
-public class ScatterBIt<B extends Batch<B>> implements AutoCloseable, Runnable, StreamNode {
+public class ScatterBIt<B extends Batch<B>> implements SafeCloseable, Runnable, StreamNode {
     private static final Logger log = LoggerFactory.getLogger(ScatterBIt.class);
     private static final VarHandle CANCELLED;
     static {

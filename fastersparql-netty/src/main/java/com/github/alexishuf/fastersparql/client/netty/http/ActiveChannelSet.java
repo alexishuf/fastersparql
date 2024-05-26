@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.FastAliveSet;
 import io.netty.channel.Channel;
 import io.netty.util.concurrent.Future;
@@ -13,7 +14,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 @SuppressWarnings("UnusedReturnValue")
-public class ActiveChannelSet implements AutoCloseable {
+public class ActiveChannelSet implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(ActiveChannelSet.class);
     private static final VarHandle CLOSED;
     static {

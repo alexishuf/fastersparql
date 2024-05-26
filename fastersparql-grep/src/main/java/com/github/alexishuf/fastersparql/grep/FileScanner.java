@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.grep;
 
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
@@ -24,7 +25,7 @@ import java.util.concurrent.locks.LockSupport;
 import static java.lang.Thread.currentThread;
 import static java.lang.foreign.MemorySegment.copy;
 
-public class FileScanner implements AutoCloseable {
+public class FileScanner implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(FileScanner.class);
     private static final AtomicInteger nextScannerId = new AtomicInteger();
     private static final VarHandle USER, ACTIVE_CHUNKS, LIVE_CHUNKS, ERROR, TASK_ST;

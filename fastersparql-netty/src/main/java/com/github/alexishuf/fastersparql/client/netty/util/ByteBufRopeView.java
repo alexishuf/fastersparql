@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client.netty.util;
 
 import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
@@ -12,7 +13,7 @@ import java.lang.foreign.MemorySegment;
 
 import static java.util.Objects.requireNonNull;
 
-public final class ByteBufRopeView implements AutoCloseable {
+public final class ByteBufRopeView implements SafeCloseable {
     private static final MemorySegment   EMPTY_SEGMENT = FinalSegmentRope.EMPTY.segment;
     private static final byte @NonNull[] EMPTY_U8      = requireNonNull(FinalSegmentRope.EMPTY.utf8);
 

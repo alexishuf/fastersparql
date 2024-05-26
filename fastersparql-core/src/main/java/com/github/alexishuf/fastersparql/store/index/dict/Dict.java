@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues;
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
@@ -20,7 +21,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
-public abstract class Dict extends OffsetMappedLEValues implements AutoCloseable {
+public abstract class Dict extends OffsetMappedLEValues implements SafeCloseable {
     public static final long     STRINGS_MASK = 0x00ffffffffffffffL;
     public static final long       FLAGS_MASK = ~STRINGS_MASK;
     public static final long       OFF_W_MASK = 0x0100000000000000L;

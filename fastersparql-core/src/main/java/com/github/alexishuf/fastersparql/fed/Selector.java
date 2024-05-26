@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Future;
 
-public abstract class Selector implements AutoCloseable {
+public abstract class Selector implements SafeCloseable {
     private static final Logger log = LoggerFactory.getLogger(Selector.class);
 
     public static final String TYPE = "type";

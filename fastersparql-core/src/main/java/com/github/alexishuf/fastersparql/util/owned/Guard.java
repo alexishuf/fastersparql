@@ -3,11 +3,12 @@ package com.github.alexishuf.fastersparql.util.owned;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.checkerframework.checker.mustcall.qual.Owning;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
-public sealed class Guard<O extends Owned<O>> implements AutoCloseable {
+public sealed class Guard<O extends Owned<O>> implements SafeCloseable {
     protected @Nullable O owned;
     protected final Object owner;
 

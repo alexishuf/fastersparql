@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
 import com.github.alexishuf.fastersparql.util.LowLevelHelper;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
@@ -172,7 +173,7 @@ public abstract sealed class CompressedRowBucket
     }
 
 
-    private class It implements Iterator<CompressedBatch>, AutoCloseable {
+    private class It implements Iterator<CompressedBatch>, SafeCloseable {
         private @Nullable CompressedBatch batch = COMPRESSED.create(cols).takeOwnership(this);
         private boolean filled = false;
         private int row = 0;

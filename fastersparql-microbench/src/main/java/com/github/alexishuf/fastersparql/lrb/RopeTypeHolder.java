@@ -6,13 +6,14 @@ import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class RopeTypeHolder implements AutoCloseable {
+public class RopeTypeHolder implements SafeCloseable {
     private final RopeType ropeType;
     private final List<ByteBuf> byteBufs = new ArrayList<>();
     private final ByteBufRopeView bbRopeView = new ByteBufRopeView(new SegmentRopeView());

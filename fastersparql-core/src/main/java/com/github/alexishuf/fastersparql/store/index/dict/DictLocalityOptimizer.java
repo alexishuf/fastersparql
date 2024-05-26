@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.store.index.dict;
 
 import com.github.alexishuf.fastersparql.store.index.OffsetMappedLEValues;
 import com.github.alexishuf.fastersparql.store.index.SmallBBPool;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,7 +73,7 @@ class DictLocalityOptimizer {
 
     }
 
-    private static class Converter implements AutoCloseable {
+    private static class Converter implements SafeCloseable {
         private boolean closed = false;
         private final Reader reader;
         private final MemorySegment out;

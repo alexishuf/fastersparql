@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.util.NamedService;
 import com.github.alexishuf.fastersparql.util.NamedServiceLoader;
+import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.mustcall.qual.MustCall;
@@ -181,7 +182,7 @@ public abstract class ResultsSerializer<S extends ResultsSerializer<S>>
      * {@link #take()} to take ownership of the reassembled linked list.</p>
      */
     @MustCall("take")
-    public static class Reassemble<B extends Batch<B>> implements NodeConsumer<B>, AutoCloseable {
+    public static class Reassemble<B extends Batch<B>> implements NodeConsumer<B>, SafeCloseable {
         private @Nullable B head;
 
         /**
