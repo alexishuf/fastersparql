@@ -70,7 +70,6 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
 import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
-import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.REC_MAX_FRAME_LEN;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
@@ -1105,6 +1104,7 @@ public class NettySparqlServer implements SparqlServer {
         protected TextWebSocketFrame endFrame = new TextWebSocketFrame(wrappedBuffer(END));
         protected final MutableRope bindReqRope;
         protected final TextWebSocketFrame bindReqFrame;
+        protected final PrivateRopeFactory ropeFactory = new PrivateRopeFactory(64);
         protected @Nullable WsServerParser<CompressedBatch> bindingsParser;
         protected final SegmentRopeView tmpView = new SegmentRopeView();
         protected long lastSeqSent;
@@ -1428,7 +1428,7 @@ public class NettySparqlServer implements SparqlServer {
                         return;
                     }
                     j = msg.skipUntil(i, len, (byte)'\t', (byte)'\n');
-                    bindingsVars.add(asFinal(msg, i+1, j));
+                    bindingsVars.add(ropeFactory.asFinal(msg, i+1, j));
                 }
                 waitingVars = false;
 

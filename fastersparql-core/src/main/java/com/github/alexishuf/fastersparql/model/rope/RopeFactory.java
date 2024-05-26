@@ -4,21 +4,14 @@ import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.mustcall.qual.Owning;
-import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.function.Supplier;
 
 import static java.lang.Character.MAX_SURROGATE;
 import static java.lang.Character.MIN_SURROGATE;
-import static java.lang.System.arraycopy;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 @MustCall("take")
-public class RopeFactory {
-    private static final int CHUNK_SIZE = 128;
-    private static final int FULL_CHUNK = CHUNK_SIZE-32;
+public final class RopeFactory extends BaseRopeFactory<RopeFactory> {
     private static final int BYTES = 16 + 6*4 + 20+CHUNK_SIZE;
 
     private static final Supplier<RopeFactory> FAC = new Supplier<>() {
@@ -31,14 +24,9 @@ public class RopeFactory {
         Primer.INSTANCE.sched(ALLOC::prime);
     }
 
-    private MemorySegment chunkSegment;
-    private byte[] chunk, dst;
-    private int chunkPos, dstPos;
     private boolean live;
 
-    private RopeFactory() {
-        chunkSegment = MemorySegment.ofArray(dst = chunk = new byte[CHUNK_SIZE]);
-    }
+    private RopeFactory() {super(CHUNK_SIZE);}
 
     /**
      * Get a {@link RopeFactory} with enough capacity for {@code bytes}.
@@ -60,22 +48,10 @@ public class RopeFactory {
         if (fac.live)
             throw new IllegalStateException("Got live RopeFactory from pool");
         fac.live = true;
-        byte[] dst = fac.chunk;
-        if (fac.chunkPos + bytes < dst.length) {
-            fac.dstPos = fac.chunkPos;
-        } else {
-            if (bytes < CHUNK_SIZE && fac.chunk.length > FULL_CHUNK) {
-                fac.chunk        = dst = new byte[CHUNK_SIZE];
-                fac.chunkSegment = MemorySegment.ofArray(dst);
-                fac.chunkPos     = 0;
-            } else {
-                dst = new byte[bytes];
-            }
-            fac.dstPos = 0;
-        }
-        fac.dst = dst;
+        fac.reserve(bytes);
         return fac;
     }
+
 
     /** How many UTF-8 bytes are required to encode {@code s} */
     public static int requiredBytes(String s) {
@@ -130,128 +106,12 @@ public class RopeFactory {
      */
     public FinalSegmentRope take() {
         if (live) {
-            MemorySegment seg = chunkSegment;
-            int begin = 0, len = dstPos;
-            byte[] dst = this.dst;
-            if (dst == chunk) {
-                begin    = chunkPos;
-                chunkPos = len;
-                len     -= begin;
-            } else {
-                this.dst    = chunk;
-                this.dstPos = chunkPos;
-                seg         = MemorySegment.ofArray(dst);
-            }
+            var rope = take0();
             live = false;
-            FinalSegmentRope rope;
-            if (len > 1)
-                rope = new FinalSegmentRope(seg, dst, begin, len);
-            else if (len == 0)
-                rope = FinalSegmentRope.EMPTY;
-            else
-                rope = SINGLE_CHAR_ROPES[dst[begin]];
             ALLOC.offer(this);
             return rope;
         } else {
             throw new IllegalStateException("duplicate/concurrent close()");
         }
-    }
-    private static final FinalSegmentRope[] SINGLE_CHAR_ROPES;
-    static {
-        byte[] chars = new byte[128];
-        MemorySegment charsSegment = MemorySegment.ofArray(chars);
-        for (int i = 0; i < chars.length; i++)
-            chars[i] = (byte)i;
-        FinalSegmentRope[] ropes = new FinalSegmentRope[128];
-        for (int i = 0; i < ropes.length; i++)
-            ropes[i] = new FinalSegmentRope(charsSegment, chars, i, 1);
-        SINGLE_CHAR_ROPES = ropes;
-    }
-
-    public @This RopeFactory add(CharSequence cs) {
-        if (cs instanceof Rope r)
-            return add(r);
-        dstPos = RopeEncoder.charSequence2utf8(cs, 0, cs.length(), dst, dstPos);
-        return this;
-    }
-
-    public @This RopeFactory add(CharSequence cs, int begin, int end) {
-        if (cs instanceof Rope r)
-            return add(r, begin, end);
-        dstPos = RopeEncoder.charSequence2utf8(cs, begin, end, dst, dstPos);
-        return this;
-    }
-
-    public @This RopeFactory add(byte b) {
-        dst[dstPos++] = b;
-        return this;
-    }
-
-    public @This RopeFactory add(char c) {
-        dstPos = RopeEncoder.char2utf8(c, dst, dstPos);
-        return this;
-    }
-
-    public @This RopeFactory add(long n) {
-        if (n >= 0 && n < 10) {
-            dst[dstPos++] = (byte)('0'+n);
-        } else if (n == Long.MIN_VALUE) {
-            add(MIN_LONG_U8);
-        } else {
-            int sign = (int)(n>>>63), i = dstPos+sign+(int)Math.floor(Math.log10(n)+1);
-            dstPos = i;
-            n = Math.abs(n);
-            for (long rem = n%10; n  > 0; n = n/10, rem = n%10)
-                dst[--i] = (byte)('0' + rem);
-            if (sign == 1)
-                dst[--i] = '-';
-        }
-        return this;
-    }
-    private static final byte[] MIN_LONG_U8 = Long.toString(Long.MIN_VALUE).getBytes(UTF_8);
-
-    public @This RopeFactory add(Rope r) {
-        int len = r.len;
-        r.copy(0, len, dst, dstPos);
-        dstPos += len;
-        return this;
-    }
-
-    public @This RopeFactory add(MutableRope r) {
-        int len = r.len;
-        arraycopy(r.u8(), (int)r.offset, dst, dstPos, len);
-        dstPos += len;
-        return this;
-    }
-
-    public @This RopeFactory add(Rope r, int begin, int end) {
-        r.copy(begin, end, dst, dstPos);
-        dstPos += end-begin;
-        return this;
-    }
-
-    public @This RopeFactory add(MutableRope r, int begin, int end) {
-        int len = end - begin;
-        arraycopy(r.u8(), (int)r.offset+begin, dst, dstPos, len);
-        dstPos += len;
-        return this;
-    }
-
-    public @This RopeFactory add(byte[] u8) {
-        arraycopy(u8, 0, dst, dstPos, u8.length);
-        dstPos += u8.length;
-        return this;
-    }
-
-    public @This RopeFactory add(byte[] u8, int begin, int end) {
-        arraycopy(u8, begin, dst, dstPos, end-begin);
-        dstPos += end-begin;
-        return this;
-    }
-
-    public @This RopeFactory add(MemorySegment segment, long offset, int len) {
-        MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, offset, dst, dstPos, len);
-        dstPos += len;
-        return this;
     }
 }

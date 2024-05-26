@@ -47,6 +47,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
     boolean typed, eager, sharedSuffixed;
     private Result result;
     public int localBegin, localEnd;
+    private final PrivateRopeFactory ropeFactory = new PrivateRopeFactory();
     private FinalSegmentRope shared;
     private final PrefixMap prefixMap = PrefixMap.create().takeOwnership(this).resetToBuiltin();
 
@@ -420,7 +421,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
             case '<'       -> Term.wrap(sh, in.sub(localBegin, localEnd));
             case '"', '\'' -> {
                 var local = lBuf == in ? in.sub(localBegin, localEnd)
-                                       : asFinal(lBuf, localBegin, localEnd);
+                                       : ropeFactory.asFinal(lBuf, localBegin, localEnd);
                 yield Term.wrap(local, sh);
             }
             default -> switch (ttlKind) {
@@ -437,7 +438,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                 case TTL_KIND_TRUE     -> TRUE;
                 case TTL_KIND_FALSE    -> FALSE;
                 case TTL_KIND_TYPE     -> RDF_TYPE;
-                case TTL_KIND_PREFIXED -> Term.wrap(sh, asFinal(lBuf));
+                case TTL_KIND_PREFIXED -> Term.wrap(sh, ropeFactory.asFinal(lBuf));
                 case TTL_KIND_BNODE    -> {
                     var r = asFinal(in, begin, stopped);
                     yield Term.splitAndWrap(r);
