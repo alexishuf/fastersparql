@@ -91,12 +91,6 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
             if (Timestamp.nanoTime() > deadline)
                 setFlagsRelease(IS_ASYNC);
         } else if ((state&IS_TERM) == 0) {
-            var tail = pollFillingBatch();
-            if (tail != null) {
-                B owned = tail.takeOwnership(this);
-                owned.append(orphan);
-                orphan = owned.releaseOwnership(this);
-            }
             quickAppend(orphan);
         } else {
             Orphan.recycle(orphan);

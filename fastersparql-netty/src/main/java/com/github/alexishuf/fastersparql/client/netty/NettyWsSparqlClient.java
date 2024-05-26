@@ -1019,7 +1019,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         /* --- --- --- bindings Receiver --- --- --- */
 
-        private final class BindingsReceiver implements Receiver<B>, HasFillingBatch<B> {
+        private final class BindingsReceiver implements Receiver<B> {
             @Override public Stream<? extends StreamNode> upstreamNodes() {
                 return Stream.ofNullable(leftEmitter);
             }
@@ -1044,9 +1044,6 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 B f = orphan.takeOwnership(this);
                 f.copy(batch);
                 h.sendBatch(f.releaseOwnership(this));
-            }
-            @Override public @Nullable Orphan<B> pollFillingBatch() {
-                return h.pollFillingBatch();
             }
             @Override public void  onComplete()            { h.sendBindingTerm(null); }
             @Override public void onCancelled()            { h.sendBindingTerm(CancelledException.INSTANCE); }
