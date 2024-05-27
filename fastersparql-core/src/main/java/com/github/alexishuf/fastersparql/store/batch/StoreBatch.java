@@ -398,7 +398,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
                 localOff = tmp.sndOff;
                 localLen = tmp.sndLen;
             }
-            return Term.toSparql(dest, prefixAssigner, sh,
+            return Term.toSparql(dest, prefixAssigner, null, sh,
                                  local, localU8, localOff, localLen, isLit);
         } finally {
             lookup.recycle(this);

@@ -129,7 +129,8 @@ public final class Modifier extends Plan {
     @Override public SegmentRope sparql() {
         try (var sb = PooledMutableRope.getWithCapacity(256)) {
             if (isAsk()) {
-                groupGraphPattern(sb.append(ASK_u8).append(' '), 0, PrefixAssigner.NOP);
+                sb.append(ASK_u8).append(' ');
+                groupGraphPattern(sb, 0, PrefixAssigner.NOP, null);
             } else {
                 sb.append(SELECT_u8).append(' ');
                 switch (distinct) {
@@ -139,20 +140,31 @@ public final class Modifier extends Plan {
                     case null -> {
                     }
                 }
-                if (projection != null) {
-                    for (var s : projection) sb.append('?').append(s).append(' ');
-                    sb.unAppend(1);
-                } else {
-                    sb.append('*');
+                try (var var2BNode = writeProjection(sb)) {
+                    groupGraphPattern(sb, 0, PrefixAssigner.NOP, var2BNode);
+                    if (offset > 0)
+                        sb.append(' ').append(OFFSET_u8).append(' ').append(offset);
+                    if (limit < Long.MAX_VALUE)
+                        sb.append(' ').append(LIMIT_u8).append(' ').append(limit);
                 }
-
-                groupGraphPattern(sb, 0, PrefixAssigner.NOP);
-                if (offset > 0) sb.append(' ').append(OFFSET_u8).append(' ').append(offset);
-                if (limit < Long.MAX_VALUE)
-                    sb.append(' ').append(LIMIT_u8).append(' ').append(limit);
             }
             return FinalSegmentRope.asFinal(sb);
         }
+    }
+
+    private Var2BNodeAssigner writeProjection(MutableRope sb) {
+        if (projection != null) {
+            if (projection.isEmpty()) {
+                sb.append('*');
+                return new Var2BNodeAssigner();
+            } else {
+                for (var s : projection) sb.append('?').append(s).append(' ');
+                sb.unAppend(1);
+            }
+        } else {
+            sb.append('*');
+        }
+        return null;
     }
 
     List<Expr> boundFilters(Binding binding) {

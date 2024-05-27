@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
+import com.github.alexishuf.fastersparql.operators.plan.Var2BNodeAssigner;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.ArrayBinding;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -59,7 +60,11 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     }
 
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
-    int toSparql(ByteSink<?, ?> out, PrefixAssigner prefixAssigner);
+    int toSparql(ByteSink<?, ?> out, PrefixAssigner prefixAssigner, Var2BNodeAssigner var2BNode);
+
+    default int toSparql(ByteSink<?, ?> out, PrefixAssigner prefixAssigner) {
+        return toSparql(out, prefixAssigner, null);
+    }
 
     default Rope toSparql() {
         try (var r = PooledMutableRope.get()) {
@@ -133,7 +138,8 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
         private static final byte[] NOT_EXISTS = "NOT EXISTS".getBytes(UTF_8);
         private static final byte[] EXISTS = "EXISTS".getBytes(UTF_8);
 
-        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner) {
+        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner,
+                                      Var2BNodeAssigner var2BNode) {
             int oldLen = out.len();
             int indent = 0;
             if (out instanceof MutableRope r) {
@@ -144,7 +150,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
                 }
             }
             out.append(negate ? NOT_EXISTS : EXISTS);
-            filter.groupGraphPattern(out, indent, assigner);
+            filter.groupGraphPattern(out, indent, assigner, var2BNode);
             return out.len()-oldLen;
         }
 
@@ -207,13 +213,14 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             return hash;
         }
 
-        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner) {
+        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner,
+                                      Var2BNodeAssigner var2BNode) {
             int oldLen = out.len();
             out.append(sparqlName()).append('(');
             int n = argCount();
             for (int i = 0; i < n; i++) {
                 if (i > 0) out.append(',').append(' ');
-                arg(i).toSparql(out, assigner);
+                arg(i).toSparql(out, assigner, var2BNode);
             }
             out.append(')');
             return out.len()-oldLen;
@@ -261,8 +268,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     abstract class UnaryOperator extends UnaryFunction {
         public UnaryOperator(Expr in) { super(in); }
 
-        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner) {
-            return in.toSparql(out.append(sparqlName()), assigner);
+        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner,
+                                      Var2BNodeAssigner var2BNode) {
+            return in.toSparql(out.append(sparqlName()), assigner, var2BNode);
         }
     }
 
@@ -300,12 +308,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     abstract class BinaryOperator extends BinaryFunction {
         public BinaryOperator(Expr l, Expr r) { super(l, r); }
 
-        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner) {
+        @Override public int toSparql(ByteSink<?, ?> out, PrefixAssigner assigner,
+                                      Var2BNodeAssigner var2BNodeAssigner) {
             int oldLen = out.len();
             out.append('(');
-            l.toSparql(out, assigner);
+            l.toSparql(out, assigner, var2BNodeAssigner);
             out.append(' ').append(sparqlName()).append(' ');
-            r.toSparql(out, assigner);
+            r.toSparql(out, assigner, var2BNodeAssigner);
             out.append(')');
             return out.len()-oldLen;
         }

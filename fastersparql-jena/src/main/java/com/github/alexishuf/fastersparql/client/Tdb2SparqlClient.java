@@ -51,9 +51,11 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
     @Override protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
         QueryExec exec = null;
         try {
+            Vars vars = sparql.publicVars();
+            boolean isAsk = sparql.isAsk();
             var query = QueryFactory.create(sparql.sparql().toString());
             exec = QueryExec.dataset(dsg).query(query).build();
-            var it = new RefJenaBIt<>(bt, sparql.publicVars(), dsg, exec, sparql.isAsk());
+            var it = new RefJenaBIt<>(bt, vars, dsg, exec, isAsk);
             exec = null;
             return it;
         } finally {

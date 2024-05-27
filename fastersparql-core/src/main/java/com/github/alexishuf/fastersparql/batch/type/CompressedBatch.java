@@ -583,7 +583,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         len &= LEN_MASK;
         var sh = shared[row*cols + col];
         if (len != 0 || sh != null) {
-            return Term.toSparql(dest, prefixAssigner, sh, localsSeg, locals,
+            return Term.toSparql(dest, prefixAssigner, null, sh, localsSeg, locals,
                                  slices[base+SL_OFF], len, suffix);
         }
         return 0;
