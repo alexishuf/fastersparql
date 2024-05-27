@@ -30,7 +30,8 @@ public enum SourceKind {
     TDB2_TSV_IT,
     TDB2_JSON_IT,
     TDB2_TSV_EMIT,
-    TDB2_JSON_EMIT;
+    TDB2_JSON_EMIT,
+    TDB2_WS_EMIT;
 
     private static final long IS_HDT;
     private static final long IS_FS;
