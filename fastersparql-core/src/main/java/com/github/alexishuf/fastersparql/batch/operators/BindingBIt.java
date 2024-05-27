@@ -93,8 +93,11 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         super.close();
         bindQuery.bindings.close();
         inner.close();
-        lb = Batch.safeRecycle(lb, this);
-        rb = Batch.safeRecycle(rb, this);
+        lock();
+        try {
+            lb = Batch.safeRecycle(lb, this);
+            rb = Batch.safeRecycle(rb, this);
+        } finally { unlock(); }
     }
 
     @Override public boolean tryCancel() {

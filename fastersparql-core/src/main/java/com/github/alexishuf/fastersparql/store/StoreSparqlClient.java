@@ -2486,9 +2486,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override public void close() {
             super.close();
-            lb = Batch.safeRecycle(lb, this);
-            rb = Batch.safeRecycle(rb, this);
             left.close();
+            lock();
+            try {
+                lb = Batch.safeRecycle(lb, this);
+                rb = Batch.safeRecycle(rb, this);
+            } finally { unlock(); }
         }
 
         @Override public boolean tryCancel() {
