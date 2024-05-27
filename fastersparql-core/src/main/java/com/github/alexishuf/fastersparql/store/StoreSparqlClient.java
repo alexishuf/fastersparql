@@ -2705,18 +2705,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 p = pLexIt == null ? pNotLex : pLexIt.id;
                 o = oLexIt == null ? oNotLex : oLexIt.id;
             } else {
-                if (++lr >= lb.rows) {
-                    lr = 0;
-                    B n = lb.dropHead(this);
-                    if (n != null) {
-                        lb = n;
-                    } else {
-                        lb = Orphan.takeOwnership(left.nextBatch(null), this);
-                        if (startBindingNotifier != null) startBindingNotifier.startBinding();
-                        if (lb == null) return false;
-                    }
-                }
-                rEmpty = true;
+                if (!advanceLeft())
+                    return false;
                 var l = dict.lookup().takeOwnership(this);
                 try {
                     sNotLex = s = lexRebindCol(sLexIt, sLeftCol, this.s, lb, lr, l);
@@ -2730,9 +2720,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return true;
         }
 
-        private boolean rebind() {
-            if (hasLexicalJoin)
-                return rebindLexical();
+        @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+        private boolean advanceLeft() {
             if (++lr >= lb.rows) {
                 lr = 0;
                 if ((lb=lb.dropHead(this)) == null) {
@@ -2753,6 +2742,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
             if (startBindingNotifier != null) startBindingNotifier.startBinding();
             rEmpty = true;
+            return true;
+        }
+
+        private boolean rebind() {
+            if (hasLexicalJoin)
+                return rebindLexical();
+            if (!advanceLeft())
+                return false;
             B lb = this.lb;
             int lr = this.lr;
             long s, p, o;
