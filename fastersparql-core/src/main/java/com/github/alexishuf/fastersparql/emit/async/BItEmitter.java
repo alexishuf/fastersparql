@@ -18,7 +18,6 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -120,7 +119,7 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
 
     @Override public boolean cancel() {
         if (moveStateRelease(statePlain(), CANCEL_REQUESTED)) {
-            Unparker.unpark(drainer);
+            LockSupport.unpark(drainer);
             it.tryCancel();
             return true;
         }
@@ -133,7 +132,7 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
             st = st&FLAGS_MASK | ACTIVE;
         if ((st&IS_LIVE) != 0 && Async.maxRelease(REQ, this, rows)) {
             journal("request ", rows, ", unpark drainer on", this);
-            Unparker.unpark(drainer);
+            LockSupport.unpark(drainer);
         }
     }
 
