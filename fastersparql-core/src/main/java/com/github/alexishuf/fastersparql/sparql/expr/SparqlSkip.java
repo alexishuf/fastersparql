@@ -15,7 +15,7 @@ public class SparqlSkip {
     public static final int[]     BN_LABEL = withNonAscii(alphabet("_-.", Range.ALPHANUMERIC));
     public static final int[]      LANGTAG =  withNonAscii(alphabet("-", Range.ALPHANUMERIC));
     public static final int[]    PN_PREFIX = BN_LABEL;
-    public static final int[]     PN_LOCAL = withNonAscii(alphabet("_-.%:\\", Range.ALPHANUMERIC));
+    public static final int[]     PN_LOCAL = withNonAscii(alphabet("_-.%:\\/^[]{}+!@#$&*()", Range.ALPHANUMERIC));
     public static final int[] PN_LOCAL_LAST = withNonAscii(alphabet("_-:", Range.ALPHANUMERIC));
     public static final int[] BAD_IRI_START = alphabet("?$\"'(");
 

@@ -15,7 +15,7 @@ import static java.lang.System.arraycopy;
 import static java.util.Arrays.binarySearch;
 
 public abstract sealed class RopeArrayMap extends AbstractOwned<RopeArrayMap> {
-    private static final int SORT_THRESHOLD = 16;
+    private static final int SORT_THRESHOLD = 8;
     private static final Rope[] EMPTY_DATA = new Rope[0];
     private static final ArrayAlloc<Rope[]> DATA_ALLOC = new ArrayAlloc<>(Rope[].class,
             "RopeArrayMap.DATA_ALLOC", 4,
@@ -36,7 +36,7 @@ public abstract sealed class RopeArrayMap extends AbstractOwned<RopeArrayMap> {
     private int keys = 0;
 
     public static Orphan<RopeArrayMap> create() {
-        return new Concrete(DATA_ALLOC.createFromLevel(4));
+        return new Concrete(DATA_ALLOC.createFromLevel(3));
     }
     public static Orphan<RopeArrayMap> create(Rope[] data) {
         return new Concrete(data);

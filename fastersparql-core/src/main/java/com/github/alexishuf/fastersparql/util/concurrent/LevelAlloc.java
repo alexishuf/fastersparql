@@ -303,9 +303,9 @@ public class LevelAlloc<T> implements LeakyPool, StatsPool, JournalNamed {
 
     /* --- --- --- offer --- --- --- */
 
-    public final void setZero(@NonNull T zero) {
-        this.zero = zero;
-    }
+    public final T zero() { return zero != null ? zero : factory.apply(0); }
+
+    public final void setZero(@NonNull T zero) { this.zero = zero; }
 
     /** Equivalent to {@link #offerToLevel(int, Object, int)}. */
     public final @Nullable T offer(T o, int len) {

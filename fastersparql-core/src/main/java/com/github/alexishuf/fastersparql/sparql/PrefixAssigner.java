@@ -66,6 +66,8 @@ public class PrefixAssigner extends AbstractOwned<PrefixAssigner> {
         prefix2name.resetToCopy(DEFAULT_PREFIX2NAME);
     }
 
+    public int size() { return prefix2name.size(); }
+
     public @Nullable Rope nameFor(SegmentRope prefix) {
         return prefix2name.get(prefix);
     }
