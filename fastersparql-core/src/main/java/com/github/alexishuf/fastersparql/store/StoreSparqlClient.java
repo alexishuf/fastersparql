@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.SingletonBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
+import com.github.alexishuf.fastersparql.batch.operators.EmptyBindingBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
@@ -657,7 +658,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                         || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
                         || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
                 if (empty) {
-                    it = new EmptyBIt<>(bq.bindings.batchType(), outVars);
+                    it = new EmptyBindingBIt<>(bq, outVars);
                 } else {
                     var notifier = new BindingNotifier(bq);
                     if (right instanceof Modifier m && !m.filters.isEmpty()) {
