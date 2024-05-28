@@ -60,10 +60,13 @@ public class FS {
         for (var fac : (FACTORIES == null ? reloadFactories() : FACTORIES)) {
             if (!fac.supports(endpoint)) continue;
             if (preferredTag != null && fac.tag().equalsIgnoreCase(preferredTag)) {
-                if (taggedOrder > fac.order())
+                if (taggedOrder > fac.order()) {
                     tagged = fac;
+                    taggedOrder = fac.order();
+                }
             } else if (untaggedOrder > fac.order()) {
                 untagged = fac;
+                untaggedOrder = fac.order();
             }
         }
         var best = tagged != null ? tagged : untagged;
