@@ -3,12 +3,11 @@ package com.github.alexishuf.fastersparql.util.concurrent;
 import com.github.alexishuf.fastersparql.exceptions.RuntimeExecutionException;
 
 import java.lang.invoke.VarHandle;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
+
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class Async {
     private static final class StageSync<T> implements BiConsumer<T, Throwable> {
@@ -107,6 +106,23 @@ public class Async {
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }
+    }
+
+    public static boolean uninterruptibleWaitFor(Process process, long duration, TimeUnit timeUnit) {
+        boolean interrupted = false, terminated = false;
+        long ns = NANOSECONDS.convert(duration, timeUnit);
+        while (ns > 0 && !terminated) {
+            long start = System.nanoTime();
+            try {
+                terminated = process.waitFor(ns, NANOSECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+            ns -= System.nanoTime()-start;
+        }
+        if (interrupted)
+            Thread.currentThread().interrupt();
+        return terminated;
     }
 
     public static void uninterruptibleSleep(int ms) {

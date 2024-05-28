@@ -50,10 +50,13 @@ public enum LrbSource {
     }
 
     public String filename(SourceKind type) {
-        if      (type.isHdt())     return name().replace('_', '-') + ".hdt";
+        boolean isComunicaFed = this == LargeRDFBench_all &&
+                (type == SourceKind.COMUNICA_FED_JSON || type == SourceKind.COMUNICA_FED_TSV);
+        if      (isComunicaFed)    return name().replace('_', '-') + ".hdt.list";
+        else if (type.isHdt())     return name().replace('_', '-') + ".hdt";
         else if (type.isFsStore()) return name().replace('_', '-');
         else if (type.isTdb2())    return name().replace('_', '-') + ".tdb";
-        else                       return name();
+        else                       return name()+"."+type; // helps diagnose
     }
 
 }

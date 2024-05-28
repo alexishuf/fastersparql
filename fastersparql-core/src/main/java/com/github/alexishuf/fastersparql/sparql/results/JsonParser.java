@@ -249,8 +249,8 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                     else if (l==7 && r.hasAnyCase(b, CONSTS, P_BOOLEAN_O, P_BOOLEAN_LEN))
                         s = BOOLEAN;
                     else
-                        s = null;
-                    if (s != null)
+                        s = IGNORE;
+                    if (s != IGNORE)
                         p.hadSparqlProperties = true;
                     yield s;
                 }

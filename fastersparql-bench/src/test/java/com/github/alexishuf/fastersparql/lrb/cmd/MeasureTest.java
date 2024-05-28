@@ -282,6 +282,9 @@ class MeasureTest {
                 arguments(PlanType.FEDX, TDB2,         BatchKind.COMPRESSED),
                 arguments(PlanType.FEDX, TDB2_WS_EMIT, BatchKind.COMPRESSED),
 
+                arguments(PlanType.FEDX, COMUNICA_HDT_TSV, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, COMUNICA_FED_TSV, BatchKind.COMPRESSED),
+
                 arguments(PlanType.UNION, TDB2,     BatchKind.COMPRESSED),
                 arguments(PlanType.UNION, TDB2,     BatchKind.TERM),
                 arguments(PlanType.UNION, HDT_FILE, BatchKind.COMPRESSED),

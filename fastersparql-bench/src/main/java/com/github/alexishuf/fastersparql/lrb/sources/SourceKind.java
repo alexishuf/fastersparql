@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
+import org.tukaani.xz.UnsupportedOptionsException;
 
 import java.io.File;
 import java.io.IOException;
@@ -31,7 +32,11 @@ public enum SourceKind {
     TDB2_JSON_IT,
     TDB2_TSV_EMIT,
     TDB2_JSON_EMIT,
-    TDB2_WS_EMIT;
+    TDB2_WS_EMIT,
+    COMUNICA_FED_TSV,
+    COMUNICA_FED_JSON,
+    COMUNICA_HDT_TSV,
+    COMUNICA_HDT_JSON;
 
     private static final long IS_HDT;
     private static final long IS_FS;
@@ -41,22 +46,27 @@ public enum SourceKind {
     private static final long IS_TSV;
     private static final long IS_JSON;
     private static final long IS_WS;
+    private static final long IS_PROCESS;
+    private static final long IS_FS_SERVER;
     private static final long IS_SERVER;
 
     static {
-        long hdt = 0, fs = 0, tdb = 0, emit = 0, it = 0, tsv = 0, json = 0, ws = 0;
+        long hdt = 0, fs = 0, tdb = 0, emit = 0, it = 0, tsv = 0, json = 0, ws = 0, proc = 0;
         for (SourceKind kind : values()) {
             String name = kind.name();
             int ordinal = kind.ordinal();
-            if (name.startsWith("HDT_"))  hdt  |= 1 << ordinal;
-            if (name.startsWith("FS_"))   fs   |= 1 << ordinal;
-            if (name.startsWith("TDB2"))  tdb  |= 1 << ordinal;
-            if (name.endsWith("_IT"))     it   |= 1 << ordinal;
-            if (name.endsWith("_EMIT"))   emit |= 1 << ordinal;
-            if (name.contains("_TSV"))    tsv  |= 1 << ordinal;
-            if (name.contains("_JSON"))   json |= 1 << ordinal;
-            if (name.contains("_WS"))     ws   |= 1 << ordinal;
+            if (name.startsWith("COMUNICA_")) proc |= 1 << ordinal;
+            if (name.startsWith("VIRTUOSO_")) proc |= 1 << ordinal;
+            if (name.contains("HDT_"))        hdt  |= 1 << ordinal;
+            if (name.startsWith("FS_"))       fs   |= 1 << ordinal;
+            if (name.startsWith("TDB2"))      tdb  |= 1 << ordinal;
+            if (name.endsWith("_IT"))         it   |= 1 << ordinal;
+            if (name.endsWith("_EMIT"))       emit |= 1 << ordinal;
+            if (name.contains("_TSV"))        tsv  |= 1 << ordinal;
+            if (name.contains("_JSON"))       json |= 1 << ordinal;
+            if (name.contains("_WS"))         ws   |= 1 << ordinal;
         }
+        IS_PROCESS = proc;
         IS_HDT         = hdt;
         IS_FS          = fs;
         IS_TDB2        = tdb;
@@ -65,16 +75,19 @@ public enum SourceKind {
         IS_TSV         = tsv;
         IS_JSON        = json;
         IS_WS          = ws;
-        IS_SERVER      = emit|it;
+        IS_FS_SERVER   = emit|it;
+        IS_SERVER      = emit|it|proc;
     }
 
-    public boolean     isHdt() { return (IS_HDT   &(1<<ordinal())) != 0; }
-    public boolean isFsStore() { return (IS_FS    &(1<<ordinal())) != 0; }
-    public boolean    isTdb2() { return (IS_TDB2  &(1<<ordinal())) != 0; }
-    public boolean  isServer() { return (IS_SERVER&(1<<ordinal())) != 0; }
-    public boolean     isTsv() { return (IS_TSV   &(1<<ordinal())) != 0; }
-    public boolean    isJson() { return (IS_JSON  &(1<<ordinal())) != 0; }
-    public boolean      isWs() { return (IS_WS    &(1<<ordinal())) != 0; }
+    public boolean      isHdt() { return (IS_HDT      &(1<<ordinal())) != 0; }
+    public boolean  isFsStore() { return (IS_FS       &(1<<ordinal())) != 0; }
+    public boolean     isTdb2() { return (IS_TDB2     &(1<<ordinal())) != 0; }
+    public boolean   isServer() { return (IS_SERVER   &(1<<ordinal())) != 0; }
+    public boolean isFsServer() { return (IS_FS_SERVER&(1<<ordinal())) != 0; }
+    public boolean      isTsv() { return (IS_TSV      &(1<<ordinal())) != 0; }
+    public boolean     isJson() { return (IS_JSON     &(1<<ordinal())) != 0; }
+    public boolean       isWs() { return (IS_WS       &(1<<ordinal())) != 0; }
+    public boolean  isProcess() { return (IS_PROCESS  &(1<<ordinal())) != 0; }
 
     public Optional<FlowModel> serverFlowModel() {
         int mask = 1 << ordinal();
@@ -84,7 +97,8 @@ public enum SourceKind {
     }
 
     public SourceKind fileKind() {
-        if      (isHdt())     return HDT_FILE;
+        if      (isProcess()) return this;
+        else if (isHdt())     return HDT_FILE;
         else if (isFsStore()) return FS_STORE;
         else if (isTdb2())    return TDB2;
         else                  throw new UnsupportedOperationException();
@@ -109,8 +123,18 @@ public enum SourceKind {
             throw new IOException("File "+file+" not found");
         if (file.isFile() && file.length() == 0)
             throw new IOException("File "+file+" is empty");
-        var handle = new SourceHandle("file://"+file, source, fileKind());
-        if (isServer()) {
+        String fileUri;
+        if (isProcess()) {
+            int split = name().indexOf("_");
+            if (split < 0)
+                throw new UnsupportedOptionsException("process source "+this+" has no protocol");
+            fileUri = "process://"+name().substring(0, split).toLowerCase()+"/?file="
+                    + file.getAbsolutePath();
+        } else {
+            fileUri = "file://"+file;
+        }
+        var handle = new SourceHandle(fileUri, source, fileKind());
+        if (isFsServer()) {
             var inner = FS.clientFor(parse(handle.specUrl));
             var server = new NettySparqlServer(serverFlowModel().orElseThrow(), inner,
                     false, "0.0.0.0", 0);

@@ -13,7 +13,8 @@ public enum Protocol {
     HTTP,
     HTTPS,
     WS,
-    WSS;
+    WSS,
+    PROCESS;
 
     public boolean needsSsl() {
         return this == HTTPS || this == WSS;
@@ -27,7 +28,7 @@ public enum Protocol {
         return switch (this) {
             case HTTP, WS -> 80;
             case HTTPS, WSS -> 443;
-            case FILE -> 0;
+            case FILE,PROCESS -> 0;
         };
     }
 
@@ -61,6 +62,8 @@ public enum Protocol {
             return WS;
         else if (uri.startsWith("file:"))
             return FILE;
+        else if (uri.startsWith("process:"))
+            return PROCESS;
         throw new FSInvalidArgument("The URI "+uri+" does not use a supported scheme: http, https, ws or wss");
     }
 }
