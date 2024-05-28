@@ -56,7 +56,7 @@ public class FSException extends RuntimeException {
             if (!message.contains(id))
                 sb.append(id).append(", ");
         }
-        sb.setLength(sb.length()-1);
+        sb.setLength(sb.length()-2);
         return sb.length() == message.length() ? message : sb.toString();
     }
 
