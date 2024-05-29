@@ -20,6 +20,8 @@ import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -46,6 +48,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused")
 public class Federation extends AbstractSparqlClient {
+    private static final Logger log = LoggerFactory.getLogger(Federation.class);
     public static final String SOURCES = "sources";
     public static final String URL = Source.URL;
 
@@ -83,21 +86,33 @@ public class Federation extends AbstractSparqlClient {
         var sources = new ArrayList<Source>(n);
         for (int i = 0; i < n; i++)
             sources.add(null);
-        IOException error = IntStream.range(0, n).parallel().mapToObj(i -> {
-            try {
-                sources.set(i, Source.load(specs.get(i)));
-                return null;
-            } catch (IOException e) {
-                return e;
+        Federation fed;
+        try {
+            var error = IntStream.range(0, n).parallel().mapToObj(i -> {
+                try {
+                    sources.set(i, Source.load(specs.get(i)));
+                    return null;
+                } catch (IOException e) {
+                    return e;
+                }
+            }).filter(Objects::nonNull).findFirst().orElse(null);
+            if (error != null)
+                throw error;
+            SparqlEndpoint endpoint = SparqlEndpoint.parse(Source.readUrl(spec));
+            Path relativeTo = spec.get(Spec.PATHS_RELATIVE_TO, Path.class);
+            fed = new Federation(endpoint, relativeTo);
+            fed.addSources(sources);
+        } catch (Throwable t) {
+            for (Source source : sources) {
+                try {
+                    if (source != null)
+                        source.close();
+                } catch (Throwable t2) {
+                    log.error("Failed to close {} while handling {}", source, t, t2);
+                }
             }
-        }).filter(Objects::nonNull).findFirst().orElse(null);
-        if (error != null)
-            throw error;
-
-        SparqlEndpoint endpoint = SparqlEndpoint.parse(Source.readUrl(spec));
-        Path relativeTo = spec.get(Spec.PATHS_RELATIVE_TO, Path.class);
-        Federation fed = new Federation(endpoint, relativeTo);
-        fed.addSources(sources);
+            throw t;
+        }
         return fed;
     }
 
