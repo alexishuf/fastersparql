@@ -102,6 +102,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
     private static final int URI_O, URI_LEN;
     private static final int LITERAL_O, LITERAL_LEN;
     private static final int LIT_O, LIT_LEN;
+    private static final int TYPED_LITERAL_O, TYPED_LITERAL_LEN;
     private static final int BNODE_O, BNODE_LEN;
     private static final int BLANK_O, BLANK_LEN;
     private static final int P_HEAD_O, P_HEAD_LEN;
@@ -124,6 +125,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
         URI_O        = sb.length(); URI_LEN        = sb.append("URI"     ).length()-URI_O;
         LITERAL_O    = sb.length(); LITERAL_LEN    = sb.append("LITERAL" ).length()-LITERAL_O;
         LIT_O        = sb.length(); LIT_LEN        = sb.append("LIT"     ).length()-LIT_O;
+        TYPED_LITERAL_O = sb.length(); TYPED_LITERAL_LEN = sb.append("TYPED-LITERAL").length()-TYPED_LITERAL_O;
         BNODE_O      = sb.length(); BNODE_LEN      = sb.append("BNODE"   ).length()-BNODE_O;
         BLANK_O      = sb.length(); BLANK_LEN      = sb.append("BLANK"   ).length()-BLANK_O;
         P_HEAD_O     = sb.length(); P_HEAD_LEN     = sb.append("HEAD"    ).length()-P_HEAD_O;
@@ -431,6 +433,10 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                         case 'l', 'L' -> {
                             off1 = LITERAL_O; len1 = LITERAL_LEN;
                             off2 = LIT_O; len2 = LIT_LEN;
+                            yield Term.Type.LIT;
+                        }
+                        case 't', 'T' -> { // virtuoso uses typed-literal
+                            off1 = TYPED_LITERAL_O; len1 = TYPED_LITERAL_LEN;
                             yield Term.Type.LIT;
                         }
                         default -> Term.Type.LIT;
