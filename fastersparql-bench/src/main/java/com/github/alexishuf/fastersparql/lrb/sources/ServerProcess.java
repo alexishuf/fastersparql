@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.net.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
@@ -30,8 +32,10 @@ public class ServerProcess implements SafeCloseable {
     private final String name;
     private final SparqlEndpoint httpEndpoint;
     private final int port;
+    private final @Nullable Path logFile;
     private @Nullable String commandLineString;
     private @Nullable String deadString;
+    private boolean dumpedLogFile;
     public final Process process;
 
     public ServerProcess(ProcessBuilder processBuilder, String name,
@@ -42,8 +46,10 @@ public class ServerProcess implements SafeCloseable {
         var logFile = dir == null ? new File(logFileName) : new File(dir, logFileName);
         processBuilder.redirectErrorStream(true);
         if (LOG_FILE) {
+            this.logFile = logFile.toPath().toAbsolutePath();
             processBuilder.redirectOutput(logFile);
         } else {
+            this.logFile = null;
             processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             if (!loggedLogFileDisabled) {
                 loggedLogFileDisabled = true;
@@ -132,7 +138,23 @@ public class ServerProcess implements SafeCloseable {
     public FSServerException makeDeadException(SparqlEndpoint endpoint) {
         if (deadString == null)
             deadString = "Server died, command-line: "+commandLineString();
-        throw new FSServerException(endpoint, deadString);
+        if (logFile != null && !dumpedLogFile) {
+            dumpedLogFile = true;
+            dumpLogFile();
+        }
+        return new FSServerException(endpoint, deadString);
+    }
+
+    private void dumpLogFile() {
+        if (logFile == null)
+            return;
+        try (var reader = Files.newBufferedReader(logFile)) {
+            for (String line; (line=reader.readLine()) != null; ) {
+                log.info("{}: {}", name, line);
+            }
+        } catch (Throwable t) {
+            log.error("Error while dumping log file contents for {} from {}", name, logFile);
+        }
     }
 
     @Override public void close() {
