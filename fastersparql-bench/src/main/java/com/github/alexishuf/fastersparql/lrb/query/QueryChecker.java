@@ -227,7 +227,8 @@ public abstract class QueryChecker<B extends Batch<B>>
 
     @Override public void onBatch(Orphan<B> orphan) {
         orphan = queryName.amputateNumbers(orphan);
-        B b = queryName.expandUnicodeEscapes(orphan).takeOwnership(this);
+        orphan = queryName.expandUnicodeEscapes(orphan);
+        B b    = queryName.unescapeSlash(orphan).takeOwnership(this);
         try {
             check(b);
         } finally {

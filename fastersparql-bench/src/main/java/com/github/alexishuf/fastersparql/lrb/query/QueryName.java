@@ -150,6 +150,74 @@ public enum QueryName {
 
     public boolean isAmputateNumberNoOp() {return this != C7 && this != C8 && this != C10;}
 
+    public boolean isUnescapeSlashNoOp() {return this != S9 && this != S14;}
+
+    public <B extends Batch<B>> Orphan<B> unescapeSlash(Orphan<B> batch) {
+        if (batch == null || isUnescapeSlashNoOp())
+            return batch;
+        B fixed = null;
+        try (var view = PooledSegmentRopeView.ofEmpty();
+             var tmp = PooledMutableRope.get()) {
+            while (batch != null) {
+                Orphan<B> out;
+                B in = batch.takeOwnership(this);
+                batch = in.detachHead();
+                if (hasEscapedSlashes(in, view)) {
+                    out = unescapeSlashes(in, view, tmp);
+                    Batch.safeRecycle(in, this);
+                } else {
+                    out = in.releaseOwnership(this);
+                }
+                fixed = Batch.quickAppend(fixed, this, out);
+            }
+        }
+        return fixed.releaseOwnership(this);
+    }
+
+    private <B extends Batch<B>> boolean hasEscapedSlashes(B in, PooledSegmentRopeView view) {
+        for (int r = 0, rows = in.rows, cols = in.cols; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (in.termType(r, c) == LIT && in.localView(r, c, view)) {
+                    for (int i = 0, len = view.len; i < len; i++) {
+                        i = view.skipUntilUnescaped(i, len, (byte)'\\');
+                        if (i+1 < len && view.get(i+1) == '/')
+                            return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private <B extends Batch<B>> Orphan<B>
+    unescapeSlashes(B in, PooledSegmentRopeView view, PooledMutableRope tmp) {
+        B out = in.type().create(in.cols).takeOwnership(this);
+        for (int r = 0, rows = in.rows, cols = in.cols; r < rows; r++) {
+            out.beginPut();
+            for (int c = 0; c < cols; c++) {
+                if (in.termType(r, c) == LIT && in.localView(r, c, view)) {
+                    tmp.len = 0;
+                    for (int i = 0, j, copied = 0, len = view.len; i < len; i=j+1) {
+                        j = view.skipUntilUnescaped(i, len, (byte)'\\');
+                        if (j+1 < len && view.get(j+1) == '/') {
+                            tmp.append(view, copied, j).append('/');
+                            copied = j+2;
+                        } else if (j == len && copied > 0) {
+                            tmp.append(view, copied, len);
+                        }
+                    }
+                    var local = tmp.len == 0 ? view : tmp;
+                    out.putTerm(c, in.shared(r, c), local.segment, local.utf8, local.offset,
+                                local.len, true);
+                } else {
+                    out.putTerm(c, in, r, c);
+                }
+            }
+            out.commitPut();
+        }
+        return out.releaseOwnership(this);
+    }
+
     public boolean isExpandUnicodeEscapesNoOp() {
         return switch (this) {
             case S8, S13, S14, // jena

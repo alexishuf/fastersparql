@@ -33,6 +33,8 @@ public enum SourceKind {
     TDB2_TSV_EMIT,
     TDB2_JSON_EMIT,
     TDB2_WS_EMIT,
+    FUSEKI_TDB2_JSON,
+    FUSEKI_TDB2_TSV,
     COMUNICA_FED_TSV,
     COMUNICA_FED_JSON,
     COMUNICA_HDT_TSV,
@@ -56,16 +58,17 @@ public enum SourceKind {
         for (SourceKind kind : values()) {
             String name = kind.name();
             int ordinal = kind.ordinal();
-            if (name.startsWith("COMUNICA_")) proc |= 1 << ordinal;
-            if (name.startsWith("VIRTUOSO_")) proc |= 1 << ordinal;
-            if (name.contains("HDT_"))        hdt  |= 1 << ordinal;
-            if (name.startsWith("FS_"))       fs   |= 1 << ordinal;
-            if (name.startsWith("TDB2"))      tdb  |= 1 << ordinal;
-            if (name.endsWith("_IT"))         it   |= 1 << ordinal;
-            if (name.endsWith("_EMIT"))       emit |= 1 << ordinal;
-            if (name.contains("_TSV"))        tsv  |= 1 << ordinal;
-            if (name.contains("_JSON"))       json |= 1 << ordinal;
-            if (name.contains("_WS"))         ws   |= 1 << ordinal;
+            if (name.startsWith("COMUNICA_"))   proc |= 1 << ordinal;
+            if (name.startsWith("VIRTUOSO_"))   proc |= 1 << ordinal;
+            if (name.startsWith("FUSEKI_TDB2")) proc |= 1 << ordinal;
+            if (name.contains("HDT_"))          hdt  |= 1 << ordinal;
+            if (name.startsWith("FS_"))         fs   |= 1 << ordinal;
+            if (name.contains("TDB2"))          tdb  |= 1 << ordinal;
+            if (name.endsWith("_IT"))           it   |= 1 << ordinal;
+            if (name.endsWith("_EMIT"))         emit |= 1 << ordinal;
+            if (name.contains("_TSV"))          tsv  |= 1 << ordinal;
+            if (name.contains("_JSON"))         json |= 1 << ordinal;
+            if (name.contains("_WS"))           ws   |= 1 << ordinal;
         }
         IS_PROCESS     = proc;
         IS_HDT         = hdt;
