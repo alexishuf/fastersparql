@@ -21,15 +21,16 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ComunicaClientFactory implements SparqlClientFactory {
-    private static final Logger log = LoggerFactory.getLogger(ComunicaClientFactory.class);
-    @Override public String tag() {
-        return "comunica";
+public class ComunicaSparqlClientFactory implements SparqlClientFactory {
+    private static final Logger log = LoggerFactory.getLogger(ComunicaSparqlClientFactory.class);
+
+    @Override public String toString() {
+        return getClass().getSimpleName()+'@'+Integer.toHexString(System.identityHashCode(this));
     }
 
-    @Override public int order() {
-        return 10;
-    }
+    @Override public String   tag() { return "comunica"; }
+    @Override public int    order() { return 10; }
+
 
     private static final SparqlConfiguration SUPPORTED_CONFIG = SparqlConfiguration.builder()
             .methods(List.of(SparqlMethod.GET, SparqlMethod.POST))
@@ -80,10 +81,10 @@ public class ComunicaClientFactory implements SparqlClientFactory {
             var builder = new ProcessBuilder().command(cmdLine).directory(dir.toFile());
             var proc = new ServerProcess(builder, name, endpoint.configuration(),
                                          port, "/sparql");
-            if (!proc.waitForPort(Duration.ofSeconds(60))) {
+            if (!proc.waitForPort(PORT_TIMEOUT)) {
                 if (proc.isAlive()) {
-                    log.error("{} is not listening at port {} after 10 seconds, killing",
-                              proc, port);
+                    log.error("{} is not listening at port {} after {} seconds, killing",
+                              proc, port, PORT_TIMEOUT.toSeconds());
                 }
                 proc.close();
                 throw proc.makeDeadException(endpoint);
@@ -94,6 +95,7 @@ public class ComunicaClientFactory implements SparqlClientFactory {
         }
     }
     private static final Pattern FILE_RX = Pattern.compile("process://comunica/\\?file=(.*)$");
+    private static final Duration PORT_TIMEOUT = Duration.ofSeconds(60);
 
     private static List<String> parseListsFile(Path listFile) {
         List<String> relativeFiles = new ArrayList<>();
