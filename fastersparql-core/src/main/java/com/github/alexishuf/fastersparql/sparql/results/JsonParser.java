@@ -77,10 +77,10 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
             rope = partial.append(rope);
             partial = null;
         }
-        int begin = 0, end = rope.len;
+        int begin = 0, end;
         // the first begin < end may seem redundant but is necessary since maybe rope == partial
         // and maybe suspend() reduced partial.len making begin out of bounds.
-        while (begin < end && (begin = rope.skipWS(begin, end)) < end)
+        while (begin < (end=rope.len) && (begin = rope.skipWS(begin, end)) < end)
             begin = jsonStack.getFirst().parse(this, rope, begin, end);
     }
 
