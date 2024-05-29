@@ -282,6 +282,9 @@ class MeasureTest {
                 arguments(PlanType.FEDX, TDB2,         BatchKind.COMPRESSED),
                 arguments(PlanType.FEDX, TDB2_WS_EMIT, BatchKind.COMPRESSED),
 
+                arguments(PlanType.FEDX, VIRTUOSO_JSON, BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, VIRTUOSO_JSON, BatchKind.TERM),
+
                 arguments(PlanType.FEDX, COMUNICA_HDT_TSV, BatchKind.COMPRESSED),
                 arguments(PlanType.UNION, COMUNICA_FED_TSV, BatchKind.COMPRESSED),
 

@@ -36,7 +36,8 @@ public enum SourceKind {
     COMUNICA_FED_TSV,
     COMUNICA_FED_JSON,
     COMUNICA_HDT_TSV,
-    COMUNICA_HDT_JSON;
+    COMUNICA_HDT_JSON,
+    VIRTUOSO_JSON; // virtuoso TSV outputs invalid RDF
 
     private static final long IS_HDT;
     private static final long IS_FS;
@@ -66,7 +67,7 @@ public enum SourceKind {
             if (name.contains("_JSON"))       json |= 1 << ordinal;
             if (name.contains("_WS"))         ws   |= 1 << ordinal;
         }
-        IS_PROCESS = proc;
+        IS_PROCESS     = proc;
         IS_HDT         = hdt;
         IS_FS          = fs;
         IS_TDB2        = tdb;

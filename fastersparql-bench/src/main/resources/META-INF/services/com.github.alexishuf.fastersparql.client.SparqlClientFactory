@@ -1,2 +1,2 @@
-com.github.alexishuf.fastersparql.lrb.sources.ComunicaClientFactory
 com.github.alexishuf.fastersparql.lrb.sources.ComunicaSparqlClientFactory
+com.github.alexishuf.fastersparql.lrb.sources.VirtuosoSparqlClientFactory

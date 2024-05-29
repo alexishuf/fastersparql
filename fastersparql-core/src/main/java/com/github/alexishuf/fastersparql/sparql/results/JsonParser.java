@@ -341,6 +341,11 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                                 localLen = v.len;
                             } else  {
                                 sh = SHARED_ROPES.internDatatype(p.dtSuffix, 0, p.dtSuffix.len);
+                                // fastersparql convention (Batch & Term) is never store
+                                // datatypes for lang strings or strings. RDF 1.1 allows that
+                                // and turtle disallows appending DT_langString
+                                if (sh == SharedRopes.DT_string || sh == SharedRopes.DT_langString)
+                                    sh = null;
                                 localLen = sh == null ? v.len : v.len-1;
                             }
                             rb.putTerm(col, sh, v.segment, v.u8(), 0,
