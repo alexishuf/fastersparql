@@ -152,7 +152,9 @@ public enum QueryName {
 
     public boolean isExpandUnicodeEscapesNoOp() {
         return switch (this) {
-            case S8, S13, S14 -> false;
+            case S8, S13, S14, // jena
+                 S6 // virtuoso: tollwütige
+                    -> false;
             default -> true;
         };
     }
