@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.lrb.sources;
 
+import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.client.model.SparqlConfiguration;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -59,6 +60,7 @@ public class ServerProcess implements SafeCloseable {
                     + (sparqlPath.startsWith("/") ? "" : "/") + sparqlPath;
         this.httpEndpoint = new SparqlEndpoint(httpUri, clientConfig);
         this.process = processBuilder.start();
+        FS.addShutdownHook(this::close); // ensure process gets killed
         this.alive = true;
         process.onExit().whenComplete((ignored1, ignored2) -> alive = false);
     }
@@ -75,6 +77,7 @@ public class ServerProcess implements SafeCloseable {
         return port;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public boolean waitForPort(Duration duration) {
         long now = System.nanoTime();
         long logAt = now + NANOSECONDS.convert(1, SECONDS);
@@ -88,7 +91,7 @@ public class ServerProcess implements SafeCloseable {
         var address = new InetSocketAddress(localhost, port);
         do {
             if (now > logAt) {
-                log.info("Waiting for port {} to be served by {}", port, process);
+                log.info("Waiting for port {} to be served by {}", port, this);
                 logAt = Long.MAX_VALUE;
             }
             try (var s = new Socket()) {
@@ -133,6 +136,8 @@ public class ServerProcess implements SafeCloseable {
     }
 
     @Override public void close() {
+        if (!process().isAlive())
+            return; // no work
         for (int i = 0; i < 4; ++i) {
             if (i < 2) process.destroy();
             else       process.destroyForcibly();
@@ -151,8 +156,10 @@ public class ServerProcess implements SafeCloseable {
             sb.append("ALIVE");
         else
             sb.append("exit=").append(process.exitValue());
-        sb.append("]{pid=").append(process.pid()).append(", cmd=");
+        sb.append("]{pid=").append(process.pid());
+        sb.append(", port=").append(port);
 
+        sb.append(", cmd=");
         String cmd = commandLine.isEmpty() ? "<unknown command>" : commandLine.getFirst();
         if (cmd.length() < 32)
             sb.append(cmd);
