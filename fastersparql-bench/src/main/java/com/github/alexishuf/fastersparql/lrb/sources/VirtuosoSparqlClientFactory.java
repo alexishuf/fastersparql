@@ -67,7 +67,7 @@ public class VirtuosoSparqlClientFactory implements SparqlClientFactory {
             if (!proc.waitForPort(PORT_TIMEOUT)) {
                 if (proc.isAlive()) {
                     log.error("{} is not listening at port {} after {}s, killing",
-                              proc, sparqlPort, PORT_TIMEOUT);
+                              proc, sparqlPort, PORT_TIMEOUT.toSeconds());
                 }
                 proc.close();
                 throw proc.makeDeadException(endpoint);
