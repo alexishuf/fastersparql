@@ -15,11 +15,12 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static com.github.alexishuf.fastersparql.lrb.sources.ServerProcess.createSparqlClient;
 
 public class ComunicaSparqlClientFactory implements SparqlClientFactory {
     private static final Logger log = LoggerFactory.getLogger(ComunicaSparqlClientFactory.class);
@@ -77,25 +78,10 @@ public class ComunicaSparqlClientFactory implements SparqlClientFactory {
             name = "comunica-"+path.getFileName();
             cmdLine.add("hdt@"+path.getFileName());
         }
-        try {
-            var builder = new ProcessBuilder().command(cmdLine).directory(dir.toFile());
-            var proc = new ServerProcess(builder, name, endpoint.configuration(),
-                                         port, "/sparql");
-            if (!proc.waitForPort(PORT_TIMEOUT)) {
-                if (proc.isAlive()) {
-                    log.error("{} is not listening at port {} after {} seconds, killing",
-                              proc, port, PORT_TIMEOUT.toSeconds());
-                }
-                proc.close();
-                throw proc.makeDeadException(endpoint);
-            }
-            return new ProcessNettySparqlClient(proc.httpEndpoint(), proc);
-        } catch (Throwable e) {
-            throw new FSException(endpoint, "Failed to start process", e);
-        }
+        var builder = new ProcessBuilder().command(cmdLine).directory(dir.toFile());
+        return createSparqlClient(builder, name, endpoint, port, "/sparql");
     }
     private static final Pattern FILE_RX = Pattern.compile("process://comunica/\\?file=(.*)$");
-    private static final Duration PORT_TIMEOUT = Duration.ofSeconds(60);
 
     private static List<String> parseListsFile(Path listFile) {
         List<String> relativeFiles = new ArrayList<>();

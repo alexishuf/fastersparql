@@ -10,13 +10,9 @@ import java.io.File;
 public class Tdb2SparqlClientFactory implements SparqlClientFactory {
     private static final Logger log = LoggerFactory.getLogger(Tdb2SparqlClientFactory.class);
 
-    @Override public String tag() {
-        return "tdb2";
-    }
-
-    @Override public int order() {
-        return 100;
-    }
+    @Override public String toString() { return getClass().getSimpleName(); }
+    @Override public String      tag() {return "tdb2";}
+    @Override public int       order() {return 100;}
 
     @Override public boolean supports(SparqlEndpoint endpoint) {
         if (endpoint.protocol() != Protocol.FILE)
@@ -30,7 +26,7 @@ public class Tdb2SparqlClientFactory implements SparqlClientFactory {
             return false;
         }
         if (generations.length == 0) {
-            log.debug("No Data-* dirs in {}: not at TDB2", file);
+            log.debug("No Data-* dirs in {}: not a TDB2", file);
             return false;
         }
         return true;

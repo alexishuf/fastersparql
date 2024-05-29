@@ -14,11 +14,11 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.github.alexishuf.fastersparql.lrb.sources.ServerProcess.createSparqlClient;
 import static java.nio.channels.Channels.newWriter;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.nio.file.StandardOpenOption.*;
@@ -54,34 +54,14 @@ public class VirtuosoSparqlClientFactory implements SparqlClientFactory {
         if (!Files.isRegularFile(executable) || !Files.isExecutable(executable))
             throw new FSException(executable+" is not an executable file");
         int sparqlPort = makeIniFileAndGetSparqlPort(dir);
-        try {
-            var cmd = List.of("./virtuoso-t", "-fd", "-c", "../var/lib/virtuoso/db/fs-virtuoso.ini");
-            var builder = new ProcessBuilder(cmd).directory(bin.toFile());
-            var ldLibraryPath = ldLibraryPath();
-            if (ldLibraryPath != null)
-                builder.environment().put("LD_LIBRARY_PATH", ldLibraryPath);
-            var name = dir.getFileName().toString().replace("-7.1-64bit-linux", "");
-            var proc = new ServerProcess(builder,
-                    name, endpoint.configuration(),
-                    sparqlPort, "/sparql");
-            if (!proc.waitForPort(PORT_TIMEOUT)) {
-                if (proc.isAlive()) {
-                    log.error("{} is not listening at port {} after {}s, killing",
-                              proc, sparqlPort, PORT_TIMEOUT.toSeconds());
-                }
-                proc.close();
-                throw proc.makeDeadException(endpoint);
-            }
-            return new ProcessNettySparqlClient(proc.httpEndpoint(), proc);
-        } catch (Throwable t) {
-            if (t instanceof FSException e) {
-                e.endpoint(endpoint);
-                throw e;
-            }
-            throw new FSException(endpoint, "Failed to start process", t);
-        }
+        var cmd = List.of("./virtuoso-t", "-fd", "-c", "../var/lib/virtuoso/db/fs-virtuoso.ini");
+        var builder = new ProcessBuilder(cmd).directory(bin.toFile());
+        var ldLibraryPath = ldLibraryPath();
+        if (ldLibraryPath != null)
+            builder.environment().put("LD_LIBRARY_PATH", ldLibraryPath);
+        var name = dir.getFileName().toString().replace("-7.1-64bit-linux", "");
+        return createSparqlClient(builder, name, endpoint, sparqlPort, "/sparql");
     }
-    private static final Duration PORT_TIMEOUT = Duration.ofSeconds(60);
 
     private static @Nullable String ldLibraryPath() {
         String ldPath = System.getenv("LD_LIBRARY_PATH");

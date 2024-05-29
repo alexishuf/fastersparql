@@ -38,6 +38,22 @@ public class ServerProcess implements SafeCloseable {
     private boolean dumpedLogFile;
     public final Process process;
 
+    public static ProcessNettySparqlClient createSparqlClient(ProcessBuilder builder, String name,
+                                                       SparqlEndpoint processEndpoint,
+                                                       int port, String sparqlPath) {
+        try {
+            ServerProcess proc = new ServerProcess(builder, name, processEndpoint.configuration(), port, sparqlPath);
+            proc.requirePort(processEndpoint);
+            return new ProcessNettySparqlClient(proc.httpEndpoint(), proc);
+        } catch (Throwable t) {
+            if (t instanceof FSException fs) {
+                fs.endpoint(processEndpoint);
+                throw fs;
+            }
+            throw new FSServerException(processEndpoint, "Could not start fuseki", t);
+        }
+    }
+
     public ServerProcess(ProcessBuilder processBuilder, String name,
                          SparqlConfiguration clientConfig,
                          int port, String sparqlPath) throws IOException {
@@ -82,6 +98,22 @@ public class ServerProcess implements SafeCloseable {
         }
         return port;
     }
+
+    public void requirePort(SparqlEndpoint processEndpoint) {
+        requirePort(processEndpoint, PORT_TIMEOUT);
+    }
+
+    public void requirePort(SparqlEndpoint processEndpoint, Duration timeout) {
+        if (!waitForPort(timeout)) {
+            if (isAlive()) {
+                log.error("{} is not listening at port {} after {} seconds, killing",
+                        this, port, timeout.toSeconds());
+            }
+            close();
+            throw makeDeadException(processEndpoint);
+        }
+    }
+    private static final Duration PORT_TIMEOUT = Duration.ofSeconds(60);
 
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public boolean waitForPort(Duration duration) {
