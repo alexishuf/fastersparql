@@ -312,6 +312,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
             lb     = Batch.safeRecycle(lb,     this);
             merger = Owned.safeRecycle(merger, this);
             releaseRef();
+            super.doRelease();
         }
 
         /* --- --- --- ChannelBound --- --- --- */

@@ -133,6 +133,7 @@ class GatherAndScatterTest {
             @Override protected void doRelease() {
                 cleaned = true;
                 nt.close();
+                super.doRelease();
             }
         }
 
