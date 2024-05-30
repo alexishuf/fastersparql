@@ -404,12 +404,13 @@ public class NettySparqlServer implements SparqlServer {
         }
 
         @Override public Orphan<CompressedBatch> pollFillingBatch() {
-            Orphan<CompressedBatch> tail;
-            while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
-            try {
-                tail = Batch.detachDistinctTail(sendQueue);
-            } finally { Q.setRelease(this, 0); }
-            return tail;
+            var s = sendQueue; // stale read! returning null is cheaper than synchronization
+            if (s != null && s.next != null && (int)Q.compareAndExchangeAcquire(this, 0, 1) == 0) {
+                try {
+                    return Batch.detachDistinctTail(sendQueue);
+                } finally { Q.setRelease(this, 0); }
+            }
+            return null;
         }
 
         @Override public void onBatchByCopy(CompressedBatch batch) {

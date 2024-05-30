@@ -148,7 +148,9 @@ public class SPSCBIt<B extends Batch<B>> extends AbstractBIt<B> implements Callb
     /* --- --- --- producer methods --- --- --- */
 
     @Override public @Nullable Orphan<B> pollFillingBatch() {
-        lock();
+        B stale = filling; // returning null is cheaper than synchronization
+        if (stale == null || stale.next == null || !tryLock())
+            return null; // no queue, no tail or contended
         try {
             return pollFillingBatch0();
         } finally { unlock(); }

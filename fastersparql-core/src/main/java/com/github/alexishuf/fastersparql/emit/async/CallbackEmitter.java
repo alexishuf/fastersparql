@@ -264,7 +264,9 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override public @Nullable Orphan<B> pollFillingBatch() {
         Orphan<B> tail;
-        lock();
+        B stale = queue; // returning null is cheaper than synchronization
+        if (stale == null || stale.next == null || !tryLock())
+            return null; // no queue, no tail or contended lock
         try {
             if ((tail=detachDistinctTail(queue)) != null && EmitterStats.ENABLED && stats != null)
                 stats.revertOnBatchReceived(tail);

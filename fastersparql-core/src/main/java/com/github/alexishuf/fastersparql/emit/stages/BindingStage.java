@@ -242,14 +242,12 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     @Override public @MonotonicNonNull Emitter<B, ?> upstream() { return leftUpstream; }
 
     @Override public @Nullable Orphan<B> pollFillingBatch() {
-        B head = lb;
         Orphan<B> tail;
-        if (head == null || head.next == null)
-            return null; // reads may be stale, but avoids paying for a lock() to confirm that
-        lock();
-        head = lb; // rightRecv might have consumed from lb between last load and end of lock()
+        B stale = lb; // returning null is cheaper than synchronization
+        if (stale == null || stale.next == null || !tryLock())
+            return null; //no queue, no tail or contended lock
         try {
-            if ((tail=detachDistinctTail(head)) != null) {
+            if ((tail=detachDistinctTail(lb)) != null) {
                 lbTotalRows -= Batch.peekTotalRows(tail);
                 if (EmitterStats.ENABLED && stats != null)
                     stats.revertOnBatchReceived(tail);

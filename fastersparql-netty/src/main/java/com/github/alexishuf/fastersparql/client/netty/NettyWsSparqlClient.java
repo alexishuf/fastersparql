@@ -630,7 +630,11 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         @Override public @Nullable Orphan<B> pollFillingBatch() {
             Orphan<B> tail;
-            while ((int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            B stale = this.receivedBindings; // returning null is cheaper than synchronization
+            if (stale == null || stale.next == null
+                    || (int)BINDINGS_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) {
+                return null; // no queue, no tail or contended lock
+            }
             try {
                 if ((tail=Batch.detachDistinctTail(receivedBindings)) != null)
                     journal("pollFillingBatch rows=", Batch.peekRows(tail), "on", this);

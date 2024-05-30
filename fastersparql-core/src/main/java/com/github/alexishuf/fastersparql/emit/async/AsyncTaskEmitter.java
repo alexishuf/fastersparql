@@ -51,13 +51,13 @@ public abstract class AsyncTaskEmitter<B extends Batch<B>, E extends AsyncTaskEm
     }
 
     @Override public Orphan<B> pollFillingBatch() {
-        Orphan<B> tail = null;
-        if (queue != null) {
-            lock();
-            tail = queue == null ? null : queue.detachDistinctTail();
+        B stale = queue; // returning null is cheaper than synchronization
+        if (stale != null && stale.next != null && tryLock()) {
+            var tail = queue == null ? null : queue.detachDistinctTail();
             unlock();
+            return tail;
         }
-        return tail;
+        return null;
     }
 
     protected Orphan<B> takeFillingOrCreate() {
