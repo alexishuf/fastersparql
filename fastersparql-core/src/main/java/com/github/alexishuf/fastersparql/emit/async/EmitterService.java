@@ -417,7 +417,7 @@ public final class EmitterService {
      * using a {@link LockSupport#unpark(Thread)} instead of {@link Unparker#unpark(Thread)}.
      */
     public boolean unparkStealer() {
-        return parked.unparkAny(workers);
+        return plainSize > 0 && parked.unparkAny(workers);
     }
 
     private Task<?> pollTaskShared() {
