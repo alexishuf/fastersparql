@@ -719,7 +719,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         if (lSh == null) lSh = FinalSegmentRope.EMPTY;
         if (rSh == null) rSh = FinalSegmentRope.EMPTY;
         if (numeric)
-            return compareNumbers(lU8, lOff, lLen-1, rU8, rOff, rLen-1) == 0;
+            return compareNumbers(lU8, lOff+1, lLen-1, rU8, rOff+1, rLen-1) == 0;
         return compare2_2(lSh.utf8, lSh.segment.address()+lSh.offset, lSh.len,
                           lU8, lOff, lLen,
                           rSh.utf8, rSh.segment.address()+rSh.offset, rSh.len,
