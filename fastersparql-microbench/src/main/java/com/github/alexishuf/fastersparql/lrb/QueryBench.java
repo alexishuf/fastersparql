@@ -384,12 +384,17 @@ public class QueryBench {
         jfrEvent.begin();
     }
 
-    @TearDown(Level.Iteration) public void iterationTearDown() {
+    @TearDown(Level.Iteration) public void iterationTearDown(BenchmarkParams params) {
         jfrEvent.end();
         jfrEvent.commit();
         if (iterationNumber == 0) {
             Async.uninterruptibleSleep(50);
             Primer.primeAll();
+            var sb = new StringBuilder().append("Parameters recap: ");
+            for (String key : params.getParamsKeys())
+                sb.append(key).append('=').append(params.getParam(key)).append(' ');
+            sb.setLength(sb.length()-1);
+            System.out.print(sb.append('\n'));
         }
         ++iterationNumber;
         lastIterationMs = (System.nanoTime()-iterationStart)/1_000_000L;
