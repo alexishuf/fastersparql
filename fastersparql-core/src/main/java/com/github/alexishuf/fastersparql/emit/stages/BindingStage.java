@@ -269,15 +269,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             if ((state&IS_CANCEL_REQ) != 0) {
                 orphan.takeOwnership(this).recycle(this);
             } else {
-                B head = lb, dst = detachDistinctTail(head, this);
-                if (dst != null) {
-                    state = unlock(); // copy/append() while unlocked
-                    dst.append(orphan);
-                    orphan = dst.releaseOwnership(this);
-                    state = lock();
-                    head = lb; // might have changed while unlocked
-                }
-                lb = Batch.quickAppend(head, this, orphan);
+                lb = Batch.quickAppend(lb, this, orphan);
                 lbTotalRows += rows;
                 leftPending -= rows;
                 scheduleRebindTask = (state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND;
