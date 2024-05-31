@@ -69,7 +69,6 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.REC_MAX_FRAME_LEN;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
@@ -1141,7 +1140,7 @@ public class NettySparqlServer implements SparqlServer {
                 extends CallbackEmitter<CompressedBatch, BindingsCallback>
                 implements Orphan<BindingsCallback> {
             public BindingsCallback(Vars vars) {
-                super(COMPRESSED, vars, EMITTER_SVC, CREATED, CB_FLAGS);
+                super(COMPRESSED, vars, CREATED, CB_FLAGS);
                 if (ResultJournal.ENABLED)
                     ResultJournal.initEmitter(this, vars);
             }

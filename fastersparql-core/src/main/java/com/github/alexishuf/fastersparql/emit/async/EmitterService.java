@@ -13,7 +13,6 @@ import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
@@ -52,7 +51,7 @@ public final class EmitterService {
             }
         }
         protected static final int IS_RUNNING  = 0x80000000;
-        protected static final Stateful.Flags TASK_FLAGS = Stateful.Flags.DEFAULT.toBuilder()
+        protected static final Flags TASK_FLAGS = Flags.DEFAULT.toBuilder()
                 .flag(IS_RUNNING, "RUNNING").build();
 
 
@@ -62,12 +61,13 @@ public final class EmitterService {
         /**
          * Create  a new {@link Task}, optionally  assigned to a preferred worker.
          *
-         * @param emitterSvc the {@link EmitterService} where the task will run.
+         * @param initState see {@link Stateful#Stateful(int, Flags)}
+         * @param flags see {@link Stateful#Stateful(int, Flags)}
          */
-        protected Task(EmitterService emitterSvc, int initState, Flags flags) {
+        protected Task(int initState, Flags flags) {
             super(initState, flags);
             assert flags.contains(TASK_FLAGS);
-            this.emitterSvc = emitterSvc;
+            this.emitterSvc = service();
         }
 
         /**
@@ -344,9 +344,30 @@ public final class EmitterService {
         }
     }
 
-    private static final AtomicInteger nextServiceId = new AtomicInteger(1);
-    public static final EmitterService EMITTER_SVC
-            = new EmitterService(getRuntime().availableProcessors());
+    private static final VarHandle SVC_INIT_LOCK;
+    @SuppressWarnings("unused") private static int plainSvcInitLock;
+    static {
+        try {
+            SVC_INIT_LOCK = MethodHandles.lookup().findStaticVarHandle(EmitterService.class, "plainSvcInitLock", int.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+    private static EmitterService SVC;
+
+    /**  Get the single global {@link EmitterService} instance */
+    public static EmitterService service() {
+        if (SVC == null)
+            initService(); // should only be called once
+        return SVC;
+    }
+    private static void initService() {
+        while ((int)SVC_INIT_LOCK.getAndSetAcquire(1) != 0) Thread.yield();
+        try {
+            if (SVC == null)
+                SVC = new EmitterService(Runtime.getRuntime().availableProcessors());
+        } finally { SVC_INIT_LOCK.setRelease(0); }
+    }
 
     private static final int LOCKED = -1;
     private static final VarHandle SIZE;
@@ -366,7 +387,7 @@ public final class EmitterService {
     private int tasksMask;
     private EmitterService.Task<?>[] tasks;
 
-    public EmitterService(int nWorkers) {
+    private EmitterService(int nWorkers) {
         nWorkers = 1 << Math.max(1, 32-Integer.numberOfLeadingZeros(nWorkers-1));
         assert nWorkers <= 0xffff;
         cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
@@ -375,7 +396,7 @@ public final class EmitterService {
         tasksMask    = 0x1fff;
         tasks        = new EmitterService.Task[tasksMask+1];
         var workerQueue = new EmitterService.Task[(nWorkers+2)*LOCAL_QUEUE_WIDTH];
-        var grp = new ThreadGroup("EmitterService-"+id);
+        var grp = new ThreadGroup("EmitterService");
         for (int i = 0; i < workers.length; i++) {
             int workerQueueBegin = LOCAL_QUEUE_WIDTH*(i+1);
             workers[i] = new PaddedWorker(grp, this, i, workerQueue, workerQueueBegin);
@@ -385,10 +406,10 @@ public final class EmitterService {
         Timestamp.onTick(0xd1454270, new OnTick(this));
     }
 
-    @Override public String toString() {return "EmitterService-"+id;}
+    @Override public String toString() {return "EmitterService";}
 
     @SuppressWarnings("unused") public String dump() {
-        var sb = new StringBuilder().append("EmitterService-").append(id).append('\n');
+        var sb = new StringBuilder().append("EmitterService-").append('\n');
         sb.append("  shared queue: ").append(plainSize).append(" items\n");
         sb.append("parkedBS: ").append(parked);
         sb.append('\n');

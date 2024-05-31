@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
+import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
@@ -1016,7 +1017,7 @@ public class FSProperties {
         if (i < 0) {
             i = readNonNegativeInteger(NETTY_EVLOOP_THREADS, Integer.MAX_VALUE);
             if (i == Integer.MAX_VALUE)
-                i = Runtime.getRuntime().availableProcessors();
+                i = 2*ThreadPoolsPartitioner.partitionSize();
             CACHE_NETTY_EVLOOP_THREADS = i;
         }
         return i;

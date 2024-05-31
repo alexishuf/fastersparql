@@ -26,7 +26,7 @@ class EventLoopGroupHolderTest {
     }
 
     private Object doTestKeepAlive1Second() throws InterruptedException {
-        EventLoopGroupHolder holder = new EventLoopGroupHolder("test", NettyTransport.NIO, 500, MILLISECONDS, 1);
+        EventLoopGroupHolder holder = new EventLoopGroupHolder("test", NettyTransport.NIO, 500, MILLISECONDS, 1, null);
         EventLoopGroup elg = holder.acquire();
         assertFalse(elg.isShutdown());
         assertFalse(elg.isShuttingDown());
@@ -57,7 +57,7 @@ class EventLoopGroupHolderTest {
     }
 
     private Object doTestNoKeepAlive() {
-        EventLoopGroupHolder holder = new EventLoopGroupHolder("test", NettyTransport.NIO, 0, SECONDS, 1);
+        EventLoopGroupHolder holder = new EventLoopGroupHolder("test", NettyTransport.NIO, 0, SECONDS, 1, null);
         EventLoopGroup elg1 = holder.acquire();
         assertFalse(elg1.isShutdown());
         assertFalse(elg1.isShuttingDown());
@@ -84,7 +84,7 @@ class EventLoopGroupHolderTest {
     }
 
     private Object doTestConcurrency() throws InterruptedException, ExecutionException {
-        var holder = new EventLoopGroupHolder("test", null, 0, SECONDS, 1);
+        var holder = new EventLoopGroupHolder("test", null, 0, SECONDS, 1, null);
         int tasks = Runtime.getRuntime().availableProcessors() * 64;
         List<Future<Integer>> futures = new ArrayList<>(tasks);
         boolean onTime;
