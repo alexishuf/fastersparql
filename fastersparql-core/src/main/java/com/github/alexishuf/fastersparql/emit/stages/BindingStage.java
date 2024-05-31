@@ -475,7 +475,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     @Override public void request(long rows) {
         if (ENABLED)
             journal("request ", rows, "on", this);
-        int state = statePlain();
+        int state = statePlain(), leftRequest = 0;
         long rightRows = (state&FILTER_BIND) == 0 ? rows : 2;
         if ((state&IS_INIT) != 0) {
             if ((onFirstRequest(state)&IS_LIVE) == 0)
@@ -486,13 +486,13 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         try {
             if (rows > requested) {
                 requested = rows;
-                maybeRequestLeft(lb);
+                leftRequest = leftRequest(lb);
                 if ((state&CAN_REQ_RIGHT_MASK) == CAN_REQ_RIGHT)
                     rightRecv.upstream.request(rightRows);
             }
-        } finally {
-            unlock();
-        }
+        } finally { state = unlock(); }
+        if (leftRequest > 0 && (state&IS_TERM) == 0)
+            leftUpstream.request(leftRequest);
     }
 
     /* --- --- --- internal helpers --- --- --- */
@@ -524,14 +524,15 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         return state;
     }
 
-    private void maybeRequestLeft(B lb) {
+    private int leftRequest(B lb) {
         // count queued left rows into LEFT_REQUESTED_MAX limit
         int queued = (lb == null ? 0 : lbTotalRows-lr);
         if (requested > Math.max(0, leftPending)+queued && leftPending < leftChunk>>1) {
             int n = (int)Math.min(requested, leftChunk);
             leftPending = n;
-            leftUpstream.request(n);
+            return n;
         }
+        return 0;
     }
 
     private void leftTerminated(int flag, @Nullable Throwable error) {
@@ -644,14 +645,20 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             this.lr = lr;
             if (ENABLED)
                 journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
-            maybeRequestLeft(lb);
+            int leftRequest = leftRequest(lb);
             if (lb == null) {
-                if ((st&LEFT_TERM) == 0) st = unlock(0, RIGHT_STARVED);
-                else                     st = terminateStage(st);
+                if ((st&LEFT_TERM) == 0) {
+                    st = unlock(0, RIGHT_STARVED);
+                    if (leftRequest > 0) leftUpstream.request(leftRequest);
+                } else {
+                    st = terminateStage(st);
+                }
             } else {
                 // release lock but forbid onBatch() from calling startNextBinding()
                 // and forbid request() from calling upstream.request()
                 st = unlock(RIGHT_STARVED, RIGHT_BINDING);
+                if (leftRequest > 0 && (st&IS_TERM) == 0)
+                    leftUpstream.request(leftRequest);
                 ++intBinding.sequence;
                 rebind(intBinding.attach(lb, lr), rightRecv.upstream);
                 ++rightRecv.bindingSeq;
