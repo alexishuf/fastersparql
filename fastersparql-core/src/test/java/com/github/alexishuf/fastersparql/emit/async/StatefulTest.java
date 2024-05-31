@@ -156,7 +156,7 @@ class StatefulTest {
         private final int[] counter;
         private final CompletableFuture<?> result = new CompletableFuture<>();
         private RaceTask(S s, int rounds, int[] counter) {
-            super(EmitterService.EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(CREATED, TASK_FLAGS);
             this.s       = s;
             this.rounds  = rounds;
             this.counter = counter;

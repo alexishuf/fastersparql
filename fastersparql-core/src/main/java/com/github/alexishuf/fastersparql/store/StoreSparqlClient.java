@@ -74,7 +74,6 @@ import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.RecursiveTask;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_SUFFIXES;
@@ -882,7 +881,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final LocalityCompositeDict dict;
 
         private PrefetchTask(short dictId, LocalityCompositeDict dict, TPEmitter tpEmitter) {
-            super(EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(CREATED, TASK_FLAGS);
             this.dict         = dict;
             this.dictId       = dictId;
             this.asyncBottom  = STOP_SENTINEL;
@@ -1113,7 +1112,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
-            super(TYPE, outVars, EMITTER_SVC, CREATED, FLAGS);
+            super(TYPE, outVars, CREATED, FLAGS);
             int cols = outVars.size();
             if (cols > 127)
                 throw new IllegalArgumentException("Too many output columns");

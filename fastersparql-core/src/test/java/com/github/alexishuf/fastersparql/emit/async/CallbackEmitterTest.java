@@ -36,7 +36,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.MAX_VALUE;
@@ -57,7 +56,7 @@ class CallbackEmitterTest {
             return new Concrete(expected, fail);
         }
         protected Cb(Orphan<CompressedBatch> expected, boolean fail) {
-            super(COMPRESSED, X, EMITTER_SVC, CREATED, CB_FLAGS);
+            super(COMPRESSED, X, CREATED, CB_FLAGS);
             this.expected = expected.takeOwnership(this);
             this.fail     = fail;
             if (ResultJournal.ENABLED)

@@ -47,10 +47,8 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     protected final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
     protected Throwable error = UNSET_ERROR;
 
-    protected TaskEmitter(BatchType<B> batchType, Vars vars,
-                          EmitterService runner,
-                          int initState, Flags flags) {
-        super(runner, initState, flags);
+    protected TaskEmitter(BatchType<B> batchType, Vars vars, int initState, Flags flags) {
+        super(initState, flags);
         this.vars = vars;
         this.bt = batchType;
         int ouCols = vars.size();

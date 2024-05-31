@@ -66,7 +66,6 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.MIN_HINT;
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.NORMAL_HINT;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.*;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.buffer.Unpooled.wrappedBuffer;
@@ -894,7 +893,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         public WsEmitter(BatchType<B> batchType, Vars outVars, SparqlQuery query,
                          @Nullable EmitBindQuery<B> bindQuery) {
-            super(batchType, outVars, EMITTER_SVC, CREATED, CB_FLAGS);
+            super(batchType, outVars, CREATED, CB_FLAGS);
             this.h         = new WsHandler<>(new EmitWsParser(bindQuery), this, bindQuery);
             this.query     = query;
             this.bindQuery = bindQuery;

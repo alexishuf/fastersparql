@@ -32,7 +32,6 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.detachDistinctTail;
 import static com.github.alexishuf.fastersparql.emit.Emitters.handleEmitError;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.MINIMAL;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.appendRequested;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
@@ -715,7 +714,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         private final BindingStage<?, ?> bs;
 
         private RebindTask(BindingStage<?, ?> bs) {
-            super(EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(CREATED, TASK_FLAGS);
             this.bs = bs;
         }
         private static final class Concrete extends RebindTask implements Orphan<RebindTask> {
@@ -739,7 +738,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private static abstract sealed class TerminateTask extends EmitterService.Task<TerminateTask> {
         private final BindingStage<?, ?> bs;
         private TerminateTask(BindingStage<?, ?> bs) {
-            super(EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(CREATED, TASK_FLAGS);
             this.bs = bs;
         }
         private static final class Concrete extends TerminateTask implements Orphan<TerminateTask> {

@@ -17,7 +17,6 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
 public abstract sealed class AsyncStage<B extends Batch<B>>
         extends AsyncTaskEmitter<B, AsyncStage<B>>
@@ -31,15 +30,11 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     public static <B extends Batch<B>> Orphan<AsyncStage<B>>
     create(Orphan<? extends Emitter<B, ?>> upstream) {
-        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR), EMITTER_SVC);
-    }
-    public static <B extends Batch<B>> Orphan<AsyncStage<B>>
-    create(Orphan<? extends Emitter<B, ?>> upstream, EmitterService runner) {
-        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR), runner);
+        return new Concrete<>(upstream.takeOwnership(CONSTRUCTOR));
     }
 
-    private AsyncStage(Emitter<B, ?> upstream, EmitterService runner) {
-        super(upstream.batchType(), upstream.vars(), runner, CREATED, ASYNC_FLAGS);
+    private AsyncStage(Emitter<B, ?> upstream) {
+        super(upstream.batchType(), upstream.vars(), CREATED, ASYNC_FLAGS);
         this.up = upstream.transferOwnership(CONSTRUCTOR, this);
         upstream.subscribe(this);
     }
@@ -51,8 +46,8 @@ public abstract sealed class AsyncStage<B extends Batch<B>>
 
     private static final class Concrete<B extends Batch<B>>
             extends AsyncStage<B> implements Orphan<AsyncStage<B>> {
-        public Concrete(Emitter<B, ?> upstream, EmitterService runner) {
-            super(upstream, runner);
+        public Concrete(Emitter<B, ?> upstream) {
+            super(upstream);
         }
         @Override public AsyncStage<B> takeOwnership(Object o) {return takeOwnership0(o);}
     }

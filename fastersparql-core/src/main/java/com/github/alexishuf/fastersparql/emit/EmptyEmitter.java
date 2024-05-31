@@ -10,7 +10,6 @@ import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
 public abstract sealed class EmptyEmitter<B extends Batch<B>> extends TaskEmitter<B, EmptyEmitter<B>> {
@@ -20,7 +19,7 @@ public abstract sealed class EmptyEmitter<B extends Batch<B>> extends TaskEmitte
     }
 
     protected EmptyEmitter(BatchType<B> batchType, Vars vars, @Nullable Throwable error) {
-        super(batchType, vars, EMITTER_SVC, CREATED, TASK_FLAGS);
+        super(batchType, vars, CREATED, TASK_FLAGS);
         this.error = error == null ? UNSET_ERROR : error;
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);

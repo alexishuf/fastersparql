@@ -29,7 +29,7 @@ class EmitterServiceTest {
         public int requested;
 
         protected Counter(EmitterServiceTest test) {
-            super(EmitterService.EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(CREATED, TASK_FLAGS);
             this.test = test;
         }
         public static Orphan<Counter> create(EmitterServiceTest test) {

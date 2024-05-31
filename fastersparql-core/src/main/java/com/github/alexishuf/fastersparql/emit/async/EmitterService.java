@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
 import org.slf4j.Logger;
@@ -10,12 +11,12 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
-import static java.lang.Runtime.getRuntime;
 import static java.lang.Thread.currentThread;
 import static java.lang.Thread.onSpinWait;
 
@@ -33,6 +34,9 @@ import static java.lang.Thread.onSpinWait;
  * </ul>
  */
 public final class EmitterService {
+    static {
+        ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
+    }
     private static final Logger log = LoggerFactory.getLogger(EmitterService.class);
 
     /**
@@ -247,6 +251,7 @@ public final class EmitterService {
         @Override public void run() {
             if (currentThread() != this)
                 throw new IllegalStateException("wrong thread");
+            Affinity.setAffinity(svc.cpuAffinity);
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task<?> task = pollTaskLocal();
@@ -355,7 +360,7 @@ public final class EmitterService {
 
     private final EmitterService.Worker[] workers;
     private final ParkedSet parked;
-    private final int id;
+    private final BitSet cpuAffinity;
     @SuppressWarnings("unused") private int plainSize;
     private int tasksHead;
     private int tasksMask;
@@ -364,7 +369,7 @@ public final class EmitterService {
     public EmitterService(int nWorkers) {
         nWorkers = 1 << Math.max(1, 32-Integer.numberOfLeadingZeros(nWorkers-1));
         assert nWorkers <= 0xffff;
-        id           = nextServiceId.getAndIncrement();
+        cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
         workers      = new EmitterService.Worker[nWorkers];
         parked       = new ParkedSet(nWorkers);
         tasksMask    = 0x1fff;

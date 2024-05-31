@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.client;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -43,7 +42,7 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
                           Transactional transactional,
                           String displayLocation,
                           SparqlQuery query, QueryExecBuilder execFac) {
-        super(batchType, vars, EmitterService.EMITTER_SVC, CREATED, TASK_FLAGS);
+        super(batchType, vars, CREATED, TASK_FLAGS);
         var jQuery = QueryFactory.create(query.sparql().toString());
         // required in order to make jena remember values assigned to variables at rebind():
         jQuery.setQueryResultStar(false);

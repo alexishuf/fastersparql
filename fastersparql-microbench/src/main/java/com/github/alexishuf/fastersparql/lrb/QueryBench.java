@@ -9,6 +9,8 @@ import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.emit.async.EmitterService;
+import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
 import com.github.alexishuf.fastersparql.lrb.query.PlanRegistry;
@@ -45,6 +47,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntSupplier;
@@ -244,6 +247,12 @@ public class QueryBench {
     }
 
     @Setup(Level.Trial) public void trialSetup(BenchmarkParams params) throws IOException {
+        if (srcKind.isFsServer())
+            ThreadPoolsPartitioner.registerPartition(SharedEventLoopGroupHolder.class.getSimpleName());
+        if (flowModel == FlowModel.EMIT
+                || srcKind.serverFlowModel().equals(Optional.of(FlowModel.EMIT))) {
+            ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
+        }
 //        SegmentRope.ALT = alt;
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
         setProperty(OP_WEAKEN_DISTINCT, Boolean.toString(weakenDistinct));

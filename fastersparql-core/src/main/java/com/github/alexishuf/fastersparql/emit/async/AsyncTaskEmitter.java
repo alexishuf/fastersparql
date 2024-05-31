@@ -26,9 +26,8 @@ public abstract class AsyncTaskEmitter<B extends Batch<B>, E extends AsyncTaskEm
         extends TaskEmitter<B, E> implements HasFillingBatch<B> {
     private @Nullable B queue;
 
-    protected AsyncTaskEmitter(BatchType<B> batchType, Vars vars,
-                               EmitterService runner, int initState, Flags flags) {
-        super(batchType, vars, runner, initState, flags);
+    protected AsyncTaskEmitter(BatchType<B> batchType, Vars vars, int initState, Flags flags) {
+        super(batchType, vars, initState, flags);
     }
 
     @Override protected void doRelease() {

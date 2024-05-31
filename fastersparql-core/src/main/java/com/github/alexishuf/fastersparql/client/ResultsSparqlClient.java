@@ -39,7 +39,6 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.Results.*;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 
@@ -241,8 +240,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
         private final List<List<Term>> actualBindings = new ArrayList<>();
 
         public ResultsEmitter(Plan parsedQuery) {
-            super(TermBatchType.TERM, parsedQuery.publicVars(), EMITTER_SVC,
-                    CREATED, TASK_FLAGS);
+            super(TermBatchType.TERM, parsedQuery.publicVars(), CREATED, TASK_FLAGS);
             this.parsedQuery = parsedQuery;
             this.expected = qry2emitResults.getOrDefault(parsedQuery, null);
             if (ResultJournal.ENABLED)

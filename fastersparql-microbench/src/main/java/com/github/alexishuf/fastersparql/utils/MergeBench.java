@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
 @SuppressWarnings("unchecked")
 @State(Scope.Thread)
@@ -159,7 +158,7 @@ public class MergeBench {
         private int row;
 
         public SourceProducer(BatchType<B> type, @NonNull B source) {
-            super(type, X, EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(type, X, CREATED, TASK_FLAGS);
             this.current = source;
         }
 

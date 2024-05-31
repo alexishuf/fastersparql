@@ -54,7 +54,7 @@ public final class NettyClientBuilder {
         } else {
             String name = "NettyClientBuilder@"+Integer.toHexString(System.identityHashCode(this));
             return new EventLoopGroupHolder(name, null, 0, TimeUnit.SECONDS,
-                                            FSNettyProperties.nettyEventLoopThreads());
+                                            FSNettyProperties.nettyEventLoopThreads(), null);
         }
     }
 

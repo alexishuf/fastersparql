@@ -30,7 +30,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.concurrent.Timestamp.nanoTime;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -60,7 +59,7 @@ class ScatterStageTest {
 
         public P(Orphan<CompressedBatch> expected, boolean injectCancel,
                  @Nullable RuntimeException injectFail) {
-            super(COMPRESSED, XY, EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(COMPRESSED, XY, CREATED, TASK_FLAGS);
             this.current = expected.takeOwnership(this);
             assert current.validate(Batch.Validation.CHEAP);
             this.totalRows = current.totalRows();

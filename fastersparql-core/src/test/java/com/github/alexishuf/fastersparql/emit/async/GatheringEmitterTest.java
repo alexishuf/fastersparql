@@ -31,7 +31,6 @@ import java.util.concurrent.CompletionException;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static java.lang.Integer.MAX_VALUE;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -64,7 +63,7 @@ class GatheringEmitterTest {
         private final int cancelAt, failAt;
 
         public P(@NonNull CompressedBatch expected, int cancelAt, int failAt) {
-            super(COMPRESSED, X, EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(COMPRESSED, X, CREATED, TASK_FLAGS);
             assert expected.validate(Batch.Validation.CHEAP);
             this.current = expected;
             this.failAt = failAt;

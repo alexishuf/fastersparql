@@ -89,7 +89,8 @@ public class NettySparqlServer implements SparqlServer {
     private static final Logger log = LoggerFactory.getLogger(NettySparqlServer.class);
     public static final EventLoopGroupHolder ACCEPT_ELG
             = new EventLoopGroupHolder("NettySparqlServer.ACCEPT_ELG", null,
-                                       sharedEventLoopGroupKeepAliveSeconds(), SECONDS, 1);
+                                       sharedEventLoopGroupKeepAliveSeconds(),
+                                       SECONDS, 1, null);
     private static final int HANDLER_POOL_SIZE = FSNettyProperties.serverHandlerPool();
 
     private static final String SP_PATH = "/sparql";

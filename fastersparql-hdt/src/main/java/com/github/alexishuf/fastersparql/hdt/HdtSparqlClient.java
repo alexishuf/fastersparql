@@ -14,7 +14,6 @@ import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
@@ -210,7 +209,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
-            super(HDT, outVars, EmitterService.EMITTER_SVC, CREATED, FLAGS);
+            super(HDT, outVars, CREATED, FLAGS);
             int cols = outVars.size();
             int sOutCol = outVars.indexOf(tp.s);
             int pOutCol = outVars.indexOf(tp.p);

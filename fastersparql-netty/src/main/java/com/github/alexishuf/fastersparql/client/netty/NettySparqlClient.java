@@ -21,7 +21,6 @@ import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
 import com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.async.CallbackEmitter;
-import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSInvalidArgument;
@@ -295,8 +294,7 @@ public class NettySparqlClient extends AbstractSparqlClient {
         private int cookie;
 
         public QueryEmitter(BatchType<B> batchType, SparqlQuery query) {
-            super(batchType, query.publicVars(), EmitterService.EMITTER_SVC,
-                    CREATED, CB_FLAGS);
+            super(batchType, query.publicVars(), CREATED, CB_FLAGS);
             this.originalQuery = query;
             this.boundQuery    = query;
             acquireRef();

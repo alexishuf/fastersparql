@@ -106,9 +106,8 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
     private @Nullable B queue;
     private int avgRows;
 
-    public CallbackEmitter(BatchType<B> batchType, Vars vars, EmitterService runner,
-                           int initState, Flags flags) {
-        super(batchType, vars, runner, initState|PAUSED, flags);
+    public CallbackEmitter(BatchType<B> batchType, Vars vars, int initState, Flags flags) {
+        super(batchType, vars, initState|PAUSED, flags);
         assert flags.contains(CB_FLAGS) : "missing CB_FLAGS";
     }
 

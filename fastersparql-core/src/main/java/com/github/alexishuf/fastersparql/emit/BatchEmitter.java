@@ -10,7 +10,6 @@ import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 
 public abstract sealed class BatchEmitter<B extends Batch<B>> extends TaskEmitter<B, BatchEmitter<B>> {
     private @Nullable B batch;
@@ -21,7 +20,7 @@ public abstract sealed class BatchEmitter<B extends Batch<B>> extends TaskEmitte
     }
 
     protected BatchEmitter(Vars vars, Orphan<B> batch) {
-        super(Batch.peekType(batch), vars, EMITTER_SVC, CREATED, TASK_FLAGS);
+        super(Batch.peekType(batch), vars, CREATED, TASK_FLAGS);
         this.batch = batch.takeOwnership(this);
         if (ResultJournal.ENABLED)
             ResultJournal.initEmitter(this, vars);

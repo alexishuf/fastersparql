@@ -244,7 +244,7 @@ public class Watchdog implements SafeCloseable {
             }
             try (var ps = out(emitterSvcDst, ".emitterService")) {
                 if (ps != null)
-                    ps.println(EmitterService.EMITTER_SVC.dump());
+                    ps.println(EmitterService.service().dump());
             } catch (IOException e) {
                 log.error("Failed to write EmitterService dump: {}", e.getMessage());
             }

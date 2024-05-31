@@ -22,7 +22,6 @@ import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.util.UnsetError.UNSET_ERROR;
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.maxRelease;
 import static java.lang.System.identityHashCode;
@@ -40,7 +39,7 @@ public class GatheringEmitter<B extends Batch<B>>
         return new Concrete<>(bt, vars);
     }
     protected GatheringEmitter(BatchType<B> batchType, Vars vars) {
-        super(batchType, vars, EMITTER_SVC, CREATED, TASK_FLAGS);
+        super(batchType, vars, CREATED, TASK_FLAGS);
     }
     private static final class Concrete<B extends Batch<B>> extends GatheringEmitter<B> implements Orphan<GatheringEmitter<B>> {
         private Concrete(BatchType<B> batchType, Vars vars) {super(batchType, vars);}

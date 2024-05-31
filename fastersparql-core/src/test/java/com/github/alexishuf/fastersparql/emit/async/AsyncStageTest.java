@@ -34,7 +34,6 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,7 +50,7 @@ class AsyncStageTest {
         private final MutableRope nt = new MutableRope(12);
 
         public P(BatchType<B> batchType, int begin, int end, @Nullable RuntimeException failCause) {
-            super(batchType, X, EMITTER_SVC, CREATED, TASK_FLAGS);
+            super(batchType, X, CREATED, TASK_FLAGS);
             this.begin = begin;
             this.nextRow = begin;
             this.end = end;

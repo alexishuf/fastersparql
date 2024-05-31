@@ -36,7 +36,6 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
-import static com.github.alexishuf.fastersparql.emit.async.EmitterService.EMITTER_SVC;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
 import static java.lang.System.nanoTime;
@@ -77,9 +76,8 @@ class GatherAndScatterTest {
             private int next;
             private boolean cleaned;
 
-            public P(BatchType<B> batchType, Vars vars, EmitterService runner,
-                     int id, int begin, int failAt) {
-                super(batchType, vars, runner, CREATED, TASK_FLAGS);
+            public P(BatchType<B> batchType, Vars vars, int id, int begin, int failAt) {
+                super(batchType, vars, CREATED, TASK_FLAGS);
                 this.id     = id;
                 this.next   = begin;
                 this.end    = begin+height;
@@ -289,7 +287,7 @@ class GatherAndScatterTest {
             List<P<B>> producers = new ArrayList<>();
             for (int i = 0, begin = 0; i < nProducers; i++, begin += height) {
                 int failAt = i == failingProducer ? begin+this.failAtRow : -1;
-                P<B> p = new P<>(batchType, X, EMITTER_SVC, i, begin, failAt);
+                P<B> p = new P<>(batchType, X, i, begin, failAt);
                 gather.subscribeTo(p);
                 producers.add(p);
             }
