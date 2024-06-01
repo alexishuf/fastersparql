@@ -122,7 +122,6 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
 
     @SuppressWarnings("FieldMayBeFinal") private int plainState;
     protected final Flags flags;
-    @SuppressWarnings("unused") private @Nullable Object plainParked;
 
     protected Stateful(int initState, Flags flags) {
         this.plainState = initState;
