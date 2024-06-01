@@ -32,7 +32,7 @@ import static java.lang.Thread.onSpinWait;
  *         the same worker thread to run)</li>
  * </ul>
  */
-public final class EmitterService {
+public final class EmitterService extends EmitterService_3 {
     static {
         ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
     }
@@ -374,23 +374,9 @@ public final class EmitterService {
         }
     }
 
-    private final EmitterService.Worker[] workers;
-    private final ParkedSet parked;
-    private final BitSet cpuAffinity;
-    @SuppressWarnings("unused") private int plainSize;
-    private int tasksHead;
-    private int tasksMask;
-    private EmitterService.Task<?>[] tasks;
-
-    private EmitterService(int nWorkers) {
-        nWorkers = 1 << Math.max(1, 32-Integer.numberOfLeadingZeros(nWorkers-1));
-        assert nWorkers <= 0xffff;
-        cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
-        workers      = new EmitterService.Worker[nWorkers];
-        parked       = new ParkedSet(nWorkers);
-        tasksMask    = 0x1fff;
-        tasks        = new EmitterService.Task[tasksMask+1];
-        var workerQueue = new EmitterService.Task[(nWorkers+2)*LOCAL_QUEUE_WIDTH];
+    private EmitterService(int unsanitizedWorkersCount) {
+        super(unsanitizedWorkersCount);
+        var workerQueue = new EmitterService.Task[(workers.length+2)*LOCAL_QUEUE_WIDTH];
         var grp = new ThreadGroup("EmitterService");
         for (int i = 0; i < workers.length; i++) {
             int workerQueueBegin = LOCAL_QUEUE_WIDTH*(i+1);
@@ -499,4 +485,38 @@ public final class EmitterService {
         tasks = Arrays.copyOf(tasks, tasks.length<<1);
         tasksMask = tasks.length-1;
     }
+}
+class EmitterService_0 {
+    protected final EmitterService.Worker[] workers;
+    protected final ParkedSet parked;
+    protected final BitSet cpuAffinity;
+    protected       EmitterService.Task<?>[] tasks;
+    protected       int tasksMask;
+
+    public EmitterService_0(int nWorkers) {
+        nWorkers = 1 << Math.max(1, 32-Integer.numberOfLeadingZeros(nWorkers-1));
+        assert nWorkers <= 0xffff;
+        cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
+        workers      = new EmitterService.Worker[nWorkers];
+        parked       = new ParkedSet(nWorkers);
+        tasksMask    = 0x1fff;
+        tasks        = new EmitterService.Task[tasksMask+1];
+    }
+}
+@SuppressWarnings("unused")
+class EmitterService_1 extends EmitterService_0 {
+    private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
+    private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
+    public EmitterService_1(int nWorkers) {super(nWorkers);}
+}
+class EmitterService_2 extends EmitterService_0 {
+    @SuppressWarnings("unused") protected int plainSize;
+    protected int tasksHead;
+    public EmitterService_2(int nWorkers) {super(nWorkers);}
+}
+@SuppressWarnings("unused")
+class EmitterService_3 extends EmitterService_2 {
+    private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
+    private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
+    public EmitterService_3(int nWorkers) {super(nWorkers);}
 }
