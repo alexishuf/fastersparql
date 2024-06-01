@@ -321,6 +321,16 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         return before;
     }
 
+    public static <B extends Batch<B>> B
+    quickAppendTrusted(@Nullable B before, Object owner, Orphan<B> after) {
+        if (before == null)
+            return after.takeOwnership(owner);
+        before.setTail(after);
+        assert before.validate();
+        return before;
+    }
+
+
     protected B setTail(Orphan<B> head) {
         return setTail0(head.takeOwnership(tail));
     }

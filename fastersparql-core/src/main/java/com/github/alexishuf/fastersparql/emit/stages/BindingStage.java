@@ -265,7 +265,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             if ((state&IS_CANCEL_REQ) != 0) {
                 orphan.takeOwnership(this).recycle(this);
             } else {
-                lb = Batch.quickAppend(lb, this, orphan);
+                lb = Batch.quickAppendTrusted(lb, this, orphan);
                 lbTotalRows += rows;
                 leftPending -= rows;
                 if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)

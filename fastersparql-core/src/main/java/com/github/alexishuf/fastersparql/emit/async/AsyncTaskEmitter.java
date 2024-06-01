@@ -77,9 +77,19 @@ public abstract class AsyncTaskEmitter<B extends Batch<B>, E extends AsyncTaskEm
     protected void quickAppend(Orphan<B> offer) {
         if ((statePlain()&QUICK_APPEND_ALLOWED) == 0)
             throw new IllegalStateException("bad state for quickAppend()");
+        if (offer == null)
+            return;
+        @SuppressWarnings("unchecked") B peek = (B)offer;
+        if (peek.rows == 0) {
+            Orphan.safeRecycle(offer);
+            return;
+        } else if (peek.cols != outCols) {
+            throw new IllegalArgumentException("offer.cols != outCols");
+        }
         lock();
-        queue = Batch.quickAppend(queue, this, offer);
-        unlock();
+        try {
+            queue = Batch.quickAppendTrusted(queue, this, offer);
+        } finally { unlock(); }
         awakeSameWorker();
     }
     private static final int QUICK_APPEND_ALLOWED = IS_INIT|IS_LIVE;
