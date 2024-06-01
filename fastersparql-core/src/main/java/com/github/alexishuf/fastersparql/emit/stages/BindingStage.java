@@ -806,10 +806,8 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             B ownedRB = copy ? null : rb, b = null;
             try {
                 if (merger != null) {
-                    var offer = downstreamHFB == null ? null : downstreamHFB.pollFillingBatch();
-                    int before =  Batch.peekTotalRows(offer);
-                    b = merger.merge(offer, lb, lr, rb).takeOwnership(this);
-                    rowsProduced = b.totalRows()-before;
+                    b = merger.merge(null, lb, lr, rb).takeOwnership(this);
+                    rowsProduced = b.totalRows();
                 } else if (passThrough == PASSTHROUGH_RIGHT && rb != null) {
                     b = ownedRB;
                     ownedRB = null;
