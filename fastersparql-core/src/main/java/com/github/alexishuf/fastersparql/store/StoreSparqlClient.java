@@ -964,7 +964,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             // by this thread are visible to task()
             asyncBottom           = bottom;
             if (rows-bottom >= CHUNK_ROWS)
-                awakeParallel();
+                awakeSameWorker();
         }
 
         int awaitRow(BatchBinding binding) {
