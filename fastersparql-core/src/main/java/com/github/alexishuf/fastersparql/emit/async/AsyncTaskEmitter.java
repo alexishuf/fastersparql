@@ -80,7 +80,7 @@ public abstract class AsyncTaskEmitter<B extends Batch<B>, E extends AsyncTaskEm
         lock();
         queue = Batch.quickAppend(queue, this, offer);
         unlock();
-        awakeParallel();
+        awakeSameWorker();
     }
     private static final int QUICK_APPEND_ALLOWED = IS_INIT|IS_LIVE;
 
