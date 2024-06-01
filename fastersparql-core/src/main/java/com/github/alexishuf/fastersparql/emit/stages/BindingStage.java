@@ -82,7 +82,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     protected final BatchType<B> batchType;
     private final Emitter<B, ?> leftUpstream;
     private final RightReceiver rightRecv;
-    private final RebindTask rebindTask;
     private @Nullable B lb;
     private short lr = -1;
     private final short leftChunk;
@@ -140,7 +139,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                            Vars outVars, Orphan<? extends Emitter<B, ?>> rightUpstream) {
         super(CREATED|RIGHT_STARVED|(type.isJoin() ? 0 : FILTER_BIND),
               BINDING_STAGE_FLAGS);
-        rebindTask = new RebindTask.Concrete(this).takeOwnership(this);
         leftUpstream = bindings.takeOwnership(this);
         batchType = leftUpstream.batchType();
         bindableVars = leftUpstream.bindableVars().union(Emitter.bindableVars(rightUpstream));
@@ -176,7 +174,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             stats.report(log, this);
         Owned.safeRecycle(leftUpstream, this);
         Owned.safeRecycle(rightRecv.merger, rightRecv);
-        Owned.safeRecycle(rebindTask, this);
         Owned.safeRecycle(terminateTask, this);
         rightRecv.upstream.recycle(rightRecv);
         // if this happens before the first startNextBinding(), right upstream will be
@@ -264,7 +261,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         journal("onBatch, rows=", rows, "st=", statePlain(), flags, "on", this);
 
         int state = lock();
-        boolean scheduleRebindTask = false;
         try {
             if ((state&IS_CANCEL_REQ) != 0) {
                 orphan.takeOwnership(this).recycle(this);
@@ -272,13 +268,12 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 lb = Batch.quickAppend(lb, this, orphan);
                 lbTotalRows += rows;
                 leftPending -= rows;
-                scheduleRebindTask = (state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND;
+                if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
+                    state = startNextBinding(state);
             }
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
-        if (scheduleRebindTask)
-            rebindTask.schedule();
     }
 
     @Override public void onBatchByCopy(B batch) {
@@ -290,7 +285,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         journal("onBatchByCopy, rows=", rows, "st=", statePlain(), flags, "on", this);
 
         int state = lock();
-        boolean scheduleRebindTask = false;
         try {
             if ((state&IS_CANCEL_REQ) == 0) {
                 B head = lb, tail = detachDistinctTail(head, this);
@@ -303,13 +297,12 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 lb = Batch.quickAppend(lb, this, tailOrphan);
                 lbTotalRows += rows;
                 leftPending -= rows;
-                scheduleRebindTask = (state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND;
+                if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
+                    state = startNextBinding(state);
             }
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
-        if (scheduleRebindTask)
-            rebindTask.schedule();
     }
 
     @Override public void onError(Throwable cause) { leftTerminated(LEFT_FAILED,    cause); }
@@ -707,31 +700,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         if (binding.row == 0)
             rightEmitter.rebindPrefetch(binding);
         rightEmitter.rebind(binding);
-    }
-
-    private static abstract sealed class RebindTask extends EmitterService.Task<RebindTask> {
-        private final BindingStage<?, ?> bs;
-
-        private RebindTask(BindingStage<?, ?> bs) {
-            super(CREATED, TASK_FLAGS);
-            this.bs = bs;
-        }
-        private static final class Concrete extends RebindTask implements Orphan<RebindTask> {
-            private Concrete(BindingStage<?, ?> bs) {super(bs);}
-            @Override public RebindTask takeOwnership(Object o) {return takeOwnership0(o);}
-        }
-
-        public void schedule() { awakeParallel(); }
-
-        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
-            int st = bs.lock();
-            try {
-                if ((st&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
-                    st = bs.startNextBinding(st);
-            } finally {
-                if ((st&LOCKED_MASK) != 0) bs.unlock();
-            }
-        }
     }
 
     private static abstract sealed class TerminateTask extends EmitterService.Task<TerminateTask> {
