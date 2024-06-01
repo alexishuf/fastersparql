@@ -51,7 +51,7 @@ public class ScatterStage<B extends Batch<B>>
     @SuppressWarnings("unchecked") private Connector<B>[] connectors = new Connector[12];
     private final BatchType<B> batchType;
     private long delivered;
-    private volatile long oldest;
+    private long oldest;
     @SuppressWarnings("unused") private long plainReq;
     private final int maxDelta;
     private long[] clocks = new long[12];
@@ -114,20 +114,15 @@ public class ScatterStage<B extends Batch<B>>
         return current;
     }
     private int updateDelta() {
-        long min = delivered, max = min, t;
+        lock();
+        long min = delivered, max = min;
         for (int i = 0, n = connectorsCount; i < n; i++) {
-            t = clocks[i];
+            long t = clocks[i];
             if (t < min) min = t;
             if (t > max) max = t;
         }
-        int state = statePlain();
-        boolean clogged = max-min > maxDelta;
-        if (clogged && (state&CLOGGED) == 0)
-            state = setFlagsRelease(CLOGGED);
-        else if (!clogged && (state&CLOGGED) != 0)
-            state = clearFlagsRelease(CLOGGED);
         oldest = min;
-        return state;
+        return unlock(CLOGGED, max-min > maxDelta ? CLOGGED : 0);
     }
 
     private boolean doCancel() {
