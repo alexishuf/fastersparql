@@ -252,6 +252,7 @@ public final class EmitterService {
             if (currentThread() != this)
                 throw new IllegalStateException("wrong thread");
             Affinity.setAffinity(svc.cpuAffinity);
+            int skipOffload = workerId, offloadSkipPeriod = svc.workers.length;
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task<?> task = pollTaskLocal();
@@ -268,6 +269,9 @@ public final class EmitterService {
                             svc.putTaskShared(task);
                         task = other;
                     }
+                } else if (skipOffload-- <= 0 && queueSize > 1)  {
+                    tryExpelLastTask();
+                    skipOffload = offloadSkipPeriod;
                 }
                 current = task;
                 try {
@@ -300,6 +304,16 @@ public final class EmitterService {
                 queue[idx0] = queue[idx1 = queueBegin+((head+i+1)&LOCAL_QUEUE_SIZE_MASK)];
             queueSize = size-1;
             svc.putTaskShared(other);
+        }
+
+        private void tryExpelLastTask() {
+            int last = queueSize-1;
+            if (last < 0)
+                return;
+            int idx = queueBegin + ((queueHead+last)&LOCAL_QUEUE_SIZE_MASK);
+            boolean expelled = svc.offerTaskSharedIfEmpty(queue[idx]);
+            if (expelled)
+                queueSize = last;
         }
 
         private @Nullable Task<?> pollTaskLocal() {
@@ -477,6 +491,16 @@ public final class EmitterService {
             }
         }
     }
+
+    private boolean offerTaskSharedIfEmpty(Task<?> task) {
+        boolean lockedEmpty = SIZE.weakCompareAndSetAcquire(this, 0, LOCKED);
+        if (lockedEmpty) {
+            tasks[(tasksHead)&tasksMask] = task;
+            SIZE.setRelease(this, 1);
+        }
+        return lockedEmpty;
+    }
+
 
     private void putTaskShared(Task<?> task) {
         int size;
