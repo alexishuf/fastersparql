@@ -42,7 +42,7 @@ class EmitterServiceTest {
 
         public void request() {
             requested = REQUEST_SIZE;
-            awake();
+            awakeSameWorker();
         }
 
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {

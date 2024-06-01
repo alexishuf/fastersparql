@@ -146,7 +146,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     }
 
     protected void resume() {
-        awake();
+        awakeSameWorker();
     }
 
     protected abstract int produceAndDeliver(int state);

@@ -233,7 +233,7 @@ public abstract class CallbackEmitter<B extends Batch<B>, E extends CallbackEmit
 
     @Override protected final void resume() {
         setFlagsRelease(DO_RESUME);
-        awake();
+        awakeSameWorker();
     }
 
     @Override public boolean cancel() {
