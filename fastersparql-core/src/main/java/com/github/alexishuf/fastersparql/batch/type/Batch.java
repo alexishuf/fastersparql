@@ -310,9 +310,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             return after.takeOwnership(owner);
         } else if (peek.tail == before.tail) {
             throw new IllegalArgumentException("cyclic quickAppend()");
-        } else if (peek.rows == 0
-                || (peek.rows < 8 && peek.next == null && before.tail != before
-                                  && before.copySingleNodeIfFast(peek))) {
+        } else if (peek.rows == 0) {
             peek.recycle(null);
         } else {
             before.setTail(after);
@@ -348,15 +346,6 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             n.tail = newTail;
         return newTail;
     }
-
-    /**
-     * Equivalent to {@code this.copy(nonEmpty)} if doing so is certain to be a fast operation.
-     * Else, do nothing and return {@code false}.
-     *
-     * @param nonEmpty A non-empty single-node batch ({@code rows > 0 && next == null})
-     * @return {@code true} iff rows of {@code nonEmpty} were copied into {@code this}
-     */
-    protected abstract boolean copySingleNodeIfFast(B nonEmpty);
 
     /**
      * Detaches the first node of {@code other} and copy its contents to {@code this},
@@ -1538,6 +1527,21 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      */
     public abstract void append(Orphan<B> other);
 
+    /**
+     * For any intermediary node (i.e., not {@code this} and not  {@code tail}), if the
+     * node contents fit into ints predecessor, copy those contents, remove the node from
+     * the linked list and recycle it.
+     *
+     * <p>This will not change contents of the head node nor of the tail node. I.e, the head
+     * node will not receive new rows and the tail node will not be incorporated into its
+     * predecessor. This ensures that async processing (such as prefetching) on the head node
+     * can be done concurrently with this call. Not incorporating the tail node avoids having to
+     * update all {@code tail} references of all nodes. However, {@code detach*Tail()} cannot be
+     * safely executed concurrently with this method.</p>
+     *
+     * @return {@code true} if fragmentation was reduced, {@code false} if there was no change.
+     */
+    public abstract boolean deFragmentMiddleNodes();
 
     /**
      * Equivalent to {@link #copy(Batch)} but accepts {@link Batch} implementations other than this.

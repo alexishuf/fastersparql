@@ -85,6 +85,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private @Nullable B lb;
     private short lr = -1;
     private final short leftChunk;
+    private final BindingStage.AuxTask auxTask;
     private int lbTotalRows;
     private int leftPending;
     private long requested;
@@ -93,7 +94,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private Vars extBindingVars = Vars.EMPTY;
     protected final Vars outVars;
     protected final Vars bindableVars;
-    private @Nullable TerminateTask terminateTask;
     private Throwable error = UNSET_ERROR;
     private final @Nullable EmitterStats stats = EmitterStats.createIfEnabled();
 
@@ -139,6 +139,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                            Vars outVars, Orphan<? extends Emitter<B, ?>> rightUpstream) {
         super(CREATED|RIGHT_STARVED|(type.isJoin() ? 0 : FILTER_BIND),
               BINDING_STAGE_FLAGS);
+        auxTask = new AuxTask.Concrete(this).takeOwnership(this);
         leftUpstream = bindings.takeOwnership(this);
         batchType = leftUpstream.batchType();
         bindableVars = leftUpstream.bindableVars().union(Emitter.bindableVars(rightUpstream));
@@ -174,7 +175,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             stats.report(log, this);
         Owned.safeRecycle(leftUpstream, this);
         Owned.safeRecycle(rightRecv.merger, rightRecv);
-        Owned.safeRecycle(terminateTask, this);
+        Owned.safeRecycle(auxTask, this);
         rightRecv.upstream.recycle(rightRecv);
         // if this happens before the first startNextBinding(), right upstream will be
         // in CREATED state and the above recycle() will not cause an actual release
@@ -264,6 +265,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         try {
             if ((state&IS_CANCEL_REQ) != 0) {
                 orphan.takeOwnership(this).recycle(this);
+                return;
             } else {
                 lb = Batch.quickAppendTrusted(lb, this, orphan);
                 lbTotalRows += rows;
@@ -274,6 +276,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
+        auxTask.schedule();
     }
 
     @Override public void onBatchByCopy(B batch) {
@@ -445,11 +448,8 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             if ((st&LOCKED_MASK) != 0) // cancelFutureBindings()->terminateStage() may unlock()
                 unlock();
         }
-        if (terminateStage) {
-            if (terminateTask == null)
-                terminateTask = new TerminateTask.Concrete(this).takeOwnership(this);
-            terminateTask.schedule();
-        }
+        if (terminateStage)
+            auxTask.schedule();
         if (cancelLeft)
             leftUpstream.cancel();
         if (cancelRight)
@@ -702,25 +702,55 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         rightEmitter.rebind(binding);
     }
 
-    private static abstract sealed class TerminateTask extends EmitterService.Task<TerminateTask> {
+    /**
+     * An async task that {@link BindingStage} schedules when something must be done but cannot
+     * it cannot be done at the current call stack, either because it would cause a deadlock or
+     * because it would introduce latency.
+     */
+    private static abstract sealed class AuxTask extends EmitterService.Task<AuxTask> {
         private final BindingStage<?, ?> bs;
-        private TerminateTask(BindingStage<?, ?> bs) {
+        private AuxTask(BindingStage<?, ?> bs) {
             super(CREATED, TASK_FLAGS);
             this.bs = bs;
         }
-        private static final class Concrete extends TerminateTask implements Orphan<TerminateTask> {
+        private static final class Concrete extends AuxTask implements Orphan<AuxTask> {
             private Concrete(BindingStage<?, ?> bs) {super(bs);}
-            @Override public TerminateTask takeOwnership(Object o) {return takeOwnership0(o);}
+            @Override public AuxTask takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
         void schedule() { awakeSameWorker(); }
 
+        private boolean mustTerminate(int st) {
+            return (st&(LEFT_TERM|RIGHT_BINDING)) == LEFT_TERM
+                    && (st&(RIGHT_STARVED|RIGHT_TERM)) != 0
+                    && (bs.lb == null || (st&IS_CANCEL_REQ) != 0);
+        }
+
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
-            int st = bs.lock();
+            Batch<?> staleLB, staleLBN, staleLBNN;
+            boolean terminate, deFragment;
+            deFragment = worker != null && worker.isLocalQueueEmpty()
+                    && (staleLB   = bs.lb        ) != null  // head
+                    && (staleLBN  = staleLB .next) != null  // prev (may grow)
+                    && (staleLBNN = staleLBN.next) != null  // next (may recycle)
+                    &&  staleLBNN.next             != null; // tail
+            int st = bs.stateAcquire();    // pay for read barrier after checking deFragment
+            terminate = mustTerminate(st); // test after read barrier from stateAcquire()
+            if (!deFragment && !terminate){
+                return;                    // do not contribute to lock contention
+            } else if (bs.tryLock()) {
+                st |= LOCKED_MASK;         // consistent with st = bs.terminateStage()
+            } else {                       // tryLock() failed due to contention
+                awakeSameWorker(worker);   // retry later
+                return;
+            }
             try {
-                if ((st&(LEFT_TERM|RIGHT_STARVED|RIGHT_TERM)) != 0 && (st&RIGHT_BINDING) == 0
-                        && (bs.lb == null || (st&IS_CANCEL_REQ) != 0)) {
+                if (mustTerminate(st)) {
                     st = bs.terminateStage(st);
+                } else if (deFragment) {
+                    Batch<?> lb = bs.lb;
+                    if (lb != null && lb.deFragmentMiddleNodes())
+                        awakeSameWorker(worker);
                 }
             } finally {
                 if ((st&LOCKED_MASK) != 0)

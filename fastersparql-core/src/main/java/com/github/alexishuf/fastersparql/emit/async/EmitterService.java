@@ -229,6 +229,8 @@ public final class EmitterService extends EmitterService_3 {
             });
         }
 
+        public boolean isLocalQueueEmpty() { return queueSize == 0; }
+
         @Override public void run() {
             if (currentThread() != this)
                 throw new IllegalStateException("wrong thread");

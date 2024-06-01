@@ -224,17 +224,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         }
     }
 
-    @Override protected boolean copySingleNodeIfFast(B nonEmpty) {
-        B tail = this.tail;
-        short cols = nonEmpty.cols, rows = nonEmpty.rows;
-        int dstPos = tail.rows*cols, nTerms = rows*cols;
-        if (dstPos+nTerms > tail.termsCapacity)
-            return false; // does not fit
-        arraycopy(nonEmpty.arr,    0, tail.arr,    dstPos, nTerms);
-        tail.rows += rows;
-        return true;
-    }
-
     @Override public void append(Orphan<B> orphan) {
         short cols = this.cols;
         if (peekColumns(orphan) != cols)
@@ -260,6 +249,27 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             if (orphan != null) orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
         }
         assert validate();
+    }
+
+    @Override public boolean deFragmentMiddleNodes() {
+        B prev = next, tail = this.tail, n;
+        if (prev == null || (n=prev.next) == tail || n == null)
+            return false;
+        short cols = this.cols, dstPos = (short)(prev.rows*cols);
+        short nRows;
+        while ((n=prev.next) != tail && n != null) {
+            int nTerms = (short)((nRows=n.rows)*cols);
+            if (dstPos+nTerms <= prev.termsCapacity) {
+                arraycopy(n.arr, 0, prev.arr, dstPos, nTerms);
+                prev.rows += nRows;
+                prev.next  = n.dropHead(prev);
+                return true;
+            } else {
+                prev = n;
+                dstPos = (short)(prev.rows*cols);
+            }
+        }
+        return false;
     }
 
     @Override public final void beginPut() {

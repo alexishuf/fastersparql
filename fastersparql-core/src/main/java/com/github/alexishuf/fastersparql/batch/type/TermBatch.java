@@ -299,17 +299,6 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
         }
     }
 
-    @Override protected boolean copySingleNodeIfFast(TermBatch nonEmpty) {
-        TermBatch tail = this.tail;
-        short cols = nonEmpty.cols, rows = nonEmpty.rows;
-        int dstPos = tail.rows*cols, nTerms = rows*cols;
-        if (dstPos+nTerms > tail.termsCapacity())
-            return false;
-        arraycopy(nonEmpty.arr, 0, tail.arr, dstPos, nTerms);
-        tail.rows += rows;
-        return true;
-    }
-
     @Override public void append(Orphan<TermBatch> orphan) {
         short cols = this.cols;
         if (peekColumns(orphan) != cols)
@@ -335,6 +324,28 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
             if (orphan != null) orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
         }
         assert validate() : "corrupted";
+    }
+
+    @Override public boolean deFragmentMiddleNodes() {
+        TermBatch prev = next, tail = this.tail, n;
+        if (prev == null || (n=prev.next) == tail || n == null)
+            return false;
+        short cols = this.cols, dstPos = (short)(prev.rows*cols);
+        short nRows, prevCapacity = (short)prev.termsCapacity();
+        while ((n=prev.next) != tail && n != null) {
+            int nTerms = (short)((nRows=n.rows)*cols);
+            if (dstPos+nTerms <= prevCapacity) {
+                arraycopy(n.arr, 0, prev.arr, dstPos, nTerms);
+                prev.rows += nRows;
+                prev.next  = n.dropHead(prev);
+                return true;
+            } else {
+                prev         = n;
+                prevCapacity = (short)prev.termsCapacity();
+                dstPos       = (short)(prev.rows*cols);
+            }
+        }
+        return false;
     }
 
     @Override public void putConverting(Batch<?> other) {

@@ -1099,28 +1099,6 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         }
     }
 
-    @Override protected boolean copySingleNodeIfFast(CompressedBatch nonEmpty) {
-        return false;
-//        var tail = this.tail;
-//        short cols = this.cols,     lLen = nonEmpty.localsLen;
-//        if (lLen >= 512)
-//            return false; // locals copy is not trivial
-//        short rows = nonEmpty.rows, lDst = tail.localsLen;
-//        int dstTerm = tail.rows*cols;
-//        int nTerms = rows*cols;
-//        byte[] tailLocals = tail.locals;
-//        if (lDst+lLen >= tailLocals.length || dstTerm+nTerms > tail.termsCapacity)
-//            return false; // does not fit
-//        arraycopy(nonEmpty.locals, 0, tailLocals,  lDst,        lLen);
-//        arraycopy(nonEmpty.shared, 0, tail.shared, dstTerm,     nTerms);
-//        arraycopy(nonEmpty.slices, 0, tail.slices, dstTerm<<=1, nTerms<<=1);
-//        tail.rows += rows;
-//        tail.localsLen += lLen;
-//        for (int i = dstTerm+SL_OFF, e = dstTerm+nTerms; i < e; i += 2)
-//            tail.slices[i] += lDst;
-//        return true;
-    }
-
     private CompressedBatch coldCopyNode(CompressedBatch o) {
         for (int r = 0, oRows = o.rows; r < oRows; r++)
             putRow(o, r);
@@ -1149,11 +1127,41 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             }
             if (src != null)
                 src = setTailAndReturnNull(src);
-            assert validate() : "corrupted";
         } finally {
             if (src    != null)    src.recycle(dst);
             if (orphan != null) orphan.takeOwnership(HANGMAN).recycle(HANGMAN);
         }
+    }
+
+    @Override public boolean deFragmentMiddleNodes() {
+        CompressedBatch prev = next, tail = this.tail, n;
+        if (prev == null || (n=prev.next) == tail || n == null)
+            return false;
+        prev = this; // init tDst, lDst and lCap on first iteration
+        short cols = this.cols, lDst = 0, tDst = 0, lCap = 0;
+        int lReq;
+        while ((n=prev.next) != tail && n != null) {
+            short nRows = n.rows;
+            int nTerms = nRows*cols;
+            if (tDst+nTerms <= prev.termsCapacity && (lReq=lDst+n.localsLen) <= lCap) {
+                arraycopy(n.locals, 0, prev.locals, lDst,     n.localsLen);
+                arraycopy(n.shared, 0, prev.shared, tDst,     nTerms);
+                arraycopy(n.slices, 0, prev.slices, tDst<<=1, nTerms<<=1);
+                int slEnd = tDst+nTerms;
+                for (int i = tDst+SL_OFF; i < slEnd; i += 2)
+                    prev.slices[i] += lDst;
+                prev.rows     += nRows;
+                prev.localsLen = (short)lReq;
+                prev.next      = n.dropHead(prev);
+                return true;
+            } else {
+                prev = n;
+                tDst = (short)(prev.rows*cols);
+                lDst = prev.localsLen;
+                lCap = (short)Math.min(LEN_MASK, prev.locals.length);
+            }
+        }
+        return false;
     }
 
     private void doAppend(CompressedBatch o, short rowCount, int lLen) {
