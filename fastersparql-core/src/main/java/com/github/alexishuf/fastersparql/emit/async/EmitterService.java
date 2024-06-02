@@ -246,13 +246,16 @@ public final class EmitterService extends EmitterService_3 {
             while (true) {
                 Task<?> task = pollTaskLocal();
                 if (task == null) {
+                    current = null;
                     task = svc.takeTaskShared(workerId); // will spin/park
                 } else if (task == current) {
                     // if task() returned, it is because it wants/needs other task to execute
                     // not doing this can lead to big slowdowns when all workers are
                     // executing tasks that "do some work until cancelled" and the cancelling
                     // tasks are stuck in sharedQueue
-                    var other = svc.pollTaskShared();
+                    var other = pollTaskLocal();
+                    if (other == null)
+                        other = svc.pollTaskShared();
                     if (other != null) {
                         if (!offerTaskLocal(task))
                             svc.putTaskShared(task);
@@ -268,7 +271,6 @@ public final class EmitterService extends EmitterService_3 {
                 } catch (Throwable t) {
                     log.error("Dispatch failed for task={}", current, t);
                 }
-                current = null;
             }
         }
 
