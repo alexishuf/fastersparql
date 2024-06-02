@@ -41,7 +41,7 @@ public final class EmitterService extends EmitterService_3 {
     /**
      * An arbitrary task ({@link #task(Worker, int)}) that can be repeatedly re-scheduled via {@link #awakeSameWorker()}.
      */
-    public abstract static class Task<S extends Stateful<S>> extends Stateful<S> {
+    public abstract static class Task<T extends Task<T>> extends Stateful<T> {
         private static final VarHandle SCHEDULED;
         static {
             try {
@@ -183,6 +183,11 @@ public final class EmitterService extends EmitterService_3 {
         }
     }
 
+    public abstract static class LowPriorityTask<T extends LowPriorityTask<T>> extends Task<T> {
+        /** See {@link Task#Task(int, Flags)} */
+        protected LowPriorityTask(int initState, Flags flags) {super(initState, flags);}
+    }
+
     @SuppressWarnings("unused")
     private static class PaddedWorker extends Worker {
         private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7; // 64 bytes
@@ -194,8 +199,10 @@ public final class EmitterService extends EmitterService_3 {
         }
     }
 
-    private static final int LOCAL_QUEUE_WIDTH     = 128/4;
-    private static final int LOCAL_QUEUE_SIZE_MASK = 7;
+    private static final int LOCAL_QUEUE_CAPACITY = 8;
+    private static final int LOCAL_QUEUE_MASK     = LOCAL_QUEUE_CAPACITY-1;
+    private static final int LOCAL_QUEUE_WIDTH    = LOCAL_QUEUE_CAPACITY*2 + (128/4);
+    static {assert Integer.bitCount(LOCAL_QUEUE_CAPACITY) == 1;}
 
     public static abstract class Worker extends Thread {
         public final int threadId, workerId;
@@ -203,6 +210,7 @@ public final class EmitterService extends EmitterService_3 {
         private final Task<?>[] queue;
         private final int queueBegin;
         private int queueHead, queueSize;
+        private int lpQueueHead, lpQueueSize;
         private @Nullable Task<?> current;
 
         protected Worker(ThreadGroup group, EmitterService svc, int id, Task<?>[] queue, int queueBegin) {
@@ -228,8 +236,6 @@ public final class EmitterService extends EmitterService_3 {
                 }
             });
         }
-
-        public boolean isLocalQueueEmpty() { return queueSize == 0; }
 
         @Override public void run() {
             if (currentThread() != this)
@@ -278,13 +284,13 @@ public final class EmitterService extends EmitterService_3 {
             assert currentThread() == this : "wrong thread";
             final int head = queueHead, size = this.queueSize;
             int i = 0;
-            while (i < size && queue[queueBegin+((head+i)&LOCAL_QUEUE_SIZE_MASK)] != other)
+            while (i < size && queue[queueBegin+((head+i)&LOCAL_QUEUE_MASK)] != other)
                 ++i;
             if (i >= size)
                 return; // not found
-            int idx0 = queueBegin+((head+i)&LOCAL_QUEUE_SIZE_MASK);
+            int idx0 = queueBegin+((head+i)&LOCAL_QUEUE_MASK);
             for (int idx1; i+1 < size; ++i, idx0=idx1)
-                queue[idx0] = queue[idx1 = queueBegin+((head+i+1)&LOCAL_QUEUE_SIZE_MASK)];
+                queue[idx0] = queue[idx1 = queueBegin+((head+i+1)&LOCAL_QUEUE_MASK)];
             queueSize = size-1;
             svc.putTaskShared(other);
         }
@@ -293,32 +299,50 @@ public final class EmitterService extends EmitterService_3 {
             int last = queueSize-1;
             if (last < 0)
                 return;
-            int idx = queueBegin + ((queueHead+last)&LOCAL_QUEUE_SIZE_MASK);
+            int idx = queueBegin + ((queueHead+last)&LOCAL_QUEUE_MASK);
             boolean expelled = svc.offerTaskSharedIfEmpty(queue[idx]);
             if (expelled)
                 queueSize = last;
         }
 
         private @Nullable Task<?> pollTaskLocal() {
-            int size = this.queueSize;
-            if (size <= 0)
-                return null;
-            queueSize = size-1;
-            int idx   = queueBegin + queueHead;
-            queueHead = (queueHead+1)&LOCAL_QUEUE_SIZE_MASK;
+            int size = this.queueSize, idx;
+            if (size <= 0) {
+                size = lpQueueSize;
+                if (size <= 0)
+                    return null;
+                lpQueueSize = size-1;
+                idx         = queueBegin+LOCAL_QUEUE_CAPACITY+lpQueueHead;
+                lpQueueHead = (lpQueueHead+1)&LOCAL_QUEUE_MASK;
+            } else {
+                queueSize = size-1;
+                idx       = queueBegin + queueHead;
+                queueHead = (queueHead+1)&LOCAL_QUEUE_MASK;
+            }
             return queue[idx];
         }
 
         protected boolean offerTaskLocal(Task<?> task) {
+            if (task instanceof LowPriorityTask<?>)
+                return offerTaskLocalLowPriority(task);
             int size = queueSize;
-            if (size >= LOCAL_QUEUE_SIZE_MASK)
+            if (size >= LOCAL_QUEUE_CAPACITY)
                 return false; // no free space
-            queue[queueBegin+((queueHead+queueSize++)&LOCAL_QUEUE_SIZE_MASK)] = task;
+            queue[queueBegin+((queueHead+queueSize++)&LOCAL_QUEUE_MASK)] = task;
+            return true; // task taken
+        }
+
+        private boolean offerTaskLocalLowPriority(Task<?> task) {
+            int size = lpQueueSize;
+            if (size >= LOCAL_QUEUE_CAPACITY)
+                return false; // no free space
+            queue[queueBegin + LOCAL_QUEUE_CAPACITY
+                             + ((queueHead+lpQueueSize++)&LOCAL_QUEUE_MASK)] = task;
             return true; // task taken
         }
 
         private @Nullable Task<?> peekLocal(int i) {
-            return queue[queueBegin+(queueHead+i)&LOCAL_QUEUE_SIZE_MASK];
+            return queue[queueBegin+(queueHead+i)&LOCAL_QUEUE_MASK];
         }
 
         private void doYieldWorker() {

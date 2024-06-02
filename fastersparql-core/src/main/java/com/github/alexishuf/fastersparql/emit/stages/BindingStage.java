@@ -707,7 +707,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
      * it cannot be done at the current call stack, either because it would cause a deadlock or
      * because it would introduce latency.
      */
-    private static abstract sealed class AuxTask extends EmitterService.Task<AuxTask> {
+    private static abstract sealed class AuxTask extends EmitterService.LowPriorityTask<AuxTask> {
         private final BindingStage<?, ?> bs;
         private AuxTask(BindingStage<?, ?> bs) {
             super(CREATED, TASK_FLAGS);
@@ -728,15 +728,14 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
 
         @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
             Batch<?> staleLB, staleLBN, staleLBNN;
-            boolean terminate, deFragment;
-            deFragment = worker != null && worker.isLocalQueueEmpty()
-                    && (staleLB   = bs.lb        ) != null  // head
+            boolean terminate, longList;
+            longList = (staleLB   = bs.lb        ) != null  // head
                     && (staleLBN  = staleLB .next) != null  // prev (may grow)
                     && (staleLBNN = staleLBN.next) != null  // next (may recycle)
                     &&  staleLBNN.next             != null; // tail
             int st = bs.stateAcquire();    // pay for read barrier after checking deFragment
             terminate = mustTerminate(st); // test after read barrier from stateAcquire()
-            if (!deFragment && !terminate){
+            if (!longList && !terminate){
                 return;                    // do not contribute to lock contention
             } else if (bs.tryLock()) {
                 st |= LOCKED_MASK;         // consistent with st = bs.terminateStage()
@@ -747,7 +746,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             try {
                 if (mustTerminate(st)) {
                     st = bs.terminateStage(st);
-                } else if (deFragment) {
+                } else if (longList) {
                     Batch<?> lb = bs.lb;
                     if (lb != null && lb.deFragmentMiddleNodes())
                         awakeSameWorker(worker);
