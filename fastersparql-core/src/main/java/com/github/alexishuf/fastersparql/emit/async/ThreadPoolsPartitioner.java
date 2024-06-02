@@ -41,8 +41,7 @@ public class ThreadPoolsPartitioner {
      *         previous {@link #registerPartition(String)} calls.
      */
     public static int partitionSize() {
-        int capacity = Runtime.getRuntime().availableProcessors();
-        return Math.max(1, capacity/NAMES.size());
+        return Math.max(1, LOGICAL_CORES/NAMES.size());
     }
 
     public static BitSet nextLogicalCoreSet() {
