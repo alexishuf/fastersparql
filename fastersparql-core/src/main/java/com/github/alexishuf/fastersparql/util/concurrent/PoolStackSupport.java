@@ -138,12 +138,10 @@ class PoolStackSupport {
         if (DEBUG)
             requireRecycled(o);
         int cap = md[mdb+MD_CAP], begin = md[mdb+MD_BEGIN];
-        // offer to local if it has space and shared has enough to feed other local stacks
-        if (md[mdb+MD_SIZE] < cap && md[sharedMdb+MD_SIZE] >= cap*THREADS) {
-            if (doOfferToStack(md, begin, cap, mdb, pool, o))
-                return null; // taken
-        }
-        // local is full or shared has few items. offer o to shared
+        // offer to local
+        if (md[mdb+MD_SIZE] < cap && doOfferToStack(md, begin, cap, mdb, pool, o))
+            return null; // taken
+        // local is full. Offer o to shared
         if (doOfferToStack(md, md[sharedMdb+MD_BEGIN], md[sharedMdb+MD_CAP], sharedMdb, pool, o))
             return null; // taken
         return o; // both stacks are full
