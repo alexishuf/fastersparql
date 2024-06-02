@@ -877,7 +877,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private BatchBinding asyncBinding;
         private LocalityCompositeDict.Lookup asyncL;
         private TwoSegmentRope asyncV;
-        private final TPEmitter tpEmitter;
         private final LocalityCompositeDict dict;
 
         private PrefetchTask(short dictId, LocalityCompositeDict dict, TPEmitter tpEmitter) {
@@ -889,7 +888,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.syncL        = dict.lookup().takeOwnership(this);
             this.syncV        = new TwoSegmentRope();
             this.unsrcIds     = longsAtLeast(TYPE.preferredTermsPerBatch()>>1);
-            this.tpEmitter    = tpEmitter;
             this.sId          = syncL.find(tpEmitter.tp.s);
             this.pId          = syncL.find(tpEmitter.tp.p);
             this.oId          = syncL.find(tpEmitter.tp.o);
@@ -1055,8 +1053,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             final var b = requireNonNull(this.asyncBinding); // compiler should copy reference to stack
             long[] rowSkels = this.rowSkels;
             long[] unsrcIds = this.unsrcIds;
-            if (worker != null)
-                worker.expelRelaxed(tpEmitter);
             byte  sInCol = this. sInCol,  pInCol = this. pInCol,  oInCol = this. oInCol;
             byte sOutCol = this.sOutCol, pOutCol = this.pOutCol, oOutCol = this.oOutCol;
             byte outCols = this.unsrcIdsCols;
@@ -1248,12 +1244,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
 
         @Override protected void appendToSimpleLabel(StringBuilder out) {
             StoreSparqlClient.appendToSimpleLabel(out, endpoint, tp);
-        }
-
-        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
-            if (worker != null)
-                worker.expelRelaxed(pref);
-            super.task(worker, threadId);
         }
 
         @Override protected int produceAndDeliver(int state) {

@@ -273,29 +273,6 @@ public final class EmitterService extends EmitterService_3 {
             }
         }
 
-        /**
-         * If {@code other} is in the task queue that is private to this Worker, remove it
-         * and insert it into the shared queue so that another worker can execute
-         * it concurrently. Implementations of this method are allowed to not remove
-         * {@code other} even if it is present in the queue.
-         *
-         * @param other another task that should be executed concurrently.
-         */
-        public void expelRelaxed(Task<?> other) {
-            assert currentThread() == this : "wrong thread";
-            final int head = queueHead, size = this.queueSize;
-            int i = 0;
-            while (i < size && queue[queueBegin+((head+i)&LOCAL_QUEUE_MASK)] != other)
-                ++i;
-            if (i >= size)
-                return; // not found
-            int idx0 = queueBegin+((head+i)&LOCAL_QUEUE_MASK);
-            for (int idx1; i+1 < size; ++i, idx0=idx1)
-                queue[idx0] = queue[idx1 = queueBegin+((head+i+1)&LOCAL_QUEUE_MASK)];
-            queueSize = size-1;
-            svc.putTaskShared(other);
-        }
-
         private void tryExpelLastTask() {
             int last = queueSize-1;
             if (last < 0)
