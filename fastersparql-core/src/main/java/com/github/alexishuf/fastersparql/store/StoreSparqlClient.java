@@ -847,7 +847,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
 //        }
 //    }
 
-    private static abstract sealed class PrefetchTask extends EmitterService.Task<PrefetchTask> {
+    private static abstract sealed class PrefetchTask extends EmitterService.LowPriorityTask<PrefetchTask> {
         private static final int STOP_SENTINEL = Integer.MAX_VALUE;
         private static final byte CHUNK_ROWS = 16;
 
