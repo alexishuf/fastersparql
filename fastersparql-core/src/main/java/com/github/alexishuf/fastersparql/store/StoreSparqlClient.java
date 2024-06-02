@@ -1201,8 +1201,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     return; // not rebind()able
                 if (!binding.vars.equals(lastBindingsVars))
                     bindingVarsChanged(binding.vars);
-                if (requireNonNull(binding.batch).rows > PrefetchTask.CHUNK_ROWS)
-                    emitterSvc.unparkStealer();
                 pref.request(binding);
             } finally { unlock(); }
         }

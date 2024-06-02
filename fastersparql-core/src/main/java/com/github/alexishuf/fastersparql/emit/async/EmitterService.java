@@ -13,7 +13,6 @@ import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.locks.LockSupport;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Thread.currentThread;
@@ -352,7 +351,7 @@ public final class EmitterService extends EmitterService_3 {
             if (task != null) {
                 svc.putTaskShared(task);
             } else if (!Unparker.volunteer()) {
-                if (!svc.unparkStealer())
+                if (svc.plainSize <= 0 && !svc.parked.unparkAny(svc.workers))
                     Thread.yield();
             }
         }
@@ -444,15 +443,6 @@ public final class EmitterService extends EmitterService_3 {
             w.doYieldWorker();
         else if (!Unparker.volunteer())
             Thread.yield();
-    }
-
-    /**
-     * If there are parked workers, at least one is elected as <i>stealer</i> and will park for
-     * a timeout instead of until unparked. This method un-parks the stealer <strong>NOW</strong>,
-     * using a {@link LockSupport#unpark(Thread)} instead of {@link Unparker#unpark(Thread)}.
-     */
-    public boolean unparkStealer() {
-        return plainSize > 0 && parked.unparkAny(workers);
     }
 
     private Task<?> pollTaskShared() {
