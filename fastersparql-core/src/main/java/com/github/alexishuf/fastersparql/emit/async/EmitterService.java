@@ -125,39 +125,21 @@ public final class EmitterService extends EmitterService_3 {
 
         /**
          * Arbitrary code that does whatever is the purpose of this task. Implementations
-         * must not block and should {@link #awakeSameWorker()} and return instead of running loops. If
-         * this runs in response to an {@link #awakeSameWorker()}, it will run in a worker thread of the
-         * {@link EmitterService} set at construction. If running due to {@link #runNow()}, it
-         * may be called from an external thread. Whatever the trigger, there will be no parallel
-         * executions of this method for a single {@link Task} instance.
+         * must not block and should {@link #awakeSameWorker()} and return instead of running
+         * unbounded or long loops.
+         * This method runs in response to a previous {@code awake*Worker()} call. This method
+         * will always be called from withing the given {@code worker} thread and will
+         * never be executed in parallel (for the same {@link Task} instance).
          *
-         * @param worker {@link Worker} thread that is calling this method, if this is being
-         *               called from a worker and not from {@link #runNow()} from a
-         *               non-worker thread.
+         * @param worker {@link Worker} thread that is calling this method
          * @param threadId result of {@code (int)}{@link Thread#threadId()} for {@link Thread#currentThread()}
          */
-        protected abstract void task(@Nullable Worker worker, int threadId);
+        protected abstract void task(Worker worker, int threadId);
 
-        /**
-         * Execute this task <strong>now</strong>, unless it is already being executed by
-         * another thread. Unlike a direct call to {@link #task(Worker, int)}, this will ensure there are
-         * no concurrent {@link #task(Worker, int)} calls for the same {@link Task} object. If there is a
-         * concurrent execution by another thread on {@link #run(Worker, int)} or {@code runNow()}, this
-         * call will have no effect
-         *
-         * <p>This should be called to solve inversion-of-priority issues. A producer that finds
-         * itself being blocked due to this task not running can call this method to have the
-         * consumer task work instead of spinning or parking.</p>
-         */
-        @SuppressWarnings("unused") protected boolean runNow() {
-            var currentThread = currentThread();
-            var worker = currentThread instanceof Worker w ? w : null;
-            return run(worker, (int)currentThread.threadId());
-        }
 
-        @Async.Execute private boolean run(@Nullable Worker worker, int threadId) {
+        @Async.Execute private void run(Worker worker, int threadId) {
             if (!compareAndSetFlagAcquire(IS_RUNNING))
-                return false; // run() active on another thread
+                return; // run() active on another thread
             int old = (int)SCHEDULED.getAcquire(this);
             try {
                 if ((statePlain()&RELEASED_MASK) == 0)
@@ -174,7 +156,6 @@ public final class EmitterService extends EmitterService_3 {
                 if (worker == null || !worker.offerTaskLocal(this))
                     emitterSvc.putTaskShared(this);
             } // else: S = 0 and not enqueued, future awake() can enqueue
-            return true; // task() was called
         }
 
         private void handleTaskException(Throwable t) {

@@ -187,7 +187,7 @@ class StatefulTest {
             }
         }
 
-        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+        @Override protected void task(EmitterService.Worker worker, int threadId) {
             try {
                 for (int i = 0; i < rounds; i++) {
                     s.lock();

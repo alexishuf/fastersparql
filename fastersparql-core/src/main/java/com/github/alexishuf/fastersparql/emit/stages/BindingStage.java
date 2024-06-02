@@ -726,7 +726,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                     && (bs.lb == null || (st&IS_CANCEL_REQ) != 0);
         }
 
-        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+        @Override protected void task(EmitterService.Worker worker, int threadId) {
             Batch<?> staleLB, staleLBN, staleLBNN;
             boolean terminate, longList;
             longList = (staleLB   = bs.lb        ) != null  // head

@@ -45,7 +45,7 @@ class EmitterServiceTest {
             awakeSameWorker();
         }
 
-        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+        @Override protected void task(EmitterService.Worker worker, int threadId) {
             try {
                 assertNotNull(worker);
                 assertEquals(threadId, worker.threadId, "bad threadId");

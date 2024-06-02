@@ -1042,7 +1042,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return lookup;
         }
 
-        @Override protected void task(EmitterService.@Nullable Worker worker, int threadId) {
+        @Override protected void task(EmitterService.Worker worker, int threadId) {
             var asyncL = this.asyncL;
             if (asyncL == null)
                 asyncL = doAsyncInit();
