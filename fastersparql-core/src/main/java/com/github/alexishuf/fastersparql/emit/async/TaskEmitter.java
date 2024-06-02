@@ -155,7 +155,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
 
     @Override protected void task(EmitterService.Worker worker, int threadId) {
         this.threadId = (short)threadId;
-        int st = stateAcquire();
+        int st = statePlain();
         if ((st&IS_CANCEL_REQ) != 0)
             st = doCancel(st);
         if ((st&IS_PENDING_TERM) != 0)
