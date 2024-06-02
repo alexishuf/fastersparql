@@ -326,26 +326,25 @@ public abstract sealed class TermBatch extends Batch<TermBatch> {
         assert validate() : "corrupted";
     }
 
-    @Override public boolean deFragmentMiddleNodes() {
+    @Override public void deFragmentMiddleNodes() {
         TermBatch prev = next, tail = this.tail, n;
         if (prev == null || (n=prev.next) == tail || n == null)
-            return false;
+            return;
         short cols = this.cols, dstPos = (short)(prev.rows*cols);
         short nRows, prevCapacity = (short)prev.termsCapacity();
         while ((n=prev.next) != tail && n != null) {
-            int nTerms = (short)((nRows=n.rows)*cols);
+            short nTerms = (short)((nRows=n.rows)*cols);
             if (dstPos+nTerms <= prevCapacity) {
                 arraycopy(n.arr, 0, prev.arr, dstPos, nTerms);
                 prev.rows += nRows;
                 prev.next  = n.dropHead(prev);
-                return true;
+                dstPos    += nTerms;
             } else {
                 prev         = n;
                 prevCapacity = (short)prev.termsCapacity();
                 dstPos       = (short)(prev.rows*cols);
             }
         }
-        return false;
     }
 
     @Override public void putConverting(Batch<?> other) {

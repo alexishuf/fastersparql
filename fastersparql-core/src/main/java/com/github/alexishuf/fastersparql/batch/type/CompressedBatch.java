@@ -1133,10 +1133,10 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         }
     }
 
-    @Override public boolean deFragmentMiddleNodes() {
+    @Override public void deFragmentMiddleNodes() {
         CompressedBatch prev = next, tail = this.tail, n;
         if (prev == null || (n=prev.next) == tail || n == null)
-            return false;
+            return;
         prev = this; // init tDst, lDst and lCap on first iteration
         short cols = this.cols, lDst = 0, tDst = 0, lCap = 0;
         int lReq;
@@ -1150,10 +1150,10 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 int slEnd = tDst+nTerms;
                 for (int i = tDst+SL_OFF; i < slEnd; i += 2)
                     prev.slices[i] += lDst;
+                tDst           = (short)(slEnd>>1);
                 prev.rows     += nRows;
-                prev.localsLen = (short)lReq;
+                prev.localsLen = lDst = (short)lReq;
                 prev.next      = n.dropHead(prev);
-                return true;
             } else {
                 prev = n;
                 tDst = (short)(prev.rows*cols);
@@ -1161,7 +1161,6 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 lCap = (short)Math.min(LEN_MASK, prev.locals.length);
             }
         }
-        return false;
     }
 
     private void doAppend(CompressedBatch o, short rowCount, int lLen) {

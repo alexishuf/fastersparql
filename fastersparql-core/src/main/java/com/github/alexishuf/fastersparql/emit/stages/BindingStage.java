@@ -85,7 +85,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private @Nullable B lb;
     private short lr = -1;
     private final short leftChunk;
-    private final BindingStage.AuxTask auxTask;
+    private @Nullable TermTask termTask;
     private int lbTotalRows;
     private int leftPending;
     private long requested;
@@ -139,7 +139,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                            Vars outVars, Orphan<? extends Emitter<B, ?>> rightUpstream) {
         super(CREATED|RIGHT_STARVED|(type.isJoin() ? 0 : FILTER_BIND),
               BINDING_STAGE_FLAGS);
-        auxTask = new AuxTask.Concrete(this).takeOwnership(this);
         leftUpstream = bindings.takeOwnership(this);
         batchType = leftUpstream.batchType();
         bindableVars = leftUpstream.bindableVars().union(Emitter.bindableVars(rightUpstream));
@@ -175,7 +174,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             stats.report(log, this);
         Owned.safeRecycle(leftUpstream, this);
         Owned.safeRecycle(rightRecv.merger, rightRecv);
-        Owned.safeRecycle(auxTask, this);
+        Owned.safeRecycle(termTask, this);
         rightRecv.upstream.recycle(rightRecv);
         // if this happens before the first startNextBinding(), right upstream will be
         // in CREATED state and the above recycle() will not cause an actual release
@@ -265,7 +264,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         try {
             if ((state&IS_CANCEL_REQ) != 0) {
                 orphan.takeOwnership(this).recycle(this);
-                return;
             } else {
                 lb = Batch.quickAppendTrusted(lb, this, orphan);
                 lbTotalRows += rows;
@@ -276,7 +274,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
-        auxTask.schedule();
     }
 
     @Override public void onBatchByCopy(B batch) {
@@ -448,8 +445,11 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             if ((st&LOCKED_MASK) != 0) // cancelFutureBindings()->terminateStage() may unlock()
                 unlock();
         }
-        if (terminateStage)
-            auxTask.schedule();
+        if (terminateStage) {
+            if (termTask == null)
+                termTask = new TermTask.Concrete(this).takeOwnership(this);
+            termTask.schedule();
+        }
         if (cancelLeft)
             leftUpstream.cancel();
         if (cancelRight)
@@ -707,53 +707,28 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
      * it cannot be done at the current call stack, either because it would cause a deadlock or
      * because it would introduce latency.
      */
-    private static abstract sealed class AuxTask extends EmitterService.LowPriorityTask<AuxTask> {
+    private static abstract sealed class TermTask extends EmitterService.Task<TermTask> {
         private final BindingStage<?, ?> bs;
-        private AuxTask(BindingStage<?, ?> bs) {
+        private TermTask(BindingStage<?, ?> bs) {
             super(CREATED, TASK_FLAGS);
             this.bs = bs;
         }
-        private static final class Concrete extends AuxTask implements Orphan<AuxTask> {
+        private static final class Concrete extends TermTask implements Orphan<TermTask> {
             private Concrete(BindingStage<?, ?> bs) {super(bs);}
-            @Override public AuxTask takeOwnership(Object o) {return takeOwnership0(o);}
+            @Override public TermTask takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
         void schedule() { awakeSameWorker(); }
 
-        private boolean mustTerminate(int st) {
-            return (st&(LEFT_TERM|RIGHT_BINDING)) == LEFT_TERM
-                    && (st&(RIGHT_STARVED|RIGHT_TERM)) != 0
-                    && (bs.lb == null || (st&IS_CANCEL_REQ) != 0);
-        }
-
         @Override protected void task(EmitterService.Worker worker, int threadId) {
-            Batch<?> staleLB, staleLBN, staleLBNN;
-            boolean terminate, longList;
-            longList = (staleLB   = bs.lb        ) != null  // head
-                    && (staleLBN  = staleLB .next) != null  // prev (may grow)
-                    && (staleLBNN = staleLBN.next) != null  // next (may recycle)
-                    &&  staleLBNN.next             != null; // tail
-            int st = bs.stateAcquire();    // pay for read barrier after checking deFragment
-            terminate = mustTerminate(st); // test after read barrier from stateAcquire()
-            if (!longList && !terminate){
-                return;                    // do not contribute to lock contention
-            } else if (bs.tryLock()) {
-                st |= LOCKED_MASK;         // consistent with st = bs.terminateStage()
-            } else {                       // tryLock() failed due to contention
-                awakeSameWorker(worker);   // retry later
-                return;
-            }
+            int st = bs.lock();
             try {
-                if (mustTerminate(st)) {
+                if ((st & (LEFT_TERM | RIGHT_BINDING)) == LEFT_TERM
+                        && (st & (RIGHT_STARVED | RIGHT_TERM)) != 0
+                        && (bs.lb == null || (st & IS_CANCEL_REQ) != 0))
                     st = bs.terminateStage(st);
-                } else if (longList) {
-                    Batch<?> lb = bs.lb;
-                    if (lb != null && lb.deFragmentMiddleNodes())
-                        awakeSameWorker(worker);
-                }
             } finally {
-                if ((st&LOCKED_MASK) != 0)
-                    bs.unlock();
+                if ((st & LOCKED_MASK) != 0) unlock();
             }
         }
     }

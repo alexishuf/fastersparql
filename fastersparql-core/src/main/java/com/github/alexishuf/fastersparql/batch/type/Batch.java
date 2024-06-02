@@ -18,7 +18,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.FSProperties.batchSelfValidate;
+import static com.github.alexishuf.fastersparql.FSProperties.*;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.Validation.EXPENSIVE;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.Validation.NONE;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.HANGMAN;
@@ -342,10 +342,16 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         B oldTail = this.tail, newTail = head.tail;
         oldTail.tail = newTail;
         oldTail.next = head;
-        for (@SuppressWarnings("unchecked") B n = (B)this; n != oldTail && n != null; n = n.next)
+        int len = 0;
+        for (@SuppressWarnings("unchecked") B n = (B)this; n != oldTail && n != null; n = n.next) {
             n.tail = newTail;
+            ++len;
+        }
+        if (len > LONG_LIST)
+            deFragmentMiddleNodes();
         return newTail;
     }
+    private static final int LONG_LIST = Math.max(emitReqChunkBatches(), itQueueBatches());
 
     /**
      * Detaches the first node of {@code other} and copy its contents to {@code this},
@@ -1538,10 +1544,8 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      * can be done concurrently with this call. Not incorporating the tail node avoids having to
      * update all {@code tail} references of all nodes. However, {@code detach*Tail()} cannot be
      * safely executed concurrently with this method.</p>
-     *
-     * @return {@code true} if fragmentation was reduced, {@code false} if there was no change.
      */
-    public abstract boolean deFragmentMiddleNodes();
+    public abstract void deFragmentMiddleNodes();
 
     /**
      * Equivalent to {@link #copy(Batch)} but accepts {@link Batch} implementations other than this.
