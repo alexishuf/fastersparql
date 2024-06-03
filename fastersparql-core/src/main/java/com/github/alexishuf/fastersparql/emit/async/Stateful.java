@@ -434,6 +434,49 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
         return true;
     }
 
+    public int compareAndSetFlagAcquireSpinning(int flag) {
+        int a;
+        if (((a=(int)S.getAndBitwiseOrAcquire(this, flag))&flag) != 0)
+            a = compareAndSetFlagAcquireSpinningContended(flag);
+        if (ENABLED)
+            journal("CAS", flag, flags, "on", a, flags, "on", this);
+        return a|flag;
+    }
+
+    private int compareAndSetFlagAcquireSpinningContended(int flag) {
+        Thread self = Thread.currentThread();
+        int a;
+        while (((a=(int)S.getAndBitwiseOrAcquire(this, flag))&flag) != 0)
+            EmitterService.yieldWorker(self);
+        return a|flag;
+    }
+
+    /**
+     * Spins (politely) until none of the flags given flags is set in {@link #state()}
+     *
+     * @param flags a bit mask of flags that must be not set in {@link #state()}
+     * @return the observed {@link #state()} such that {@code (state&flags) == 0}
+     */
+    protected int waitFlagsCleared(int flags) {
+        int st = (int)S.getAcquire(this);
+        if ((st&flags) == 0)
+            return st;
+        for (int i = 0; i < 4 && ((st=(int)S.getAcquire(this))&flags) != 0; i++)
+            Thread.onSpinWait();
+        if ((st&flags) == 0)
+            return st;
+        return waitFlagsClearedContended(flags);
+    }
+
+    private int waitFlagsClearedContended(int flags) {
+        var self = Thread.currentThread();
+        int st;
+        while (((st=(int)S.getAcquire(this))&flags) != 0)
+            EmitterService.yieldWorker(self);
+        return st;
+    }
+
+
     /* --- ---- --- lock/unlock --- --- --- */
 
     /**

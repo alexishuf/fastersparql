@@ -49,14 +49,14 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private static final int LEFT_CANCELLED     = 0x01000000;
     private static final int LEFT_COMPLETED     = 0x02000000;
     private static final int LEFT_FAILED        = 0x04000000;
+    private static final int REQUESTING         = 0x08000000;
     private static final int LEFT_TERM          = LEFT_COMPLETED|LEFT_CANCELLED|LEFT_FAILED;
     private static final int RIGHT_CANCELLED    = 0x00100000;
     private static final int RIGHT_FAILED       = 0x00200000;
     private static final int RIGHT_TERM         = RIGHT_CANCELLED|RIGHT_FAILED;
     private static final int RIGHT_BINDING      = 0x00400000;
     private static final int RIGHT_STARVED      = 0x00800000;
-    private static final int CAN_REQ_RIGHT_MASK = RIGHT_BINDING|RIGHT_STARVED;
-    private static final int CAN_REQ_RIGHT      = 0;
+    private static final int CANNOT_REQ_RIGHT   = RIGHT_BINDING|RIGHT_STARVED;
     private static final int LEFT_CAN_BIND_MASK = RIGHT_STARVED|RIGHT_BINDING|IS_TERM|IS_CANCEL_REQ;
     private static final int LEFT_CAN_BIND      = RIGHT_STARVED;
     private static final int RIGHT_CANNOT_BIND  = RIGHT_BINDING|IS_TERM|IS_CANCEL_REQ;
@@ -67,6 +67,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                     .flag(LEFT_CANCELLED,  "LEFT_CANCELLED" )
                     .flag(LEFT_COMPLETED,  "LEFT_COMPLETED" )
                     .flag(LEFT_FAILED,     "LEFT_FAILED"    )
+                    .flag(REQUESTING,      "REQUESTING")
                     .flag(RIGHT_CANCELLED, "RIGHT_CANCELLED")
                     .flag(RIGHT_FAILED,    "RIGHT_FAILED"   )
                     .flag(RIGHT_BINDING,   "RIGHT_BINDING"  )
@@ -461,21 +462,27 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         if (ENABLED)
             journal("request ", rows, "on", this);
         int state = statePlain(), leftRequest = 0;
-        long rightRows = (state&FILTER_BIND) == 0 ? rows : 2;
         if ((state&IS_INIT) != 0) {
             if ((onFirstRequest(state)&IS_LIVE) == 0)
                 return;
         }
 
-        state = lock();
+        state = compareAndSetFlagAcquireSpinning(REQUESTING);
         try {
             if (rows > requested) {
                 requested = rows;
-                leftRequest = leftRequest(lb);
-                if ((state&CAN_REQ_RIGHT_MASK) == CAN_REQ_RIGHT)
-                    rightRecv.upstream.request(rightRows);
+                // onBatch() can update lbTotalRows and leftPending concurrently
+                // however, int does not suffer word tearing and at worst leftRequest()
+                // will output a value bigger than what it should because it loaded stale values
+                // request() contract allow for a emitter to over-deliver, thus this is fine.
+                leftRequest = leftRequest();
+                // request() on the right upstream must happen while REQUESTING, else
+                // right could concurrently complete and lead to a rebind() in parallel with
+                // this request()
+                if ((state&CANNOT_REQ_RIGHT) == 0)
+                    rightRecv.upstream.request((state&FILTER_BIND) == 0 ? rows : 2);
             }
-        } finally { state = unlock(); }
+        } finally { state = clearFlagsRelease(REQUESTING); }
         if (leftRequest > 0 && (state&IS_TERM) == 0)
             leftUpstream.request(leftRequest);
     }
@@ -509,9 +516,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         return state;
     }
 
-    private int leftRequest(B lb) {
+    private int leftRequest() {
         // count queued left rows into LEFT_REQUESTED_MAX limit
-        int queued = (lb == null ? 0 : lbTotalRows-lr);
+        int queued = lbTotalRows-Math.max(0, lr);
         if (requested > Math.max(0, leftPending)+queued && leftPending < leftChunk>>1) {
             int n = (int)Math.min(requested, leftChunk);
             leftPending = n;
@@ -630,7 +637,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             this.lr = lr;
             if (ENABLED)
                 journal("startNextBinding st=", st, flags, "lr=", lr, "on", this);
-            int leftRequest = leftRequest(lb);
+            int leftRequest = leftRequest();
             if (lb == null) {
                 if ((st&LEFT_TERM) == 0) {
                     st = unlock(0, RIGHT_STARVED);
@@ -645,6 +652,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 if (leftRequest > 0 && (st&IS_TERM) == 0)
                     leftUpstream.request(leftRequest);
                 ++intBinding.sequence;
+                // do not rebind() concurrently with a upstream.request() from this.request()
+                if ((st&REQUESTING) != 0)
+                    st = waitFlagsCleared(REQUESTING)&~LOCKED_MASK;
                 rebind(intBinding.attach(lb, lr), rightRecv.upstream);
                 ++rightRecv.bindingSeq;
                 rightRecv.upstreamEmpty = true;
@@ -839,9 +849,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 // update stats and requested
                 if (EmitterStats.ENABLED && stats != null)
                     stats.onBatchDelivered(statsB);
-                lock();
+                compareAndSetFlagAcquireSpinning(REQUESTING);
                 requested -= rowsProduced;
-                unlock();
+                clearFlagsRelease(REQUESTING);
 
                 // deliver batch/row
                 if (ResultJournal.ENABLED)
