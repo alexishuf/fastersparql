@@ -242,8 +242,7 @@ public final class EmitterService extends EmitterService_3 {
                         task = other;
                     }
                 } else if (skipOffload-- <= 0 && queueSize > 1)  {
-                    tryExpelLastTask();
-                    skipOffload = offloadSkipPeriod;
+                    skipOffload = offloadSkipPeriod << (tryExpelLastTask() ? 0 : 1);
                 }
                 current = task;
                 try {
@@ -254,14 +253,15 @@ public final class EmitterService extends EmitterService_3 {
             }
         }
 
-        private void tryExpelLastTask() {
+        private boolean tryExpelLastTask() {
             int last = queueSize-1;
             if (last < 0)
-                return;
+                return false;
             int idx = queueBegin + ((queueHead+last)&LOCAL_QUEUE_MASK);
             boolean expelled = svc.offerTaskSharedIfEmpty(queue[idx]);
             if (expelled)
                 queueSize = last;
+            return expelled;
         }
 
         private @Nullable Task<?> pollTaskLocal() {
