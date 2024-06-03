@@ -659,7 +659,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 ++rightRecv.bindingSeq;
                 rightRecv.upstreamEmpty = true;
                 rightRecv.listenerNotified = false;
-                st = clearFlagsRelease(RIGHT_BINDING)&~LOCKED_MASK; // rebind complete, allow upstream.request()
+                st = clearFlagsAcquire(RIGHT_BINDING)&~LOCKED_MASK; // rebind complete, allow upstream.request()
                 if ((st&IS_CANCEL_REQ) != 0)
                     rightRecv.upstream.cancel();
                 else
