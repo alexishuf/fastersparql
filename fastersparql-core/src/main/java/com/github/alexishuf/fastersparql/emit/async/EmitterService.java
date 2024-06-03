@@ -345,7 +345,7 @@ public final class EmitterService extends EmitterService_3 {
         while ((int)SVC_INIT_LOCK.getAndSetAcquire(1) != 0) Thread.yield();
         try {
             if (SVC == null)
-                SVC = new EmitterService(Runtime.getRuntime().availableProcessors());
+                SVC = new EmitterService();
         } finally { SVC_INIT_LOCK.setRelease(0); }
     }
 
@@ -359,8 +359,7 @@ public final class EmitterService extends EmitterService_3 {
         }
     }
 
-    private EmitterService(int unsanitizedWorkersCount) {
-        super(unsanitizedWorkersCount);
+    private EmitterService() {
         var workerQueue = new EmitterService.Task[(workers.length+2)*LOCAL_QUEUE_WIDTH];
         var grp = new ThreadGroup("EmitterService");
         for (int i = 0; i < workers.length; i++) {
@@ -469,9 +468,8 @@ class EmitterService_0 {
     protected       EmitterService.Task<?>[] tasks;
     protected       int tasksMask;
 
-    public EmitterService_0(int nWorkers) {
-        nWorkers = 1 << Math.max(1, 32-Integer.numberOfLeadingZeros(nWorkers-1));
-        assert nWorkers <= 0xffff;
+    public EmitterService_0() {
+        int nWorkers = ThreadPoolsPartitioner.partitionSize();
         cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
         workers      = new EmitterService.Worker[nWorkers];
         parked       = new ParkedSet(nWorkers);
@@ -483,16 +481,16 @@ class EmitterService_0 {
 class EmitterService_1 extends EmitterService_0 {
     private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
     private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
-    public EmitterService_1(int nWorkers) {super(nWorkers);}
+    public EmitterService_1() {super();}
 }
 class EmitterService_2 extends EmitterService_0 {
     @SuppressWarnings("unused") protected int plainSize;
     protected int tasksHead;
-    public EmitterService_2(int nWorkers) {super(nWorkers);}
+    public EmitterService_2() {super();}
 }
 @SuppressWarnings("unused")
 class EmitterService_3 extends EmitterService_2 {
     private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
     private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
-    public EmitterService_3(int nWorkers) {super(nWorkers);}
+    public EmitterService_3() {super();}
 }

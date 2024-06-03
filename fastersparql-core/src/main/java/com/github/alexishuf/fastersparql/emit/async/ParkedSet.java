@@ -27,9 +27,10 @@ class ParkedSet1 extends ParkedSet0 {
     private final long all;
 
     public ParkedSet1(int nWorkers) {
-        nWorkers = 1 << (32-Integer.numberOfLeadingZeros(nWorkers-1));
-        nWorkers = Integer.min(64, nWorkers);
-        all = (1L<<nWorkers)-1;
+        long all = 0;
+        for (int i = 0; i < nWorkers; i++)
+            all |= 1L<<i;
+        this.all =all;
     }
 
     public boolean unparkAny(EmitterService.Worker[] workers) {
