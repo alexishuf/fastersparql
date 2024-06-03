@@ -434,48 +434,35 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
         return true;
     }
 
-    public int compareAndSetFlagAcquireSpinning(int flag) {
+    /**
+     * Similar to {@link #lock()}, but uses {@code flag} instead of {@link #LOCKED_MASK}
+     */
+    public int lockFlag(int flag) {
         int a;
         if (((a=(int)S.getAndBitwiseOrAcquire(this, flag))&flag) != 0)
-            a = compareAndSetFlagAcquireSpinningContended(flag);
+            a = lockFlagContended(flag);
         if (ENABLED)
             journal("CAS", flag, flags, "on", a, flags, "on", this);
         return a|flag;
     }
 
-    private int compareAndSetFlagAcquireSpinningContended(int flag) {
+    /**
+     * Similar to {@link #unlock()}, but uses {@code flag} instead of {@link #LOCKED_MASK}
+     */
+    public int unlockFlag(int flag) {
+        int st = (int)S.getAndBitwiseAndRelease(this, ~flag);
+        if ((st&flag) == 0)
+            throw new NotLocked(this);
+        return st&~flag;
+    }
+
+    private int lockFlagContended(int flag) {
         Thread self = Thread.currentThread();
         int a;
         while (((a=(int)S.getAndBitwiseOrAcquire(this, flag))&flag) != 0)
             EmitterService.yieldWorker(self);
         return a|flag;
     }
-
-    /**
-     * Spins (politely) until none of the flags given flags is set in {@link #state()}
-     *
-     * @param flags a bit mask of flags that must be not set in {@link #state()}
-     * @return the observed {@link #state()} such that {@code (state&flags) == 0}
-     */
-    protected int waitFlagsCleared(int flags) {
-        int st = (int)S.getAcquire(this);
-        if ((st&flags) == 0)
-            return st;
-        for (int i = 0; i < 4 && ((st=(int)S.getAcquire(this))&flags) != 0; i++)
-            Thread.onSpinWait();
-        if ((st&flags) == 0)
-            return st;
-        return waitFlagsClearedContended(flags);
-    }
-
-    private int waitFlagsClearedContended(int flags) {
-        var self = Thread.currentThread();
-        int st;
-        while (((st=(int)S.getAcquire(this))&flags) != 0)
-            EmitterService.yieldWorker(self);
-        return st;
-    }
-
 
     /* --- ---- --- lock/unlock --- --- --- */
 
@@ -501,6 +488,11 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
      */
     protected boolean tryLock() {
         return ((int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK)&LOCKED_MASK) == 0;
+    }
+
+    protected boolean tryLockFlag(int mask) {
+        int ex = plainState&~mask;
+        return S.weakCompareAndSetAcquire(this, ex, ex|mask);
     }
 
     private int lockContended() {

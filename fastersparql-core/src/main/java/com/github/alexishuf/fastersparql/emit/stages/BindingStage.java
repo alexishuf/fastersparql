@@ -49,7 +49,8 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private static final int LEFT_CANCELLED     = 0x01000000;
     private static final int LEFT_COMPLETED     = 0x02000000;
     private static final int LEFT_FAILED        = 0x04000000;
-    private static final int REQUESTING         = 0x08000000;
+    private static final int LB_LOCK            = 0x08000000;
+    private static final int LB_AND_STATE_LOCKS = LOCKED_MASK | LB_LOCK;
     private static final int LEFT_TERM          = LEFT_COMPLETED|LEFT_CANCELLED|LEFT_FAILED;
     private static final int RIGHT_CANCELLED    = 0x00100000;
     private static final int RIGHT_FAILED       = 0x00200000;
@@ -67,7 +68,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                     .flag(LEFT_CANCELLED,  "LEFT_CANCELLED" )
                     .flag(LEFT_COMPLETED,  "LEFT_COMPLETED" )
                     .flag(LEFT_FAILED,     "LEFT_FAILED"    )
-                    .flag(REQUESTING,      "REQUESTING")
+                    .flag(LB_LOCK,      "QUEUE_LOCK"    )
                     .flag(RIGHT_CANCELLED, "RIGHT_CANCELLED")
                     .flag(RIGHT_FAILED,    "RIGHT_FAILED"   )
                     .flag(RIGHT_BINDING,   "RIGHT_BINDING"  )
@@ -241,7 +242,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     @Override public @Nullable Orphan<B> pollFillingBatch() {
         Orphan<B> tail;
         B stale = lb; // returning null is cheaper than synchronization
-        if (stale == null || stale.next == null || !tryLock())
+        if (stale == null || stale.next == null || !tryLockFlag(LB_AND_STATE_LOCKS))
             return null; //no queue, no tail or contended lock
         try {
             if ((tail=detachDistinctTail(lb)) != null) {
@@ -249,7 +250,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 if (EmitterStats.ENABLED && stats != null)
                     stats.revertOnBatchReceived(tail);
             }
-        } finally { unlock(); }
+        } finally { unlockFlag(LB_AND_STATE_LOCKS); }
         return tail;
     }
 
@@ -261,17 +262,23 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             return;
         journal("onBatch, rows=", rows, "st=", statePlain(), flags, "on", this);
 
-        int state = lock();
+        int state = lockFlag(LB_LOCK);
         try {
-            if ((state&IS_CANCEL_REQ) != 0) {
-                orphan.takeOwnership(this).recycle(this);
+            if ((state & IS_CANCEL_REQ) != 0) {
+                Orphan.safeRecycle(orphan);
+                return;
             } else {
                 lb = Batch.quickAppendTrusted(lb, this, orphan);
-                lbTotalRows += rows;
-                leftPending -= rows;
-                if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
-                    state = startNextBinding(state);
             }
+        } finally {
+            if ((state&LB_LOCK) != 0) unlockFlag(LB_LOCK);
+        }
+        state = lock();
+        try {
+            lbTotalRows += rows;
+            leftPending -= rows;
+            if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
+                state = startNextBinding(state);
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
@@ -285,22 +292,26 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
             return;
         journal("onBatchByCopy, rows=", rows, "st=", statePlain(), flags, "on", this);
 
-        int state = lock();
+        int state = lockFlag(LB_LOCK);
         try {
-            if ((state&IS_CANCEL_REQ) == 0) {
-                B head = lb, tail = detachDistinctTail(head, this);
-                state = unlock(); // copy/append() while unlocked
-                if (tail == null)
-                    tail = batchType.create(batch.cols).takeOwnership(this);
-                tail.copy(batch);
-                Orphan<B> tailOrphan = tail.releaseOwnership(this);
-                state = lock();
-                lb = Batch.quickAppend(lb, this, tailOrphan);
-                lbTotalRows += rows;
-                leftPending -= rows;
-                if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
-                    state = startNextBinding(state);
-            }
+            if ((state&IS_CANCEL_REQ) != 0) return;
+            B head = lb, tail = detachDistinctTail(head, this);
+            state = unlockFlag(LB_LOCK); // copy/append() while unlocked
+            if (tail == null)
+                tail = batchType.create(batch.cols).takeOwnership(this);
+            tail.copy(batch);
+            Orphan<B> tailOrphan = tail.releaseOwnership(this);
+            state = lockFlag(LB_LOCK);
+            lb = Batch.quickAppend(lb, this, tailOrphan);
+        } finally {
+            if ((state&LB_LOCK) != 0) unlockFlag(LB_LOCK);
+        }
+        state = lock();
+        try {
+            lbTotalRows += rows;
+            leftPending -= rows;
+            if ((state&LEFT_CAN_BIND_MASK) == LEFT_CAN_BIND)
+                state = startNextBinding(state);
         } finally {
             if ((state&LOCKED_MASK) != 0) unlock();
         }
@@ -356,7 +367,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     private void dropLeftQueued() {
         rightRecv.upstream.rebindPrefetchEnd();
         lr          = -1;
-        lb          = Batch.recycle(lb, this);
+        lockFlag(LB_LOCK);
+        lb          = Batch.safeRecycle(lb, this);
+        unlockFlag(LB_LOCK);
         lbTotalRows = 0;
     }
 
@@ -467,22 +480,15 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 return;
         }
 
-        state = compareAndSetFlagAcquireSpinning(REQUESTING);
+        state = lock();
         try {
             if (rows > requested) {
                 requested = rows;
-                // onBatch() can update lbTotalRows and leftPending concurrently
-                // however, int does not suffer word tearing and at worst leftRequest()
-                // will output a value bigger than what it should because it loaded stale values
-                // request() contract allow for a emitter to over-deliver, thus this is fine.
                 leftRequest = leftRequest();
-                // request() on the right upstream must happen while REQUESTING, else
-                // right could concurrently complete and lead to a rebind() in parallel with
-                // this request()
                 if ((state&CANNOT_REQ_RIGHT) == 0)
                     rightRecv.upstream.request((state&FILTER_BIND) == 0 ? rows : 2);
             }
-        } finally { state = clearFlagsRelease(REQUESTING); }
+        } finally { state = unlock(); }
         if (leftRequest > 0 && (state&IS_TERM) == 0)
             leftUpstream.request(leftRequest);
     }
@@ -611,7 +617,10 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
         this.intBinding     = this.nextIntBinding;
         this.nextIntBinding = oldIntBinding;
         this.lbTotalRows   -= lb.rows;
-        this.lb             = lb = lb.dropHead(this);
+        lockFlag(LB_LOCK);
+        try {
+            this.lb = lb = lb.dropHead(this);
+        } finally { unlockFlag(LB_LOCK); }
         return lb;
     }
 
@@ -652,9 +661,6 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 if (leftRequest > 0 && (st&IS_TERM) == 0)
                     leftUpstream.request(leftRequest);
                 ++intBinding.sequence;
-                // do not rebind() concurrently with a upstream.request() from this.request()
-                if ((st&REQUESTING) != 0)
-                    st = waitFlagsCleared(REQUESTING)&~LOCKED_MASK;
                 rebind(intBinding.attach(lb, lr), rightRecv.upstream);
                 ++rightRecv.bindingSeq;
                 rightRecv.upstreamEmpty = true;
@@ -849,9 +855,9 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 // update stats and requested
                 if (EmitterStats.ENABLED && stats != null)
                     stats.onBatchDelivered(statsB);
-                compareAndSetFlagAcquireSpinning(REQUESTING);
+                lock();
                 requested -= rowsProduced;
-                clearFlagsRelease(REQUESTING);
+                unlock();
 
                 // deliver batch/row
                 if (ResultJournal.ENABLED)
