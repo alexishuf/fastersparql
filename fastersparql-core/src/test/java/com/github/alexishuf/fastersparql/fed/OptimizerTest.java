@@ -13,8 +13,7 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FS.*;
 import static com.github.alexishuf.fastersparql.util.Results.parseTP;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class OptimizerTest {
@@ -90,8 +89,8 @@ class OptimizerTest {
                          filter(new Join(x_knows_alice, x_age_a), "?a < 23")
                 ), "?a != ?b"),
                 filter(new Join(
-                         project(new Join(filter(new Join(x_age_b, x_exAge_z), "?b > ?z"), x_knows_y), Vars.of("x", "a")),
-                         new Join(x_knows_alice, filter(x_age_a, "?a < 23"))
+                         new Join(x_knows_alice, filter(x_age_a, "?a < 23"),
+                         project(new Join(filter(new Join(x_age_b, x_exAge_z), "?b > ?z"), x_knows_y), Vars.of("x", "a")))
                 ), "?a != ?b")
         ));
 
@@ -107,6 +106,7 @@ class OptimizerTest {
             assertSame(in, optimized);
         } else {
             assertEquals(expected, optimized);
+            assertNotSame(in, optimized);
         }
     }
 

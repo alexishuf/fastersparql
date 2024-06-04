@@ -22,10 +22,11 @@ import java.util.concurrent.CompletableFuture;
 
 import static com.github.alexishuf.fastersparql.fed.PatternCardinalityEstimator.DEFAULT;
 import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.GROUND;
 import static java.lang.Long.*;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.util.Objects.requireNonNull;
+import static java.util.Objects.requireNonNullElse;
 
 public class Optimizer extends CardinalityEstimator {
     private static final int MIN_VARS     = 22;
@@ -100,9 +101,12 @@ public class Optimizer extends CardinalityEstimator {
         private long upFiltersTaken = 0L;
         private long upFiltersTakenByChildren = 0L;
         private final ArrayList<Expr> tmpFilters = new ArrayList<>();
+        private Vars externallyBoundVars;
         private final ArrayBinding grounded = new ArrayBinding(Vars.EMPTY, new Term[MIN_VARS]);
         private Term[][] groundedStack = new Term[INIT_DEPTH][];
         private int groundedStackSize = 0;
+        private Plan[][] reorderStack = new Plan[INIT_DEPTH][];
+        private int reorderStackSize = 0;
         private int[] estimates = new int[INIT_OPS_LEN];
         private int[][] estimatesStack = new int[INIT_DEPTH][];
         private int estimatesStackSize = 0;
@@ -112,8 +116,10 @@ public class Optimizer extends CardinalityEstimator {
         private State() {
             for (int i = 0; i < groundedStack.length; i++)
                 groundedStack[i] = new Term[MIN_VARS];
-            for (int i = 0, n = INIT_DEPTH>>1; i < n; i++)
-                estimatesStack[i] = new int[INIT_OPS_LEN];
+            for (int i = 0, n = INIT_DEPTH>>1; i < n; i++) {
+                estimatesStack[i] = new int [INIT_OPS_LEN];
+                reorderStack  [i] = new Plan[INIT_OPS_LEN];
+            }
         }
 
         @Override public void close() {
@@ -125,7 +131,7 @@ public class Optimizer extends CardinalityEstimator {
             }
         }
 
-        public static State create(Optimizer optimizer, Plan plan) {
+        public static State create(Optimizer optimizer, Plan plan, Vars rebindHint) {
             State s = ALLOC.create();
             if (s.inUse)
                 throw new IllegalStateException("State object already in-use");
@@ -141,6 +147,8 @@ public class Optimizer extends CardinalityEstimator {
             s.upFilterVarsSets.clear();
             s.grounded.reset(plan.allVars());
             s.groundedStackSize = 0;
+            s.externallyBoundVars = rebindHint;
+            s.grounded.ground(rebindHint);
             return s;
         }
 
@@ -182,21 +190,55 @@ public class Optimizer extends CardinalityEstimator {
             restoreGrounded();
         }
 
+        private Plan[] beginSafeReorder(Plan parent) {
+            int stackLevel = reorderStackSize++;
+            if (stackLevel >= reorderStack.length)
+                reorderStack = Arrays.copyOf(reorderStack, reorderStack.length<<1);
+            Plan[] original = requireNonNullElse(parent.operandsArray, EMPTY_OPERANDS);
+            Plan[] copy = reorderStack[stackLevel];
+            if (copy == null || copy.length < original.length) {
+                copy = Arrays.copyOf(original, Math.max(INIT_OPS_LEN, original.length));
+                reorderStack[stackLevel] = copy;
+            } else {
+                System.arraycopy(original, 0, copy, 0, original.length);
+            }
+            return copy;
+        }
+        private static final Plan[] EMPTY_OPERANDS = new Plan[0];
+
+        private Plan endSafeReorder(Plan parent, Plan[] reordered, int opCount) {
+            Plan[] original = requireNonNullElse(parent.operandsArray, EMPTY_OPERANDS);
+            boolean changed = false;
+            for (int i = 0; i < opCount && !changed; i++)
+                changed = original[i] != reordered[i];
+            --reorderStackSize;
+            assert reorderStack[reorderStackSize] == reordered;
+            if (changed)
+                return parent.copy(Arrays.copyOf(reordered, opCount));
+            return parent;
+        }
+
         /**
          * Add all filters satisfied by {@code inVars} not in {@code upFiltersTakenByChildren}
          * into {@code tmpFilters}.
          *
-         * @param inVars set of vars that are available to feed the filters.
+         * @param grounded set of vars to be assumed as bound to a value. For a filter to be
+         *                 selected, all its vars must be contained in this set.
+         * @param novelVars for a filter to be selected, at least one of its vars must be
+         *                  present in this set, which must itself be a subset of {@code grounded}
          * @return bitset where bit {@code i} is set iff the {@code i}-th filter in
          *         {@code upFilters} was added to {@code tmpFilters}
          */
-        private long findFilters(Vars inVars) {
+        private long findFilters(Vars grounded, Vars novelVars) {
             long mask = 1L, taken = 0L, children = upFiltersTakenByChildren;
             for (List<Expr> filterList : upFilters) {
                 for (Expr filter : filterList) {
-                    if ((children & mask) == 0 && inVars.containsAll(filter.vars())) {
-                        tmpFilters.add(filter);
-                        taken |= mask;
+                    if ((children&mask) == 0) {
+                        Vars required = filter.vars();
+                        if (grounded.containsAll(required) && novelVars.intersects(required)) {
+                            tmpFilters.add(filter);
+                            taken |= mask;
+                        }
                     }
                     mask <<= 1;
                 }
@@ -249,8 +291,10 @@ public class Optimizer extends CardinalityEstimator {
             long allTaken = 0;
 
             for (int childIdx = 1, last = join.opCount()-1; childIdx < last; childIdx++) {
-                tmpVars.addAll(join.op(childIdx).publicVars());
-                long bitset = findFilters(tmpVars);
+                Vars novelVars = join.op(childIdx).publicVars();
+                tmpVars.addAll(novelVars);
+                long bitset = findFilters(tmpVars, novelVars);
+                tmpVars.clear();
                 if (bitset != 0) {
                     allTaken |= bitset;
                     Join subJoin;
@@ -295,24 +339,26 @@ public class Optimizer extends CardinalityEstimator {
         }
 
         /** Reverses a previous {@code pushFilters(m)}. Must be called in the reverse order.*/
-        private void popFilters(Modifier m) {
+        private Modifier popFilters(Modifier m, boolean canMutate) {
             int depth = upFilters.size()-1;
             List<Expr> mFilters = upFilters.remove(depth);
             int begin = upFiltersCount-=mFilters.size();
             long taken = upFiltersTaken>>>begin;
             if (taken != 0) { // if filters were taken...
-                // ensure m.filters is mutable
-                if (!(mFilters instanceof ArrayList<Expr>))
-                    m.filters = mFilters = new ArrayList<>();
+                // defensive: if filters were taken, m.copy() should've been called
+                if (!canMutate) m = (Modifier)m.copy();
+                // do not modify a list pointed to by another Modifier instance
+                m.filters = mFilters = new ArrayList<>(mFilters);
                 // remove each of the filters
                 for (int i = 0, n = 0; (i+=numberOfTrailingZeros(taken>>>i)) < 64; i++,n++)
                     mFilters.remove(i-n);
                 long mask = -1L >>> -begin;
-                upFiltersTaken &= mask;
+                upFiltersTaken           &= mask;
                 upFiltersTakenByChildren &= mask;
             }
             upFilterVarsSets.remove(depth);
             upFilterVars = depth == 0 ? Vars.EMPTY : upFilterVarsSets.get(depth-1);
+            return m;
         }
 
         /**
@@ -369,61 +415,64 @@ public class Optimizer extends CardinalityEstimator {
                 pushed = null;
 
             boolean childCTF; // whether our DIRECT children can take filters
-            byte saveG; // whether we must save and restore tmpBinding
-            switch (type) {
-                case NOT_EXISTS,EXISTS,MINUS -> { childCTF = true; saveG = 2; }
-                case JOIN  -> { childCTF = true;                   saveG = 0; saveGrounded(); }
-                case UNION -> { childCTF = nonUniformVars(p);      saveG = 1; }
-                default    -> { childCTF = type != MODIFIER;       saveG = 0; }
-            }
+            int saveGroundedBegin = switch (type) {
+                case NOT_EXISTS,EXISTS,MINUS -> { childCTF = true; yield 2; }
+                case JOIN  -> {
+                    childCTF = true;
+                    saveGrounded();
+                    yield Integer.MAX_VALUE;
+                }
+                case UNION -> { childCTF = nonUniformVars(p);      yield 0; }
+                default    -> { childCTF = type != MODIFIER;       yield Integer.MAX_VALUE; }
+            };
             // store filters taken by left-side siblings
             long upFiltersTakenForParent = upFiltersTakenByChildren;
             upFiltersTakenByChildren = 0L; // by this point our children took no filters (yet)
-            var arr = p.operandsArray;
-            if (arr == null) {
-                Plan o = p.left, oo;
-                if (o == null) {
-                    if (p instanceof Query q && q.sparql instanceof Plan query) {
-                        if ((oo = optimize(query, childCTF)) != o)
-                            q.sparql = oo;
+            int opCount = p.opCount(), mutations = 0;
+            if (opCount == 0) {
+                if (p instanceof Query q && q.sparql instanceof Plan query) {
+                    Plan optQuery = optimize(query, childCTF);
+                    if (optQuery != query) {
+                        mutations = 1;
+                        p = new Query(optQuery, q.client);
                     }
-                } else {
-                    if (saveG == 1) saveGrounded();
-                    if ((oo = optimize(o, childCTF)) != o)
-                        p.left  = oo;
-                    if (saveG == 1) restoreGrounded();
-                    if (saveG != 0) saveGrounded();
-
-                    if ((o = p.right) != null && (oo = optimize(o, childCTF)) != o)
-                        p.right = oo;
-                    if (saveG != 0 || type == JOIN) restoreGrounded();
-                    if (type == JOIN) reorderBinary(p);
                 }
             } else {
-                for (int i = 0; i < arr.length; i++) {
-                    if (saveG != 0) saveGrounded();
-                    arr[i] = optimize(arr[i], childCTF);
-                    if (saveG != 0) restoreGrounded();
+                for (int i = 0; i < opCount; i++) {
+                    if (saveGroundedBegin <= i) saveGrounded();
+                    Plan o = p.op(i), oo = optimize(o, childCTF);
+                    if (o != oo) {
+                        if (mutations++ == 0) p = p.copy();
+                        p.replace(i, oo);
+                    }
+                    if (saveGroundedBegin <= i) restoreGrounded();
                 }
-                p.left  = arr[0];
-                p.right = arr[1];
-                if (type == JOIN) {
-                    restoreGrounded();
-                    upFiltersTakenForParent |= reorderNary(p, arr);
+            }
+            if (type == JOIN) {
+                restoreGrounded();
+                if (opCount == 2) reorderBinary(p);
+                else {
+                    p = reorderNary(p, mutations != 0);
+                    if (upFiltersCount != 0)
+                        upFiltersTakenForParent |= takeFiltersOnSubJoins(p);
                 }
             }
 
             if (type != Operator.JOIN) {
                 grounded.ground(p.publicVars()); // expose vars to subsequent operand
                 if (pushed != null)
-                    popFilters(pushed);
+                    p = popFilters(pushed=(Modifier)p, mutations != 0);
             } else {
                 assert grounded.hasAll(p.publicVars());
             }
 
             // tries applying filters to p itself
             if (canTakeFilters) {
-                long bitset = findFilters((p instanceof Modifier m ? m.left() : p).publicVars());
+                Vars novelVars = p instanceof Modifier m ? m.left().publicVars() : p.publicVars();
+                tmpVars.addAll(externallyBoundVars);
+                tmpVars.addAll(novelVars);
+                long bitset = findFilters(tmpVars, novelVars);
+                tmpVars.clear();
                 if (bitset != 0) {
                     upFiltersTakenForParent |= bitset;
                     p = addFilters(p);
@@ -465,14 +514,17 @@ public class Optimizer extends CardinalityEstimator {
         /** Reorder a join with more than 2 operands so that operands are executed by
          *  increasing cost. Like {@link CardinalityEstimator}, cost of the {@code i-th}
          *  operand assumes all join vars are ground as would occur in a bind join. */
-        private long reorderNary(Plan p, Plan[] ops) {
+        private Plan reorderNary(Plan p, boolean ownsParent) {
+            int opCount = p.opCount();
+            Plan[] ops = ownsParent ? requireNonNull(p.operandsArray)
+                                    : beginSafeReorder(p);
             int[] estimates = this.estimates;
-            if (estimates.length < ops.length)
-                this.estimates = estimates = new int[ops.length];
-            for (int i = 0; i < ops.length; i++)
+            if (estimates.length < opCount)
+                this.estimates = estimates = new int[opCount];
+            for (int i = 0; i < opCount; i++)
                 estimates[i] = faEstimate(ops[i], grounded);
             int acc = 1;
-            for (int done = 0; done < ops.length; done++) {
+            for (int done = 0; done < opCount; done++) {
                 // find minIdx >= done with the lowest cost
                 long minEstimate = MAX_VALUE;
                 int minIdx = done; // on ties, input order prevails
@@ -480,7 +532,7 @@ public class Optimizer extends CardinalityEstimator {
                     // for the first operand we must ensure it has no input vars. The general
                     // case code would detect a false product and compute unnecessary stuff
                     minIdx = -1; // we use minIdx sign to signal whether minIdx has input vars
-                    for (int i = 0; i < ops.length; i++) {
+                    for (int i = 0; i < opCount; i++) {
                         Vars pubVars = ops[i].publicVars(), allVars = ops[i].allVars();
                         boolean hasInputVars = false;
                         if (allVars.size() > pubVars.size()) {
@@ -495,10 +547,10 @@ public class Optimizer extends CardinalityEstimator {
                         }
                     }
                     minIdx = Math.abs(minIdx)-1; // reverse the "sign as hasInputVars" hack
-                } else if (done < ops.length-1) {
+                } else if (done < opCount -1) {
                     if (acc > CURB_ACC_THRESHOLD)
                         acc >>= CURB_ACC_SHIFT; // prevent overflow before comparison
-                    for (int i = done; i < ops.length; i++) {
+                    for (int i = done; i < opCount; i++) {
                         Vars pubVars = ops[i].publicVars(), allVars = ops[i].allVars();
                         long est;
                         int allVarsSize = allVars.size();
@@ -529,7 +581,7 @@ public class Optimizer extends CardinalityEstimator {
                 // mark all vars produced by best as ground in subsequent estimations
                 Vars bestPubVars = best.publicVars();
                 if (grounded.ground(bestPubVars)) { // best introduced new vars
-                    for (int i = done+1; i < ops.length; i++) {
+                    for (int i = done+1; i < opCount; i++) {
                         if (bestPubVars.intersects(ops[i].allVars())) {
                             saveEstimatesAndGrounded();
                             ops[i] = optimize(ops[i], true);
@@ -540,10 +592,13 @@ public class Optimizer extends CardinalityEstimator {
                 }
                 acc = (int)min(I_MAX, minEstimate);
             }
-            p.left  = ops[0];
-            p.right = ops[1];
-            // try replacements like Join(A, B, C) -> Join(Filter(Join(A, B), F), C)
-            return upFiltersCount == 0 ? 0 : takeFiltersOnSubJoins(p);
+            if (ownsParent) {
+                p.left  = ops[0];
+                p.right = ops[1];
+                return p;
+            } else {
+                return endSafeReorder(p, ops, opCount);
+            }
         }
 
         private boolean hasInputFedByFuture(Plan[] ops, int selCount, int candidateIdx) {
@@ -569,9 +624,7 @@ public class Optimizer extends CardinalityEstimator {
      */
     public Plan optimize(Plan plan, Vars assumeGrounded) {
         Plan out;
-        try (var state = State.create(this, plan)) {
-            if (!assumeGrounded.isEmpty())
-                groundVars(assumeGrounded, state);
+        try (var state = State.create(this, plan, assumeGrounded)) {
             out = state.optimize(plan, true);
         }
         return out;
@@ -620,9 +673,7 @@ public class Optimizer extends CardinalityEstimator {
         }
 
         // get and init State object
-        try (State st = State.create(this, join)) {
-            groundVars(boundVars, st);
-
+        try (State st = State.create(this, join, boundVars)) {
             // try to push filters on outer modifier
             List<Expr> filters = mod != null && !mod.filters.isEmpty()
                     ? mod.filters = new ArrayList<>(mod.filters) : List.of();
@@ -652,18 +703,9 @@ public class Optimizer extends CardinalityEstimator {
             // reorder join operands by cost. will not push filters to subsets of operands
             Plan[] arr = join.operandsArray;
             if (arr == null) st.reorderBinary(join);
-            else st.reorderNary(join, arr);
+            else             joinOrMod = st.reorderNary(join, true);
         }
         return joinOrMod;
-    }
-
-    private static void groundVars(Vars boundVars, State st) {
-        var grounded = st.grounded;
-        for (var name : boundVars) {
-            int i = grounded.vars.indexOf(name);
-            if (i >= 0)
-                grounded.set(i, GROUND);
-        }
     }
 
     @Override public int estimate(TriplePattern tp, @Nullable Binding binding) {
