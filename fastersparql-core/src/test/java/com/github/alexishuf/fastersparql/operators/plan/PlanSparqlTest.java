@@ -50,7 +50,7 @@ public class PlanSparqlTest {
                         {
                          {
                           <s> $p "27" .
-                         } UNION
+                         } UNION\s
                          {
                           <s> $p "31" .
                          }
@@ -64,7 +64,7 @@ public class PlanSparqlTest {
                         SELECT DISTINCT ?s
                         {
                          ?s <http://example.org/p> "23" .
-                         OPTIONAL
+                         OPTIONAL\s
                          {
                           <s> $p "27" .
                          }
@@ -73,12 +73,12 @@ public class PlanSparqlTest {
                         SELECT REDUCED *
                         {
                          <s> $p "27" .
-                         FILTER(?p < 23)
-                         FILTER NOT EXISTS
+                         FILTER (?p < 23)
+                         FILTER NOT EXISTS\s
                          {
                           ?p a <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
                          }
-                         FILTER EXISTS
+                         FILTER EXISTS\s
                          {
                           ?s ?p <s> .
                          }
