@@ -264,7 +264,7 @@ public class TermParserTest {
             assertParse(expected, in, traps.length()+1, in.length(), eager);
         }
         // parser must detect by itself when the term ends
-        for (char stop : ".,;){ \n".toCharArray()) {
+        for (char stop : ".,;[ \n".toCharArray()) {
             assertParse(expected, ntOrTtl+stop, 0, len, eager);
             assertParse(expected, stop+ntOrTtl+stop, 1, len +1, eager);
         }
