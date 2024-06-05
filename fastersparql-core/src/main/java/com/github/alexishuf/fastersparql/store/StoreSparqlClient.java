@@ -2593,6 +2593,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 if (bindingNotifier != null && bindingNotifier.bindQuery.metrics != null)
                     bindingNotifier.bindQuery.metrics.batch(b.totalRows());
+                if (b == fb)
+                    fb = null;
                 B r = b;
                 b = null;
                 return r.rows == 0 ? handleEmptyBatch(r) : onNextBatch(r.releaseOwnership(this));
