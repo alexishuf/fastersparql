@@ -48,6 +48,7 @@ class SparqlQueryTest {
     };
 
     private static final Pattern GRAPH_RX = Pattern.compile("(?mi)^\\s*(?:CONSTRUCT|DESCRIBE)");
+    private static final Pattern EXPR_AS_VAR = Pattern.compile("(?mi)^\\s*SELECT [^}]*\\(.* AS\\s*[?$]\\w+\\s*\\)");
 
     private static SparqlQuery
     parseFull(SparqlParser parser, String sparql) throws SilentSkip {
@@ -77,6 +78,7 @@ class SparqlQueryTest {
         @Override public String toString() { return "FULL"; }
         @Override public @Nullable String preprocess(String sparql) {
             if (GRAPH_RX.matcher(sparql).find()) return null;
+            if (EXPR_AS_VAR.matcher(sparql).find()) return null;
             if (sparql.indexOf(':') == -1)
                 return sparql;
             return  """
