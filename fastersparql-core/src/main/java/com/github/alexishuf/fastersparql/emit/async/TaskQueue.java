@@ -9,18 +9,16 @@ import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.Thread.onSpinWait;
 
 class TaskQueue {
-    private static final int LOCAL_CAPACITY  = 128;
-    private static final int SHARED_CAPACITY = 16_384;
+    private static final int LOCAL_CAPACITY  = 1024;
     private static final int     PADDING     = 128/4;
-    static {
-        assert Integer.bitCount(LOCAL_CAPACITY) == 1;
-        assert Integer.bitCount(SHARED_CAPACITY) == 1;
-    }
+    static {assert Integer.bitCount(LOCAL_CAPACITY) == 1;}
 
     private static abstract class QueueHandle_0 {
         protected final Task<?>[] data;
@@ -79,12 +77,6 @@ class TaskQueue {
                                  base, plainSize, mask+1, head);
         }
 
-        public int size() {
-            int size;
-            while ((size=(int)S.getOpaque(this)) == LOCKED) onSpinWait();
-            return size;
-        }
-
         final @Nullable Task<?> spinPoll() {
             int size;
             if ((int)S.getOpaque(this) == 0)
@@ -134,19 +126,15 @@ class TaskQueue {
     private final QueueHandle[] handles;
     private final QueueHandle[][] pollSeq;
     private final int workerMask;
-    private final int shHandleIdx;
     private final MpscUnboundedAtomicArrayQueue<Task<?>> overflowQueue;
 
     public TaskQueue(Worker[] workers) {
         int po2WorkerCount = 1 << (32-Integer.numberOfLeadingZeros(workers.length-1));
         int queueTypes     = 2;
-        shHandleIdx = po2WorkerCount*2;
         workerMask  = po2WorkerCount-1;
-        handles     = new QueueHandle[queueTypes + po2WorkerCount*queueTypes];
+        handles     = new QueueHandle[po2WorkerCount*queueTypes];
         data        = new Task[PADDING
-                             + po2WorkerCount*(queueTypes*LOCAL_CAPACITY + PADDING)
-                             + queueTypes* SHARED_CAPACITY
-                             + PADDING];
+                             + po2WorkerCount*(queueTypes*LOCAL_CAPACITY + PADDING)];
         int base = PADDING, handleIdx = 0;
         for (int workerId = 0; workerId < po2WorkerCount; workerId++) {
             handles[handleIdx++] = new QueueHandle(data, base, LOCAL_CAPACITY, workers, workerId);
@@ -154,10 +142,6 @@ class TaskQueue {
             handles[handleIdx++] = new QueueHandle(data, base, LOCAL_CAPACITY, workers, workerId);
             base += LOCAL_CAPACITY+PADDING;
         }
-        assert handleIdx == shHandleIdx;
-        handles[handleIdx++] = new QueueHandle(data, base, SHARED_CAPACITY, workers, 0);
-        base += SHARED_CAPACITY;
-        handles[handleIdx  ] = new QueueHandle(data, base, SHARED_CAPACITY, workers, 0);
         assert nonOverlappingQueues();
         pollSeq = new QueueHandle[po2WorkerCount][];
         assert Integer.bitCount(po2WorkerCount) == 1;
@@ -175,7 +159,6 @@ class TaskQueue {
                     neighborId = (workerId - (step>>1))&workerMask;
                 seq[i++] = handles[neighborId<<1];
             }
-            seq[i++] = handles[shHandleIdx];
             // poll all low-priority worker-local queues, also sorted by distance
             for (int step = 1; step < po2WorkerCount; step++) {
                 int neighborId;
@@ -185,8 +168,8 @@ class TaskQueue {
                     neighborId = (workerId - (step>>1))&workerMask;
                 seq[i++] = handles[(neighborId<<1)+1];
             }
-            seq[i++] = handles[shHandleIdx+1];
             assert i == seq.length;
+            assert Arrays.stream(seq).noneMatch(Objects::isNull);
         }
         overflowQueue = new MpscUnboundedAtomicArrayQueue<>(1024);
         Thread.startVirtualThread(this::addOverflown);
@@ -222,8 +205,6 @@ class TaskQueue {
     }
 
     public StringBuilder dump(StringBuilder sb) {
-        sb.append("shared:    ").append(handles[shHandleIdx  ].size()).append('\n');
-        sb.append("shared LP: ").append(handles[shHandleIdx+1].size()).append('\n');
         for (int workerId = 0; workerId <= workerMask; workerId++) {
             var prefix = String.format("worker %2d", workerId);
             sb.append(prefix).append(":    ").append(handles[ workerId<<1   ]).append('\n');
@@ -239,14 +220,8 @@ class TaskQueue {
 
     public void put(Task<?> task, int workerId) {
         int type = task instanceof LowPriorityTask<?> ? 1 : 0;
-        if (handles[((workerId&workerMask)<<1) + type].spinOffer(task))
-            return;
-       if (!handles[shHandleIdx + type].spinOffer(task))
+        if (!handles[((workerId&workerMask)<<1) + type].spinOffer(task))
             putOverflow(task);
-    }
-
-    public int sharedQueueSize() {
-        return handles[shHandleIdx].size() + handles[shHandleIdx+1].size();
     }
 
     public Task<?> take(Worker workerThread) {

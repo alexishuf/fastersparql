@@ -259,17 +259,13 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
         boolean transitioned = false;
         int n = 0, a, e = current&UNLOCKED_MASK;
         nextState &= STATE_MASK;
-        Thread self = null;
         while (isSuccessor(e, nextState)) {
             n = (e&FLAGS_MASK)|nextState;
             if ((a=(int)S.compareAndExchangeRelease(this, e, n)) == e) {
                 transitioned = true;
                 break;
             } else if ((a&LOCKED_MASK) != 0) {
-                if (self == null)
-                    self = Thread.currentThread();
-                else
-                    EmitterService.yieldWorker(self);
+                EmitterService.yieldWorker();
             } else {
                 e = a;
             }
@@ -457,10 +453,9 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     }
 
     private int lockFlagContended(int flag) {
-        Thread self = Thread.currentThread();
         int a;
         while (((a=(int)S.getAndBitwiseOrAcquire(this, flag))&flag) != 0)
-            EmitterService.yieldWorker(self);
+            EmitterService.yieldWorker();
         return a|flag;
     }
 
@@ -496,10 +491,9 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     }
 
     private int lockContended() {
-        Thread self = Thread.currentThread();
         int st;
         while (((st=(int)S.getAndBitwiseOrAcquire(this, LOCKED_MASK))&LOCKED_MASK) != 0)
-            EmitterService.yieldWorker(self);
+            EmitterService.yieldWorker();
         return st|LOCKED_MASK;
     }
 

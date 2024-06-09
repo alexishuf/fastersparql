@@ -989,9 +989,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         private void spinUntilStopped() {
-            var currentThread = Thread.currentThread();
             for (int i = 0; (stateAcquire()&IS_RUNNING) != 0; i++) {
-                if ((i&0xf) == 0xf) EmitterService.yieldWorker(currentThread);
+                if ((i&0xf) == 0xf) EmitterService.yieldWorker();
                 else                Thread.onSpinWait();
             }
         }

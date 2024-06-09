@@ -77,7 +77,7 @@ public final class EmitterService {
          * the calling thread is a worker thread. Such queue is not shared with other worker
          * and thus does not suffer from contention. Tasks only move out of the worker-private
          * queue if the worker thread evicts them due to imbalance or due to a
-         * {@link #yieldWorker(Thread)} call.</p>
+         * {@link #yieldWorker()} call.</p>
          */
         protected final void awakeSameWorker() {
             if ((int)SCHEDULED.getAndAddRelease(this, 1) != 0)
@@ -248,11 +248,6 @@ public final class EmitterService {
                 }
             }
         }
-
-        private void doYieldWorker() {
-            if (!Unparker.volunteer() && !svc.parked.unparkAny(svc.workers))
-                Thread.yield();
-        }
     }
 
     private static final VarHandle SVC_INIT_LOCK;
@@ -281,7 +276,6 @@ public final class EmitterService {
     }
 
     private final EmitterService.Worker[] workers;
-    private final ParkedSet parked;
     private final BitSet cpuAffinity;
     private final TaskQueue queue;
 
@@ -289,11 +283,9 @@ public final class EmitterService {
         int nWorkers = ThreadPoolsPartitioner.partitionSize();
         cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
         workers      = new EmitterService.Worker[nWorkers];
-        parked       = new ParkedSet(nWorkers);
         var grp = new ThreadGroup("EmitterService");
-        for (int i = 0; i < workers.length; i++) {
+        for (int i = 0; i < workers.length; i++)
             workers[i] = new Worker(grp, this, i);
-        }
         queue = new TaskQueue(workers);
         for (Worker w : workers)
             w.start();
@@ -303,15 +295,11 @@ public final class EmitterService {
 
     @SuppressWarnings("unused") public String dump() {
         var sb = new StringBuilder().append("EmitterService-").append('\n');
-        sb.append("  shared queue: ").append(queue.sharedQueueSize()).append(" items\n");
-        sb.append("parkedBS: ").append(parked);
         return queue.dump(sb.append('\n')).toString();
     }
 
-    public static void yieldWorker(Thread currentThread) {
-        if (currentThread instanceof Worker w)
-            w.doYieldWorker();
-        else if (!Unparker.volunteer())
+    public static void yieldWorker() {
+        if (!Unparker.volunteer())
             Thread.yield();
     }
 
