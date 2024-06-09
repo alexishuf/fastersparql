@@ -87,6 +87,8 @@ class TaskQueue {
 
         final @Nullable Task<?> spinPoll() {
             int size;
+            if ((int)S.getOpaque(this) == 0)
+                return null;
             while ((size=(int)S.getAndSetAcquire(this, LOCKED)) == LOCKED)
                 onSpinWait();
             Task<?> task;
