@@ -211,21 +211,24 @@ public final class EmitterService {
         }
 
         boolean unparkNow() {
-            boolean parked = (int)PARKED.compareAndExchangeRelease(this, 1, 0) == 1;
-            if (parked)
-                LockSupport.unpark(this);
-            return parked;
+            if ((int)PARKED.getOpaque(this) == 0)
+                return false;
+            plainParked = 1;
+            LockSupport.unpark(this);
+            return true;
         }
 
         boolean unpark() {
-            boolean parked = (int)PARKED.compareAndExchangeRelease(this, 1, 0) == 1;
-            if (parked)
-                Unparker.unpark(this);
-            return parked;
+            if ((int)PARKED.getOpaque(this) == 0)
+                return false;
+            Unparker.unpark(this);
+            return true;
         }
 
         void park() {
-            if ((int)PARKED.compareAndExchangeAcquire(this, 0, 1) == 1) {
+            if ((int)PARKED.getOpaque(this) == 0) {
+                plainParked = 1;
+            } else {
                 LockSupport.park();
                 plainParked = 0;
             }
