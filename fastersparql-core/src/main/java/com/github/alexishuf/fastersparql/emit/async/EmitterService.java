@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -10,13 +9,12 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.locks.LockSupport;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Thread.currentThread;
-import static java.lang.Thread.onSpinWait;
 
 /**
  * Similar to a {@link ExecutorService}, but executes {@link Task} objects
@@ -31,7 +29,7 @@ import static java.lang.Thread.onSpinWait;
  *         the same worker thread to run)</li>
  * </ul>
  */
-public final class EmitterService extends EmitterService_3 {
+public final class EmitterService {
     static {
         ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
     }
@@ -73,7 +71,7 @@ public final class EmitterService extends EmitterService_3 {
          * Ensures that after this call, {@link #task(Worker, int)} will execute at least once.
          *
          * <p>{@link #task(Worker, int)} will not be called from within this call, But it may
-         * be called in paralle from another worker thread before this call returns.</p>
+         * be called in parallel from another worker thread before this call returns.</p>
          *
          * <p>This method will prefer enqueuing {@code this} into a worker-private queue if
          * the calling thread is a worker thread. Such queue is not shared with other worker
@@ -84,15 +82,15 @@ public final class EmitterService extends EmitterService_3 {
         protected final void awakeSameWorker() {
             if ((int)SCHEDULED.getAndAddRelease(this, 1) != 0)
                 return; // already queued
-            if (currentThread() instanceof Worker w && w.offerTaskLocal(this))
-                return; // queued into local list
-            emitterSvc.putTaskShared(this);
+            Thread thread = currentThread();
+            int workerId = thread instanceof Worker w ? w.workerId : (int)thread.threadId();
+            emitterSvc.queue.put(this, workerId);
         }
 
         /**
          * Equivalent to {@link #awakeSameWorker()} but assumes {@link Thread#currentThread()}
          * is {@code currentWorker}. This should be used when a {@link #task(Worker, int)}
-         * whishes to continue processing later and is returning now only to be polite and
+         * wishes to continue processing later and is returning now only to be polite and
          * allow other tasks to execute.
          *
          * <p><strong>Attention:</strong>{@code currentWorker} MUST BE
@@ -100,17 +98,15 @@ public final class EmitterService extends EmitterService_3 {
          * dropped from the queue and will thus starve for all eternity.</p>
          */
         protected final void awakeSameWorker(Worker currentWorker) {
-            if ((int)SCHEDULED.getAndAddRelease(this, 1) == 0) {
-                if (!currentWorker.offerTaskLocal(this))
-                    emitterSvc.putTaskShared(this);
-            }
+            if ((int)SCHEDULED.getAndAddRelease(this, 1) == 0)
+                emitterSvc.queue.put(this, currentWorker.workerId);
         }
 
         /**
          * Ensures that after this call, {@link #task(Worker, int)} will execute at least once.
          *
          * <p>{@link #task(Worker, int)} will not be called from within this call, But it may
-         * be called in paralle from another worker thread before this call returns.</p>
+         * be called in parallel from another worker thread before this call returns.</p>
          *
          * <p>This method will always enqueue {@code this} into a queue that is shared with
          * all worker threads, even if called from a worker thread. This reduces the average
@@ -120,7 +116,7 @@ public final class EmitterService extends EmitterService_3 {
          */
         protected final void awakeParallel() {
             if ((int)SCHEDULED.getAndAddRelease(this, 1) == 0)
-                emitterSvc.putTaskShared(this);
+                emitterSvc.queue.put(this, (int)Thread.currentThread().threadId());
         }
 
         /**
@@ -153,8 +149,7 @@ public final class EmitterService extends EmitterService_3 {
             }
             if ((int)SCHEDULED.compareAndExchangeRelease(this, old, 0) != old) {
                 SCHEDULED.setRelease(this, (short)1);
-                if (worker == null || !worker.offerTaskLocal(this))
-                    emitterSvc.putTaskShared(this);
+                emitterSvc.queue.put(this, worker.workerId);
             } // else: S = 0 and not enqueued, future awake() can enqueue
         }
 
@@ -168,159 +163,92 @@ public final class EmitterService extends EmitterService_3 {
         protected LowPriorityTask(int initState, Flags flags) {super(initState, flags);}
     }
 
-    @SuppressWarnings("unused")
-    private static class PaddedWorker extends Worker {
-        private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7; // 64 bytes
-        private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7; // 64 bytes
+    private static abstract class Worker_0 extends Thread {
+        protected final int threadId, workerId;
+        protected final EmitterService svc;
 
-        public PaddedWorker(ThreadGroup group, EmitterService svc, int id,
-                            Task<?>[] queue, int queueBegin) {
-            super(group, svc, id, queue, queueBegin);
+        public Worker_0(@Nullable ThreadGroup group, EmitterService svc, int id) {
+            super(group, svc+"-"+id);
+            this.workerId = id;
+            this.threadId = (int)threadId();
+            this.svc = svc;
+            setDaemon(true);
+            setUncaughtExceptionHandler((w, err)
+                    -> log.error("Worker {} failed, Deadlock/starvation imminent", w, err));
+        }
+    }
+    @SuppressWarnings("unused")
+    private static abstract class Worker_1 extends Worker_0 {
+        private long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
+        private long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
+        public Worker_1(@Nullable ThreadGroup group, EmitterService svc, int id) {
+            super(group, svc, id);
+        }
+    }
+    private static abstract class Worker_2 extends Worker_1 {
+        protected static final VarHandle PARKED;
+        static {
+            try {
+                PARKED = MethodHandles.lookup().findVarHandle(Worker_2.class, "plainParked", int.class);
+            } catch (NoSuchFieldException|IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+        protected int plainParked;
+
+        public Worker_2(@Nullable ThreadGroup group, EmitterService svc, int id) {
+            super(group, svc, id);
         }
     }
 
-    private static final int LOCAL_QUEUE_CAPACITY = 8;
-    private static final int LOCAL_QUEUE_MASK     = LOCAL_QUEUE_CAPACITY-1;
-    private static final int LOCAL_QUEUE_WIDTH    = LOCAL_QUEUE_CAPACITY*2 + (128/4);
-    static {assert Integer.bitCount(LOCAL_QUEUE_CAPACITY) == 1;}
+    @SuppressWarnings("unused")
+    public static final class Worker extends Worker_2 {
+        private long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
+        private long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
 
-    public static abstract class Worker extends Thread {
-        public final int threadId, workerId;
-        private final EmitterService svc;
-        private final Task<?>[] queue;
-        private final int queueBegin;
-        private int queueHead, queueSize;
-        private int lpQueueHead, lpQueueSize;
-        private @Nullable Task<?> current;
+        private Worker(ThreadGroup group, EmitterService svc, int id) {
+            super(group, svc, id);
+        }
 
-        protected Worker(ThreadGroup group, EmitterService svc, int id, Task<?>[] queue, int queueBegin) {
-            super(group, svc+"-"+id);
-            this.workerId   = id;
-            this.threadId   = (int)threadId();
-            this.svc        = svc;
-            this.queue      = queue;
-            this.queueBegin = queueBegin;
-            setDaemon(true);
-            setUncaughtExceptionHandler((w, err) -> {
-                log.error("Worker {} failed. Deadlock/starvation imminent", w, err);
-                try {
-                    for (Task<?> task; (task=pollTaskLocal()) != null; ) {
-                        try {
-                            svc.putTaskShared(task);
-                        } catch (Throwable t) {
-                            log.error("putTaskShared({}): {}", task, t.toString());
-                        }
-                    }
-                } catch (Throwable t) {
-                    log.error("Draining local tasks from {} failed: {}", w, t.toString());
-                }
-            });
+        boolean unparkNow() {
+            boolean parked = (int)PARKED.compareAndExchangeRelease(this, 1, 0) == 1;
+            if (parked)
+                LockSupport.unpark(this);
+            return parked;
+        }
+
+        boolean unpark() {
+            boolean parked = (int)PARKED.compareAndExchangeRelease(this, 1, 0) == 1;
+            if (parked)
+                Unparker.unpark(this);
+            return parked;
+        }
+
+        void park() {
+            if ((int)PARKED.compareAndExchangeAcquire(this, 0, 1) == 1) {
+                LockSupport.park();
+                plainParked = 0;
+            }
         }
 
         @Override public void run() {
             if (currentThread() != this)
                 throw new IllegalStateException("wrong thread");
             Affinity.setAffinity(svc.cpuAffinity);
-            int skipOffload = workerId, offloadSkipPeriod = svc.workers.length;
             //noinspection InfiniteLoopStatement
             while (true) {
-                Task<?> task = pollTaskLocal();
-                if (task == null) {
-                    current = null;
-                    task = svc.takeTaskShared(workerId); // will spin/park
-                } else if (task == current) {
-                    // if task() returned, it is because it wants/needs other task to execute
-                    // not doing this can lead to big slowdowns when all workers are
-                    // executing tasks that "do some work until cancelled" and the cancelling
-                    // tasks are stuck in sharedQueue
-                    var other = pollTaskLocal();
-                    if (other == null)
-                        other = svc.pollTaskShared();
-                    if (other != null) {
-                        if (!offerTaskLocal(task))
-                            svc.putTaskShared(task);
-                        task = other;
-                    }
-                } else if (skipOffload-- <= 0 && queueSize > 1)  {
-                    skipOffload = offloadSkipPeriod << (tryExpelLastTask() ? 0 : 1);
-                }
-                current = task;
+                Task<?> task = svc.queue.take(this);
                 try {
                     task.run(this, threadId);
                 } catch (Throwable t) {
-                    log.error("Dispatch failed for task={}", current, t);
+                    log.error("Dispatch failed for task={}", task, t);
                 }
             }
         }
 
-        private boolean tryExpelLastTask() {
-            int last = queueSize-1;
-            if (last < 0)
-                return false;
-            int idx = queueBegin + ((queueHead+last)&LOCAL_QUEUE_MASK);
-            boolean expelled = svc.offerTaskSharedIfEmpty(queue[idx]);
-            if (expelled)
-                queueSize = last;
-            return expelled;
-        }
-
-        private @Nullable Task<?> pollTaskLocal() {
-            int size = this.queueSize, idx;
-            if (size <= 0) {
-                size = lpQueueSize;
-                if (size <= 0)
-                    return null;
-                lpQueueSize = size-1;
-                idx         = queueBegin+LOCAL_QUEUE_CAPACITY+lpQueueHead;
-                lpQueueHead = (lpQueueHead+1)&LOCAL_QUEUE_MASK;
-            } else {
-                queueSize = size-1;
-                idx       = queueBegin + queueHead;
-                queueHead = (queueHead+1)&LOCAL_QUEUE_MASK;
-            }
-            return queue[idx];
-        }
-
-        protected boolean offerTaskLocal(Task<?> task) {
-            if (task instanceof LowPriorityTask<?>)
-                return offerTaskLocalLowPriority(task);
-            int size = queueSize;
-            if (size >= LOCAL_QUEUE_CAPACITY)
-                return false; // no free space
-            queue[queueBegin+((queueHead+queueSize++)&LOCAL_QUEUE_MASK)] = task;
-            return true; // task taken
-        }
-
-        private boolean offerTaskLocalLowPriority(Task<?> task) {
-            int size = lpQueueSize;
-            if (size >= LOCAL_QUEUE_CAPACITY)
-                return false; // no free space
-            queue[queueBegin + LOCAL_QUEUE_CAPACITY
-                             + ((queueHead+lpQueueSize++)&LOCAL_QUEUE_MASK)] = task;
-            return true; // task taken
-        }
-
-        private @Nullable Task<?> peekLocal(int i) {
-            return queue[queueBegin+(queueHead+i)&LOCAL_QUEUE_MASK];
-        }
-
         private void doYieldWorker() {
-            Task<?> task = pollTaskLocal();
-            if (task != null) {
-                svc.putTaskShared(task);
-            } else if (!Unparker.volunteer()) {
-                if (svc.plainSize <= 0 && !svc.parked.unparkAny(svc.workers))
-                    Thread.yield();
-            }
-        }
-    }
-
-    private record OnTick(EmitterService svc) implements Runnable {
-        @Override public void run() {
-            var parked  = svc.parked;
-            var workers = svc.workers;
-            for (int unparked = 1; parked.unparkAny(workers) && unparked < svc.plainSize; )
-                ++unparked;
+            if (!Unparker.volunteer() && !svc.parked.unparkAny(svc.workers))
+                Thread.yield();
         }
     }
 
@@ -349,50 +277,32 @@ public final class EmitterService extends EmitterService_3 {
         } finally { SVC_INIT_LOCK.setRelease(0); }
     }
 
-    private static final int LOCKED = -1;
-    private static final VarHandle SIZE;
-    static {
-        try {
-            SIZE = MethodHandles.lookup().findVarHandle(EmitterService.class, "plainSize", int.class);
-        } catch (NoSuchFieldException|IllegalAccessException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
+    private final EmitterService.Worker[] workers;
+    private final ParkedSet parked;
+    private final BitSet cpuAffinity;
+    private final TaskQueue queue;
 
     private EmitterService() {
-        var workerQueue = new EmitterService.Task[(workers.length+2)*LOCAL_QUEUE_WIDTH];
+        int nWorkers = ThreadPoolsPartitioner.partitionSize();
+        cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
+        workers      = new EmitterService.Worker[nWorkers];
+        parked       = new ParkedSet(nWorkers);
         var grp = new ThreadGroup("EmitterService");
         for (int i = 0; i < workers.length; i++) {
-            int workerQueueBegin = LOCAL_QUEUE_WIDTH*(i+1);
-            workers[i] = new PaddedWorker(grp, this, i, workerQueue, workerQueueBegin);
+            workers[i] = new Worker(grp, this, i);
         }
+        queue = new TaskQueue(workers);
         for (Worker w : workers)
             w.start();
-        Timestamp.onTick(0xd1454270, new OnTick(this));
     }
 
     @Override public String toString() {return "EmitterService";}
 
     @SuppressWarnings("unused") public String dump() {
         var sb = new StringBuilder().append("EmitterService-").append('\n');
-        sb.append("  shared queue: ").append(plainSize).append(" items\n");
+        sb.append("  shared queue: ").append(queue.sharedQueueSize()).append(" items\n");
         sb.append("parkedBS: ").append(parked);
-        sb.append('\n');
-        for (int i = 0; i < workers.length; i++) {
-            var w = workers[i];
-            sb.append(" worker ")
-                    .append(i).append(' ')
-                    .append(w.getState().name()).append(' ')
-                    .append(w.queueSize).append(" tasks queued: ");
-            for (int j = 0; j < w.queueSize; j++) {
-                var task = w.peekLocal(j);
-                if (task == null)
-                    break;
-                sb.append(i == 0 ? "" : ", ").append(task);
-            }
-            sb.append('\n');
-        }
-        return sb.toString();
+        return queue.dump(sb.append('\n')).toString();
     }
 
     public static void yieldWorker(Thread currentThread) {
@@ -402,95 +312,4 @@ public final class EmitterService extends EmitterService_3 {
             Thread.yield();
     }
 
-    private Task<?> pollTaskShared() {
-        int size;
-        while ((size=(int)SIZE.getAndSetAcquire(this, LOCKED)) == LOCKED)
-            onSpinWait();
-        if (size > 0) {
-            var task  = tasks[tasksHead];
-            tasksHead = (tasksHead+1)&tasksMask;
-            SIZE.setRelease(this, size-1);
-            return task;
-        } else {
-            SIZE.setRelease(this, 0);
-            return null;
-        }
-    }
-
-    private Task<?> takeTaskShared(int workerId) {
-        int size;
-        while (true) {
-            while ((size=(int)SIZE.getAndSetAcquire(this, LOCKED)) == LOCKED)
-                onSpinWait();
-            if (size > 0) { // has task in queue
-                Task<?> task = tasks[tasksHead];
-                tasksHead = size == 1 ? 0 : (tasksHead+1)&tasksMask;
-                SIZE.setRelease(this, size-1); // release lock
-                return task;
-            } else {
-                SIZE.setRelease(this, 0);
-                parked.park(workerId);
-            }
-        }
-    }
-
-    private boolean offerTaskSharedIfEmpty(Task<?> task) {
-        boolean lockedEmpty = SIZE.weakCompareAndSetAcquire(this, 0, LOCKED);
-        if (lockedEmpty) {
-            tasks[(tasksHead)&tasksMask] = task;
-            SIZE.setRelease(this, 1);
-        }
-        return lockedEmpty;
-    }
-
-
-    private void putTaskShared(Task<?> task) {
-        int size;
-        while ((size=(int)SIZE.getAndSetAcquire(this, LOCKED)) == LOCKED)
-            onSpinWait();
-        if (size == tasksMask)
-            growTasks();
-        tasks[(tasksHead+size)&tasksMask] = task;
-        SIZE.setRelease(this, size+1);
-        if (size == 0)
-            parked.unparkAnyIfAllParked(workers);
-    }
-
-    private void growTasks() {
-        tasks = Arrays.copyOf(tasks, tasks.length<<1);
-        tasksMask = tasks.length-1;
-    }
-}
-class EmitterService_0 {
-    protected final EmitterService.Worker[] workers;
-    protected final ParkedSet parked;
-    protected final BitSet cpuAffinity;
-    protected       EmitterService.Task<?>[] tasks;
-    protected       int tasksMask;
-
-    public EmitterService_0() {
-        int nWorkers = ThreadPoolsPartitioner.partitionSize();
-        cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
-        workers      = new EmitterService.Worker[nWorkers];
-        parked       = new ParkedSet(nWorkers);
-        tasksMask    = 0x1fff;
-        tasks        = new EmitterService.Task[tasksMask+1];
-    }
-}
-@SuppressWarnings("unused")
-class EmitterService_1 extends EmitterService_0 {
-    private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
-    private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
-    public EmitterService_1() {super();}
-}
-class EmitterService_2 extends EmitterService_0 {
-    @SuppressWarnings("unused") protected int plainSize;
-    protected int tasksHead;
-    public EmitterService_2() {super();}
-}
-@SuppressWarnings("unused")
-class EmitterService_3 extends EmitterService_2 {
-    private volatile long l0_0, l0_1, l0_2, l0_3, l0_4, l0_5, l0_6, l0_7;
-    private volatile long l1_0, l1_1, l1_2, l1_3, l1_4, l1_5, l1_6, l1_7;
-    public EmitterService_3() {super();}
 }
