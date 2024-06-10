@@ -617,24 +617,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
         Plan plan = SparqlParser.parse(sparql);
         var tp = (plan.type == MODIFIER ? plan.left : plan) instanceof TriplePattern t ? t : null;
         Modifier m = plan instanceof Modifier mod ? mod : null;
-        boolean convertBefore = m != null && !m.filters.isEmpty() && bt != TYPE;
         Orphan<? extends Emitter<?, ?>> em;
         if (tp != null) {
             Vars tpVars = (m != null && m.filters.isEmpty() ? m : tp).publicVars();
-            var tpEm = new TPEmitter(tp, tpVars);
-            em = tpEm;
-            if (convertBefore)
-                em = converterFromStore(bt, tpEm);
+            em = new TPEmitter(tp, tpVars);
             if (m != null) // apply any modification required (projection may be done already)
                 em = m.processed((Orphan<? extends Emitter<B,?>>)em);
         } else {
-            if (convertBefore)
-                plan = plan.left();
             em = federator.emit(maybeNative(bt), plan, rebindHint);
-            if (convertBefore) {
-                var conv = converterFromStore(bt, (Orphan<? extends Emitter<StoreBatch, ?>>)em);
-                em =  m.processed(conv);
-            }
         }
         return bt.equals(Emitter.peekBatchTypeWild(em))
                 ? (Orphan<? extends Emitter<B, ?>>) em
