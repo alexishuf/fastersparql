@@ -665,11 +665,18 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
                 ++rightRecv.bindingSeq;
                 rightRecv.upstreamEmpty = true;
                 rightRecv.listenerNotified = false;
-                st = clearFlagsAcquire(RIGHT_BINDING)&~LOCKED_MASK; // rebind complete, allow upstream.request()
+                long rightRequest = 2;
+                if ((st&(FILTER_BIND|IS_CANCEL_REQ)) == 0) {
+                    st = lock();
+                    rightRequest = this.requested;
+                    st = unlock(RIGHT_BINDING, 0);
+                } else {
+                    st = clearFlagsAcquire(RIGHT_BINDING)&~LOCKED_MASK; // rebind complete, allow upstream.request()
+                }
                 if ((st&IS_CANCEL_REQ) != 0)
                     rightRecv.upstream.cancel();
                 else
-                    rightRecv.upstream.request((st&FILTER_BIND) == 0 ? requested : 2);
+                    rightRecv.upstream.request(rightRequest);
             }
         } catch (Throwable t) {
             log.error("{}.startNextBinding() failed after seq={}", this, rightRecv.bindingSeq, t);
