@@ -145,6 +145,8 @@ public class FusekiSparqlClientFactory implements SparqlClientFactory {
 
     private static String fusekiXmx = null;
 
+    // too many comments and vars trigger extract method suggestion
+    @SuppressWarnings({"ExtractMethodRecommender", "RedundantSuppression"})
     private static String fusekiXmx() {
         if (fusekiXmx != null)
             return fusekiXmx; // compute only once, else Xmx will decrease after each call
@@ -154,11 +156,14 @@ public class FusekiSparqlClientFactory implements SparqlClientFactory {
         // the mediator should never use more than 2GiB. If it has been launched with
         // a heap limit below that, use it
         long mediatorBytes = Math.min(2048*megabytes, Runtime.getRuntime().maxMemory());
-        long minHeapPerFuseki = 128*megabytes; // avoid OutOfMemoryError
-        // Reserve 40% for off-heap memory (Fuseki uses a lot of these) and OS-managed IO caches.
-        long heapCapacityOnHost = (long)(0.6*freeBytes);
+        long jmhBytes = 128*megabytes;
+        // Reserve 50% for off-heap memory (Fuseki uses a lot) and OS-managed IO caches.
+        // Note: reserving only 40% sometimes causes the kernel OOM killer to wake up
+        // and kill all java processes, including JMH, and the bash that launched them
+        long heapCapacityOnHost = (freeBytes - mediatorBytes - jmhBytes)/2;
         // divide all heap capacity equally among all sources
-        long heapPartitionBytes = (heapCapacityOnHost - mediatorBytes)/LrbSource.all().size();
+        long heapPartitionBytes = heapCapacityOnHost/LrbSource.all().size();
+        long minHeapPerFuseki = 128*megabytes; // avoid OutOfMemoryError
         return fusekiXmx = "-Xmx"+Math.max(minHeapPerFuseki, heapPartitionBytes)/megabytes+"m";
     }
 
