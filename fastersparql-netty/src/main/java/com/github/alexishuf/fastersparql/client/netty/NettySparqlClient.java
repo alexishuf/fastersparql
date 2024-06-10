@@ -34,6 +34,8 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.sparql.results.ResultsParser;
+import com.github.alexishuf.fastersparql.util.StreamNode;
+import com.github.alexishuf.fastersparql.util.StreamNodeRegistry;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import io.netty.buffer.ByteBuf;
@@ -48,6 +50,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.Charset;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.client.netty.util.NettyRopeUtils.asByteBuf;
 import static com.github.alexishuf.fastersparql.client.util.SparqlClientHelpers.*;
@@ -155,6 +158,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public String journalName() {
             return "C.QB:"+(lastCh==null ? "null" : lastCh.id().asShortText())+'@'+id();
+        }
+
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return StreamNodeRegistry.stream(info);
         }
 
         @Override protected StringBuilder minimalLabel() {
@@ -319,6 +326,10 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
         @Override public void setChannel(Channel ch) {
             if (ch != null && ch != lastCh) throw new UnsupportedOperationException();
+        }
+
+        @Override public Stream<? extends StreamNode> upstreamNodes() {
+            return StreamNodeRegistry.stream(info);
         }
 
         @Override public String journalName() {

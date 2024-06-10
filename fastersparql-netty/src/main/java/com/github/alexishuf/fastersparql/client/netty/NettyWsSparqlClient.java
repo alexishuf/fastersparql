@@ -35,6 +35,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.StreamNodeRegistry;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
@@ -183,7 +184,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- StreamNode & ChannelBound --- --- --- */
 
         @Override public Stream<? extends StreamNode> upstreamNodes() {
-            return bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings);
+            return Stream.concat(
+                    bindQuery == null ? Stream.empty() : Stream.of(bindQuery.bindings),
+                    StreamNodeRegistry.stream(h.info)
+            );
         }
 
         @Override public String journalName() {
@@ -935,7 +939,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- StreamNode --- --- --- */
 
         @Override public Stream<? extends StreamNode> upstreamNodes() {
-            return bindQuery == null ? Stream.empty() : Stream.of(leftEmitter);
+            return Stream.concat(
+                    bindQuery == null ? Stream.empty() : Stream.of(leftEmitter),
+                    StreamNodeRegistry.stream(h.info)
+            );
         }
 
         /* --- --- --- ChannelBound --- --- --- */

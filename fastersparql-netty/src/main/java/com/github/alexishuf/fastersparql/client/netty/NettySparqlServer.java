@@ -36,6 +36,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.sparql.results.serializer.WsSerializer;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
+import com.github.alexishuf.fastersparql.util.StreamNodeRegistry;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -363,6 +364,8 @@ public class NettySparqlServer implements SparqlServer {
 
         protected Emitter<CompressedBatch, ?>
         subscribeTo(Orphan<? extends Emitter<CompressedBatch, ?>> orphan) {
+            if (SEND_INFO)
+                StreamNodeRegistry.register(journalName(), this);
             while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
             Vars emVars;
             var em = orphan.takeOwnership(this);
