@@ -280,6 +280,7 @@ class MeasureTest {
                 arguments(PlanType.FEDX, FS_WS_IT,    BatchKind.COMPRESSED),
 
                 arguments(PlanType.FEDX, TDB2,         BatchKind.COMPRESSED),
+                arguments(PlanType.FEDX, TDB2_JSON_IT, BatchKind.COMPRESSED),
                 arguments(PlanType.FEDX, TDB2_WS_EMIT, BatchKind.COMPRESSED),
 
                 arguments(PlanType.FEDX, FUSEKI_TDB2_JSON, BatchKind.COMPRESSED),
