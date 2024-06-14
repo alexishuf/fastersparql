@@ -24,6 +24,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -35,6 +36,7 @@ import static com.github.alexishuf.fastersparql.sparql.DistinctType.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
 
 public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
     private static final int BYTES = 16 + 8+4 + 8 + ExprParser.BYTES + GroupParser.BYTES;
@@ -341,6 +343,8 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
         private List<Plan> optionals, minus;
         private Values values;
         private List<Expr> filters;
+        private BitSet undefValuesCols;
+        private Vars undefValuesVars;
 
         void reset() {
             operands.clear();
@@ -385,6 +389,8 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
             plan = minus     == null ? plan : withMinus(plan);
             plan = filters   == null ? plan : withFilters(plan);
             plan = values    == null ? plan : FS.join(values, plan);
+            if (undefValuesVars != null && !plan.publicVars().containsAll(undefValuesVars))
+                plan = FS.project(plan, plan.publicVars().union(undefValuesVars));
             return plan;
         }
 
@@ -479,19 +485,54 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
             require(')');
             int n = vars.size();
             require('{');
+            BitSet undefValuesCols = this.undefValuesCols;
+            if (undefValuesCols == null)
+                this.undefValuesCols = undefValuesCols = new BitSet(n);
+            undefValuesCols.set(0, n);
             var batch = TERM.create(n).takeOwnership(this);
-            while (poll('(')) {
-                batch.beginPut();
-                for (int c = 0; c < n; c++) {
-                    skipWS();
-                    if (!poll(UNDEF_u8, UNDEF_FOLLOW))
-                        batch.putTerm(c, pTerm());
+            try {
+                while (poll('(')) {
+                    batch.beginPut();
+                    for (int c = 0; c < n; c++) {
+                        skipWS();
+                        if (!poll(UNDEF_u8, UNDEF_FOLLOW)) {
+                            undefValuesCols.clear(c);
+                            batch.putTerm(c, pTerm());
+                        }
+                    }
+                    batch.commitPut();
+                    require(')');
                 }
-                batch.commitPut();
-                require(')');
+                require('}');
+            } catch (Throwable t) {
+                Owned.safeRecycle(batch, this);
+                throw t;
             }
-            require('}');
-            return new Values(vars, batch.releaseOwnership(this));
+            Orphan<TermBatch> batchOrphan;
+            if (undefValuesCols.isEmpty()) {
+                batchOrphan = batch.releaseOwnership(this);
+            } else {
+                // FedX sets VALUES clauses with columns of UNDEFINED values when it has
+                // the intent of not binding that column (even listing the var in the outermost
+                // projection)
+                Vars undefValuesVars = this.undefValuesVars;
+                if (undefValuesVars == null)
+                    this.undefValuesVars = undefValuesVars = new Vars.Mutable(n);
+                Vars origVars = vars;
+                vars = new Vars.Mutable(n);
+                for (int c = 0; c < n; c++) {
+                    var name = origVars.get(c);
+                    if  (undefValuesCols.get(c)) undefValuesVars.add(name);
+                    else                         vars.add(name);
+                }
+                var p = requireNonNull(TERM.projector(vars, origVars)).takeOwnership(this);
+                try {
+                    batchOrphan = p.projectInPlace(batch.releaseOwnership(this));
+                } finally {
+                    Owned.safeRecycle(p, this);
+                }
+            }
+            return new Values(vars, batchOrphan);
         }
 
         private void mergeValues(Values v) {
