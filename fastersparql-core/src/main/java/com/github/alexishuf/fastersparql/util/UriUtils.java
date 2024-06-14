@@ -9,6 +9,9 @@ import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 
 public class UriUtils {
     private static final Logger log = LoggerFactory.getLogger(UriUtils.class);
@@ -216,26 +219,30 @@ public class UriUtils {
         dst.append(string, begin, end);
     }
 
-    public static void unescapeToRope(@PolyNull String string, MutableRope dst) {
+    public static void unescapeQueryValueToRope(@PolyNull String string, MutableRope dst) {
         if (string == null || string.isEmpty())
             return;
-        int begin = 0, len = string.length(), i = string.indexOf('%');
-        while (i != -1) {
+        Matcher matcher = QUERY_ESCAPE.matcher(string);
+        int begin = 0, len = string.length();
+        while (matcher.find(begin)) {
+            int i = matcher.start();
             dst.append(string, begin, i);
-            if (i + 2 < len) {
+            if (matcher.group(1) == null) {
+                dst.append(' ');
+                begin = i+1;
+            } else {
                 try {
-                    dst.append((char) Integer.parseInt(string.substring(i+1, i+3), 16));
+                    dst.append((char)Integer.parseInt(matcher.group(1), 16));
                 } catch (NumberFormatException e) {
                     log.warn("Invalid %-escape {}, will not decode", string.substring(i, i+3));
                     dst.append(string, i, i + 3);
                 }
-            } else {
-                log.debug("Truncated %-escape on string end: \"{}\"", string);
+                begin = i+3;
             }
-            i = string.indexOf('%', begin = i+3);
         }
         dst.append(string, begin, len);
     }
+    private static final Pattern QUERY_ESCAPE = Pattern.compile("\\+|%([0-9a-fA-F]{1,2})");
 
     public static @PolyNull String unescape(@PolyNull String string) {
         if (string == null)

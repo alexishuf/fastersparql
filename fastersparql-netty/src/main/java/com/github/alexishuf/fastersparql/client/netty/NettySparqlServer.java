@@ -72,7 +72,7 @@ import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.C
 import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupKeepAliveSeconds;
 import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.REC_MAX_FRAME_LEN;
 import static com.github.alexishuf.fastersparql.util.UriUtils.unescape;
-import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeToRope;
+import static com.github.alexishuf.fastersparql.util.UriUtils.unescapeQueryValueToRope;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static io.netty.buffer.Unpooled.wrappedBuffer;
 import static io.netty.handler.codec.http.HttpHeaderNames.*;
@@ -1010,7 +1010,7 @@ public class NettySparqlServer implements SparqlServer {
             if (m.find()) {
                 String escaped = m.group(1);
                 MutableRope unescaped = queryRope(escaped.length());
-                unescapeToRope(escaped, unescaped);
+                unescapeQueryValueToRope(escaped, unescaped);
                 handleQuery(unescaped);
             } else
                 sendRequestError(BAD_REQUEST, MISSING_QUERY_GET_MSG);
