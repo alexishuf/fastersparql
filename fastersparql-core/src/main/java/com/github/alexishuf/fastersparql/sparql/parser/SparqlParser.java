@@ -426,9 +426,11 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
         private static final byte[] FILTER_u8 = "FILTER".getBytes(UTF_8);
         private static final byte[] MINUS_u8 = "MINUS".getBytes(UTF_8);
         private static final byte[] VALUES_u8 = "VALUES".getBytes(UTF_8);
+        private static final byte[] UNDEF_u8 = "UNDEF".getBytes(UTF_8);
         private static final int[] GROUP_FOLLOW = alphabet("{", WS);
         private static final int[] VALUES_FOLLOW = alphabet("({", WS);
         private static final int[] FILTER_FOLLOW = alphabet("(", WS);
+        private static final int[] UNDEF_FOLLOW = alphabet(")", WS);
         private boolean readModifiers() {
             int startPos = pos;
             for (boolean has = true; has; ) {
@@ -480,8 +482,11 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
             var batch = TERM.create(n).takeOwnership(this);
             while (poll('(')) {
                 batch.beginPut();
-                for (int c = 0; c < n; c++)
-                    batch.putTerm(c, pTerm());
+                for (int c = 0; c < n; c++) {
+                    skipWS();
+                    if (!poll(UNDEF_u8, UNDEF_FOLLOW))
+                        batch.putTerm(c, pTerm());
+                }
                 batch.commitPut();
                 require(')');
             }
