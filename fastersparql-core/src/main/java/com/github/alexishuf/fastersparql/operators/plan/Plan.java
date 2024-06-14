@@ -271,6 +271,16 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
                 && (m.distinct != null || (m.limit == 1 && m.offset == 0));
     }
 
+    public boolean hasValues() {
+        if (type == Operator.VALUES)
+            return true;
+        for (int i = 0, n = opCount(); i < n; i++) {
+            if (op(i).hasValues())
+                return true;
+        }
+        return false;
+    }
+
     /** This algebra does not support graph queries */
     @Override public boolean isGraph() { return false; }
 

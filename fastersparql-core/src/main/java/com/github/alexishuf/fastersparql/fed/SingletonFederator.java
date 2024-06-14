@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.IdBatchType;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -41,8 +42,21 @@ public class SingletonFederator extends Optimizer {
         plan = optimize(plan, Vars.EMPTY);
         plan = bind2client(plan, QueryMode.ITERATOR);
         plan = FS.project(plan, pubVars);
-        BatchType<?> preferred = preferredBatchType == null ? type : preferredBatchType;
-        return type.convert(plan.execute(preferred));
+        return type.convert(plan.execute(chooseBatchType(type, plan)));
+    }
+
+    private <B extends Batch<B>> @Nullable BatchType<?>
+    chooseBatchType(BatchType<B> type, Plan plan) {
+        BatchType<?> preferred;
+        if (preferredBatchType == null) {
+            preferred = type;
+        } else if (preferredBatchType instanceof IdBatchType<?> && !(type instanceof IdBatchType<?>)
+                && plan.hasValues()) {
+            preferred = type;
+        } else {
+            preferred = preferredBatchType;
+        }
+        return preferred;
     }
 
     public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
@@ -52,7 +66,7 @@ public class SingletonFederator extends Optimizer {
         plan = optimize(plan, rebindHint);
         plan = bind2client(plan, QueryMode.EMIT);
         plan = FS.project(plan, pubVars);
-        BatchType<?> preferred = preferredBatchType == null ? type : preferredBatchType;
+        BatchType<?> preferred = chooseBatchType(type, plan);
         var em = plan.emit(preferred, rebindHint);
         //noinspection unchecked
         return preferred == type ? (Orphan<? extends Emitter<B,?>>)em : convert(type, em);

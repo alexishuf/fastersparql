@@ -234,8 +234,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         return t;
     }
 
-    private static BatchType<?> maybeNative(BatchType<?> requested) {
-        return PREFER_NATIVE ? TYPE : requested;
+    private static BatchType<?> maybeNative(BatchType<?> requested, Plan plan) {
+        return PREFER_NATIVE && !plan.hasValues() ? TYPE : requested;
     }
 
     private static void appendToSimpleLabel(StringBuilder sb, SparqlEndpoint endpoint,
@@ -624,7 +624,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (m != null) // apply any modification required (projection may be done already)
                 em = m.processed((Orphan<? extends Emitter<B,?>>)em);
         } else {
-            em = federator.emit(maybeNative(bt), plan, rebindHint);
+            em = federator.emit(maybeNative(bt, plan), plan, rebindHint);
         }
         return bt.equals(Emitter.peekBatchTypeWild(em))
                 ? (Orphan<? extends Emitter<B, ?>>) em
