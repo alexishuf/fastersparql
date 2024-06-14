@@ -115,14 +115,14 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
     @Override protected <B extends Batch<B>> BIt<B> doQuery(BatchType<B> bt, SparqlQuery sparql) {
         var plan = SparqlParser.parse(sparql);
-        BIt<HdtBatch> hdtIt;
+        BIt<?> hdtIt;
         if (plan instanceof Modifier m && m.left instanceof TriplePattern tp) {
             Vars vars = m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
             hdtIt = m.executeFor(queryTP(vars, tp), null, false);
         } else if (plan instanceof TriplePattern tp) {
             hdtIt = queryTP(tp.publicVars(), tp);
         } else {
-            hdtIt = federator.execute(HDT, plan);
+            hdtIt = federator.execute(bt, plan);
         }
         return bt.convert(hdtIt);
     }
@@ -130,17 +130,14 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     @Override protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint) {
         var plan = SparqlParser.parse(sparql);
-        Orphan<? extends Emitter<HdtBatch, ?>> hdtEm;
         Modifier m = plan instanceof Modifier mod ? mod : null;
         if ((m == null ? plan : m.left) instanceof TriplePattern tp) {
             Vars vars = (m != null && m.filters.isEmpty() ? m : tp).publicVars();
-            hdtEm = new TPEmitter(tp, vars);
-            if (m != null)
-                hdtEm = m.processed(hdtEm);
+            var hdtEm = new TPEmitter(tp, vars);
+            return bt.convert(m == null ? hdtEm : m.processed(hdtEm));
         } else {
-            hdtEm = federator.emit(HDT, plan, rebindHint);
+            return federator.emit(bt, plan, rebindHint);
         }
-        return bt.convert(hdtEm);
     }
 
     private BIt<HdtBatch> queryTP(Vars vars, TriplePattern tp) {

@@ -125,7 +125,7 @@ class MeasureTest {
                         FlowModel flowModel) throws IOException {
         int nReps = queries.startsWith("S") ? 4 : queries.startsWith("C") ? 2 : 1;
         boolean isS2 = queries.equals("S2");
-        if (planType == PlanType.UNION) {
+        if (planType == PlanType.UNION && !sourceKind.isFedX()) {
             File file = new File(dataDir, LrbSource.LargeRDFBench_all.filename(sourceKind));
             if (!file.exists()) {
                 log.warn("Missing {}: skipping test of whole query against union source", file);
@@ -291,6 +291,16 @@ class MeasureTest {
 
                 arguments(PlanType.FEDX, COMUNICA_HDT_TSV, BatchKind.COMPRESSED),
                 arguments(PlanType.UNION, COMUNICA_FED_TSV, BatchKind.COMPRESSED),
+
+                arguments(PlanType.UNION, FEDX_TDB2_JSON_IT, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, FEDX_TDB2_JSON_EMIT, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, FEDX_FS_JSON_EMIT, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, FEDX_FS_JSON_IT, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, FEDX_HDT_JSON_IT, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, FEDX_HDT_JSON_EMIT, BatchKind.COMPRESSED),
+                arguments(PlanType.UNION, FEDX_FS_JSON_EMIT, BatchKind.TERM),
+                arguments(PlanType.UNION, FEDX_TDB2_JSON_IT, BatchKind.TERM),
+                arguments(PlanType.UNION, FEDX_VIRTUOSO_JSON, BatchKind.COMPRESSED),
 
                 arguments(PlanType.UNION, TDB2,     BatchKind.COMPRESSED),
                 arguments(PlanType.UNION, TDB2,     BatchKind.TERM),

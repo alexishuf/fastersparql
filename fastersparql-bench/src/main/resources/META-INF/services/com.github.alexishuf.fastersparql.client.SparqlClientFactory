@@ -1,3 +1,4 @@
 com.github.alexishuf.fastersparql.lrb.sources.ComunicaSparqlClientFactory
 com.github.alexishuf.fastersparql.lrb.sources.VirtuosoSparqlClientFactory
 com.github.alexishuf.fastersparql.lrb.sources.FusekiSparqlClientFactory
+com.github.alexishuf.fastersparql.lrb.sources.FedXSparqlClientFactory

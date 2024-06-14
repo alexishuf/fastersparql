@@ -440,9 +440,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
             case TRIPLE -> p;
             case UNION -> p.left instanceof TriplePattern tp && p.right == null ? tp : null;
             case JOIN -> {
-                Plan r = p.right;
+                Plan l = p.left, r = p.right;
                 if (r == null)
-                    yield p.left instanceof TriplePattern tp ? tp : null;
+                    yield l instanceof TriplePattern tp ? tp : null;
+                if (l == null || l.type == VALUES)
+                    yield null;
                 Plan rJoin = p;
                 int rIdx = 1, n = p.opCount();
                 if (n == 2) {

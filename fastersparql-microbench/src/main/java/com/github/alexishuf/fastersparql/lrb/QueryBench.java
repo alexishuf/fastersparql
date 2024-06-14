@@ -266,9 +266,11 @@ public class QueryBench {
         Set<LrbSource> sources;
         if (unionSource) {
             sources = Set.of(LrbSource.LargeRDFBench_all);
-            String filename = LrbSource.LargeRDFBench_all.filename(srcKind);
-            if (!Files.exists(dataDir.resolve(filename)))
-                throw new IOException("Missing "+filename+" from "+dataDir);
+            if (!srcKind.isFedX()) {
+                String filename = LrbSource.LargeRDFBench_all.filename(srcKind);
+                if (!Files.exists(dataDir.resolve(filename)))
+                    throw new IOException("Missing " + filename + " from " + dataDir);
+            }
         } else {
             sources = LrbSource.all();
             String missingSources = sources.stream()

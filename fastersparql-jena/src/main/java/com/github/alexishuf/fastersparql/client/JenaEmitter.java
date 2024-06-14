@@ -98,11 +98,16 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
             if (exec == null) {
                 this.exec = exec = execFac.query(currentQuery).build();
                 if (currentQuery.isAskType()) {
-                    if (exec.ask()) {
-                        batch.beginPut();
-                        batch.commitPut();
-                    }
-                    exec.close();
+                    try {
+                        if (exec.ask()) {
+                            batch.beginPut();
+                            batch.commitPut();
+                            var orphan = batch.releaseOwnership(this);
+                            batch = null;
+                            deliver(orphan);
+                        }
+                    } finally { exec.close(); }
+                    batch = null;
                     return COMPLETED;
                 } else {
                     rs = exec.select();
@@ -120,14 +125,17 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
                 if ((rowsLimit&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline)
                     break;
             }
-            if (batch.rows > 0)
-                deliver(batch.releaseOwnership(this));
-            else
-                Batch.safeRecycle(batch, this);
+            if (batch.rows > 0) {
+                var orphan = batch.releaseOwnership(this);
+                batch = null;
+                deliver(orphan);
+            }
             return retry ? state : COMPLETED;
         } finally {
             transactional.abort();
             transactional.end();
+            Batch.safeRecycle(batch, this);
         }
     }
+
 }

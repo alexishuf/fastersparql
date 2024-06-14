@@ -39,7 +39,15 @@ public enum SourceKind {
     COMUNICA_FED_JSON,
     COMUNICA_HDT_TSV,
     COMUNICA_HDT_JSON,
-    VIRTUOSO_JSON; // virtuoso TSV outputs invalid RDF
+    VIRTUOSO_JSON, // virtuoso TSV outputs invalid RDF
+    FEDX_FS_JSON_EMIT,
+    FEDX_FS_JSON_IT,
+    FEDX_HDT_JSON_EMIT,
+    FEDX_HDT_JSON_IT,
+    FEDX_TDB2_JSON_EMIT,
+    FEDX_TDB2_JSON_IT,
+    FEDX_FUSEKI_TDB2_JSON,
+    FEDX_VIRTUOSO_JSON;
 
     private static final long IS_HDT;
     private static final long IS_FS;
@@ -50,27 +58,31 @@ public enum SourceKind {
     private static final long IS_JSON;
     private static final long IS_WS;
     private static final long IS_PROCESS;
+    private static final long IS_FEDX;
     private static final long IS_FS_SERVER;
     private static final long IS_SERVER;
 
     static {
-        long hdt = 0, fs = 0, tdb = 0, emit = 0, it = 0, tsv = 0, json = 0, ws = 0, proc = 0;
+        long hdt = 0, fs = 0, tdb = 0, fedx = 0;
+        long emit = 0, it = 0, tsv = 0, json = 0, ws = 0, proc = 0;
         for (SourceKind kind : values()) {
             String name = kind.name();
             int ordinal = kind.ordinal();
-            if (name.startsWith("COMUNICA_"))   proc |= 1 << ordinal;
-            if (name.startsWith("VIRTUOSO_"))   proc |= 1 << ordinal;
-            if (name.startsWith("FUSEKI_TDB2")) proc |= 1 << ordinal;
-            if (name.contains("HDT_"))          hdt  |= 1 << ordinal;
-            if (name.startsWith("FS_"))         fs   |= 1 << ordinal;
-            if (name.contains("TDB2"))          tdb  |= 1 << ordinal;
-            if (name.endsWith("_IT"))           it   |= 1 << ordinal;
-            if (name.endsWith("_EMIT"))         emit |= 1 << ordinal;
-            if (name.contains("_TSV"))          tsv  |= 1 << ordinal;
-            if (name.contains("_JSON"))         json |= 1 << ordinal;
-            if (name.contains("_WS"))           ws   |= 1 << ordinal;
+            if (name.startsWith("COMUNICA_"))   proc |= 1L << ordinal;
+            if (name.startsWith("VIRTUOSO_"))   proc |= 1L << ordinal;
+            if (name.startsWith("FUSEKI_TDB2")) proc |= 1L << ordinal;
+            if (name.startsWith("FEDX"))        fedx |= 1L << ordinal;
+            if (name.contains("HDT_"))          hdt  |= 1L << ordinal;
+            if (name.startsWith("FS_"))         fs   |= 1L << ordinal;
+            if (name.contains("TDB2"))          tdb  |= 1L << ordinal;
+            if (name.endsWith("_IT"))           it   |= 1L << ordinal;
+            if (name.endsWith("_EMIT"))         emit |= 1L << ordinal;
+            if (name.contains("_TSV"))          tsv  |= 1L << ordinal;
+            if (name.contains("_JSON"))         json |= 1L << ordinal;
+            if (name.contains("_WS"))           ws   |= 1L << ordinal;
         }
         IS_PROCESS     = proc;
+        IS_FEDX        = fedx;
         IS_HDT         = hdt;
         IS_FS          = fs;
         IS_TDB2        = tdb;
@@ -83,15 +95,16 @@ public enum SourceKind {
         IS_SERVER      = emit|it|proc;
     }
 
-    public boolean      isHdt() { return (IS_HDT      &(1<<ordinal())) != 0; }
-    public boolean  isFsStore() { return (IS_FS       &(1<<ordinal())) != 0; }
-    public boolean     isTdb2() { return (IS_TDB2     &(1<<ordinal())) != 0; }
-    public boolean   isServer() { return (IS_SERVER   &(1<<ordinal())) != 0; }
-    public boolean isFsServer() { return (IS_FS_SERVER&(1<<ordinal())) != 0; }
-    public boolean      isTsv() { return (IS_TSV      &(1<<ordinal())) != 0; }
-    public boolean     isJson() { return (IS_JSON     &(1<<ordinal())) != 0; }
-    public boolean       isWs() { return (IS_WS       &(1<<ordinal())) != 0; }
-    public boolean  isProcess() { return (IS_PROCESS  &(1<<ordinal())) != 0; }
+    public boolean      isHdt() { return (IS_HDT      &(1L<<ordinal())) != 0; }
+    public boolean  isFsStore() { return (IS_FS       &(1L<<ordinal())) != 0; }
+    public boolean     isTdb2() { return (IS_TDB2     &(1L<<ordinal())) != 0; }
+    public boolean   isServer() { return (IS_SERVER   &(1L<<ordinal())) != 0; }
+    public boolean isFsServer() { return (IS_FS_SERVER&(1L<<ordinal())) != 0; }
+    public boolean      isTsv() { return (IS_TSV      &(1L<<ordinal())) != 0; }
+    public boolean     isJson() { return (IS_JSON     &(1L<<ordinal())) != 0; }
+    public boolean       isWs() { return (IS_WS       &(1L<<ordinal())) != 0; }
+    public boolean  isProcess() { return (IS_PROCESS  &(1L<<ordinal())) != 0; }
+    public boolean     isFedX() { return (IS_FEDX     &(1L<<ordinal())) != 0; }
 
     public Optional<FlowModel> serverFlowModel() {
         int mask = 1 << ordinal();
@@ -122,6 +135,15 @@ public enum SourceKind {
     public SourceHandle createHandle(LrbSource source, File dataDir) throws IOException {
         if (dataDir == null)
             throw new IOException("Cannot open files with null dataDir.");
+        if (isFedX()) {
+            if (source != LrbSource.LargeRDFBench_all)
+                throw new UnsupportedOptionsException("FedX sources only allow the union LrbSource.LargeRDFBench_all");
+            String uri = "process://fedx/%s/?dir=%s".formatted(
+                    name().replace("FEDX_", ""),
+                    dataDir.getAbsolutePath()
+            );
+            return new SourceHandle(uri, source, this);
+        }
         File file = new File(dataDir, source.filename(this));
         if (!file.exists())
             throw new IOException("File "+file+" not found");

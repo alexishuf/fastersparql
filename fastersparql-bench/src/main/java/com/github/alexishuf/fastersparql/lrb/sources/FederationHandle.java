@@ -108,11 +108,13 @@ public class FederationHandle implements SafeCloseable {
             File dataDir = requireDataDir().getAbsoluteFile();
             for (LrbSource source : subset) {
                 log.debug("Creating SourceHandle for {} with kind={}", source, srcKind);
-                File hdt = new File(requireDataDir(), source.filename(srcKind));
-                if (!hdt.exists())
-                    throw new IOException("File " + hdt + " does not exist");
-                if (hdt.isFile() && hdt.length() == 0)
-                    throw new IOException("File " + hdt + " is empty");
+                if (!srcKind.isFedX()) {
+                    File hdt = new File(requireDataDir(), source.filename(srcKind));
+                    if (!hdt.exists())
+                        throw new IOException("File " + hdt + " does not exist");
+                    if (hdt.isFile() && hdt.length() == 0)
+                        throw new IOException("File " + hdt + " is empty");
+                }
                 var h = srcKind.createHandle(source, dataDir);
                 handles.add(h);
             }

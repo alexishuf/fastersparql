@@ -9,6 +9,8 @@
 
     <logger name="com.github.alexishuf.fastersparql" level="DEBUG"/>
     <logger name="com.github.alexishuf.fastersparql.org" level="INFO"/>
+    <logger name="org.eclipse.rdf4j.federated" level="INFO"/>
+    <logger name="QueryLog" level="INFO"/>
 
     <root level="WARN">
         <appender-ref ref="STDOUT" />
