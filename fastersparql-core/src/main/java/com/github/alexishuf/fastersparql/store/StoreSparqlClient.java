@@ -2530,14 +2530,21 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     B prb = rb;
                     if (!rEnd && rightFilter != null) {
                         if (preFilterMerger != null) {
-                            var dst = Owned.releaseOwnership(fb, this);
-                            fb = null;
+                            Orphan<B> dst;
+                            if (fb == null) {
+                                dst = null;
+                            } else {
+                                dst = fb.clear(preFilterMerger.vars.size()).releaseOwnership(this);
+                                fb = null;
+                            }
                             prb = fb = preFilterMerger.merge(dst, lb, lr, rb).takeOwnership(this);
                         }
                         var prbOrphan = prb.releaseOwnership(this);
                         prb = takeOwnership(rightFilter.filterInPlace(prbOrphan), this);
                         if (preFilterMerger == null)
-                            rb = prb; // filterInPlace() may have recycled rb
+                            rb = prb; // filterInPlace() may have recycled procRB
+                        else
+                            fb = prb; // filterInPlace() may have recycled procRB
                         if (prb.rows == 0) {
                             unlock();
                             locked = false;
