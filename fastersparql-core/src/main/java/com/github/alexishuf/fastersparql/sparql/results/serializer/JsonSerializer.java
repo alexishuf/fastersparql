@@ -45,7 +45,7 @@ public abstract sealed class JsonSerializer extends ResultsSerializer<JsonSerial
     private static final byte[] COL_LANG     = "\", \"xml:lang\":\"".getBytes(UTF_8);
     private static final byte[] COL_DATATYPE = "\", \"datatype\":\"".getBytes(UTF_8);
     private static final byte[] COL_LIT   = "\":{\"type\":\"literal\", \"value\":".getBytes(UTF_8);
-    private static final byte[] COL_IRI   = "\":{\"type\":\"iri\", \"value\":\"".getBytes(UTF_8);
+    private static final byte[] COL_IRI   = "\":{\"type\":\"uri\", \"value\":\"".getBytes(UTF_8);
     private static final byte[] COL_BLANK = "\":{\"type\":\"bnode\", \"value\":\"".getBytes(UTF_8);
     private static final byte[] COL_END = "\"}".getBytes(UTF_8);
     private static final byte[] COL_SEP = ",\n ".getBytes(UTF_8);
