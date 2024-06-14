@@ -323,7 +323,7 @@ public abstract sealed class ExprParser extends AbstractOwned<ExprParser> {
                 byte next = in.get(pos);
                 switch (c) {
                     case '<' -> { // could also be an <IRI>, try that first
-                        if (termParser.parse(in, pos, len) == TermParser.Result.NT) {
+                        if (termParser.parse(in, pos-1, len) == TermParser.Result.NT) {
                             pos = termParser.termEnd();
                             term = termParser.asTerm();
                             return;
