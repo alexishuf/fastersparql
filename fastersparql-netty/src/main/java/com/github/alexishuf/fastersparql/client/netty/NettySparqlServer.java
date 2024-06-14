@@ -1067,7 +1067,7 @@ public class NettySparqlServer implements SparqlServer {
             }
             try {
                 Vars emVars = Emitter.peekVars(em);
-                serializer.init(emVars, emVars, false);
+                serializer.init(emVars, emVars, plan.isAsk());
                 serializer.serializeHeader(bbSink.touch());
                 var headers = new DefaultHttpContent(bbSink.take());
                 var response = new DefaultHttpResponse(HTTP_1_1, OK);
