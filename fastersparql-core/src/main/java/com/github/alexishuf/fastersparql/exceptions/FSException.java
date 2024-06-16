@@ -2,12 +2,17 @@ package com.github.alexishuf.fastersparql.exceptions;
 
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class FSException extends RuntimeException {
+    private static final Logger log = LoggerFactory.getLogger(FSException.class);
     private @Nullable List<String> ids = null;
+    private final ReentrantLock lock = new ReentrantLock();
 
     public static FSException wrap(SparqlEndpoint endpoint, Throwable t) {
         return switch (t) {
@@ -72,20 +77,23 @@ public class FSException extends RuntimeException {
      * @param value a value to display in {@code name+'='+value}.
      */
     public void id(String name, @Nullable String value) {
-        if (ids == null) ids = new ArrayList<>();
-        int i = 0, n = ids.size(), nameLen = name.length();
-        for (; i < n; ++i) {
-            var old = ids.get(i);
-            if (old.startsWith(name) && old.length() > nameLen && old.charAt(nameLen) == '=')
-                break;
-        }
-        if (value == null) {
-            if (i < n) ids.remove(i);
-        } else {
-            var display = name+'='+value;
-            if (i < n) ids.set(i, display);
-            else       ids.add(display);
-        }
+        lock.lock();
+        try {
+            if (ids == null) ids = new ArrayList<>();
+            int i = 0, n = ids.size(), nameLen = name.length();
+            for (; i < n; ++i) {
+                var old = ids.get(i);
+                if (old.startsWith(name) && old.length() > nameLen && old.charAt(nameLen) == '=')
+                    break;
+            }
+            if (value == null) {
+                if (i < n) ids.remove(i);
+            } else {
+                var display = name+'='+value;
+                if (i < n) ids.set(i, display);
+                else       ids.add(display);
+            }
+        } finally { lock.unlock(); }
     }
 
     /**
