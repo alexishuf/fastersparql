@@ -56,6 +56,7 @@ import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
 import static java.lang.String.format;
 import static java.lang.System.arraycopy;
+import static java.util.Objects.requireNonNull;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
 public class HdtSparqlClient extends AbstractSparqlClient implements CardinalityEstimatorProvider {
@@ -296,9 +297,26 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
                     int[] skelCol2InCol = this.skelCol2InCol;
                     if (skelCol2InCol != null) {
                         for (int c = 0; c < cols; c++) {
-                            int bc = skelCol2InCol[c];
-                            rowSkel[c] = bc < 0 || !binding.get(bc, view) ? NOT_FOUND
-                                       : IdAccess.encode(dictId, dict, view);
+                            BatchBinding nodeBinding = binding;
+                            Batch<?> node = requireNonNull(nodeBinding.batch);
+                            int bc = skelCol2InCol[c], nodeCols;
+                            while (bc >= (nodeCols=node.cols)) {
+                                bc -= nodeCols;
+                                nodeBinding = requireNonNull(nodeBinding.remainder);
+                                node = requireNonNull(nodeBinding.batch);
+                            }
+                            short row = nodeBinding.row;
+                            if (bc >= 0 && node instanceof HdtBatch hb) {
+                                long id = hb.arr[row*nodeCols + bc];
+                                if (id == NOT_FOUND || dictId(id) == dictId) {
+                                    rowSkel[c] = id;
+                                    node = null;
+                                }
+                            }
+                            if (node != null) {
+                                rowSkel[c] = bc < 0 || !node.getView(row, bc, view) ? NOT_FOUND
+                                        : IdAccess.encode(dictId, dict, view);
+                            }
                         }
                     }
                 }
@@ -315,8 +333,20 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
         private long findId(int inCol, BatchBinding binding, TripleComponentRole role,
                             long fallback) {
-            if (inCol >= 0 && binding.get(inCol, view))
-                return plain(dict, view, role);
+            if (inCol >= 0) {
+                Batch<?> batch = requireNonNull(binding.batch);
+                int cols, row;
+                while (inCol >= (cols=batch.cols)) {
+                    inCol -= cols;
+                    binding = requireNonNull(binding.remainder);
+                    batch = requireNonNull(binding.batch);
+                }
+                row = binding.row;
+                if (batch instanceof HdtBatch hb)
+                    return plainIn(dict, role, hb.arr[row * cols + inCol]);
+                else if (batch.getView(row, inCol, view))
+                    return plain(dict, view, role);
+            }
             return fallback;
         }
 
