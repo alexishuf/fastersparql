@@ -316,7 +316,16 @@ public class QueryBench {
             if (!missingPlans.isEmpty())
                 throw new IllegalArgumentException("No plan for "+missingPlans);
         } else {
-            plans = queryList.stream().map(q -> fedHandle.federation.plan(q.parsed())).toList();
+            plans = queryList.stream().map(q -> {
+                Plan parsed = q.parsed();
+                if (unionSource && srcKind.name().startsWith("COMUNICA") && q == QueryName.C4) {
+                    // Comunica fails with a projection that includes an unassigned var
+                    var safe = Vars.fromSet(parsed.publicVars());
+                    safe.remove(FinalSegmentRope.asFinal("locationMap"));
+                    parsed = FS.project(parsed, safe);
+                }
+                return fedHandle.federation.plan(parsed);
+            }).toList();
         }
         for (Plan plan : plans)
             plan.attach(metricsConsumer);
