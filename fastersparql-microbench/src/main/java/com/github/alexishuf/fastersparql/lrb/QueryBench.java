@@ -22,7 +22,6 @@ import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
@@ -307,7 +306,15 @@ public class QueryBench {
         FSProperties.refresh();
         journal("trialSetup: builtinPlans=", builtinPlans ? 1 : 0);
         if (builtinPlans || unionSource) {
-            var reg = unionSource ? PlanRegistry.unionSource() : PlanRegistry.parseBuiltin();
+            PlanRegistry reg;
+            if (unionSource) {
+                var name2sparql = srcKind.isComunica()
+                                ? PlanRegistry.NO_NULL_VAR_PROJECTION
+                                : PlanRegistry.RAW_SPARQL;
+                reg = PlanRegistry.unionSource(name2sparql);
+            } else {
+                reg = PlanRegistry.parseBuiltin();
+            }
             reg.resolve(fedHandle.federation);
             plans = queryList.stream().map(reg::createPlan).toList();
             String missingPlans = IntStream.range(0, plans.size())
@@ -318,12 +325,6 @@ public class QueryBench {
         } else {
             plans = queryList.stream().map(q -> {
                 Plan parsed = q.parsed();
-                if (unionSource && srcKind.name().startsWith("COMUNICA") && q == QueryName.C4) {
-                    // Comunica fails with a projection that includes an unassigned var
-                    var safe = Vars.fromSet(parsed.publicVars());
-                    safe.remove(FinalSegmentRope.asFinal("locationMap"));
-                    parsed = FS.project(parsed, safe);
-                }
                 return fedHandle.federation.plan(parsed);
             }).toList();
         }

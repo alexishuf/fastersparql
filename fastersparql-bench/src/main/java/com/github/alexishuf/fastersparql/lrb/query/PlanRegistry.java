@@ -17,6 +17,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,20 +35,28 @@ public final class PlanRegistry {
      * Create a {@link PlanRegistry} where all queries are mapped to a single {@code QUERY} node
      * that sends the whole benchmark SPARQL query to {@code http://union/sparql}.
      */
-    public static PlanRegistry unionSource() {
+    public static PlanRegistry unionSource(Function<QueryName, String> queryName2Sparql) {
         Map<String, Node> map = new HashMap<>();
         for (QueryName q : QueryName.values()) {
             Node n = new Node();
             n.operator = "QUERY";
             n.operands = List.of();
             n.params = new HashMap<>(Map.of(
-                    "query", q.opaque().sparql.toString(),
+                    "query", queryName2Sparql.apply(q),
                     "endpoint", "http://largerdfbench-all/sparql"
             ));
             map.put(q.name(), n);
         }
         return new PlanRegistry(map);
     }
+
+    public static final Function<QueryName, String> RAW_SPARQL
+            = name -> name.opaque().sparql.toString();
+    public static final Function<QueryName, String> NO_NULL_VAR_PROJECTION
+            = (name) -> {
+        String str = name.opaque().sparql.toString();
+        return name == QueryName.C4 ? str.replace("?locationMap ", "") : str;
+    };
 
     public static PlanRegistry parse(File file) throws IOException {
         try (FileInputStream is = new FileInputStream(file)) {

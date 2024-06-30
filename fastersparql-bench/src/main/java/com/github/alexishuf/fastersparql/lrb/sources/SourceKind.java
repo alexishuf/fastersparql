@@ -52,6 +52,7 @@ public enum SourceKind {
     private static final long IS_HDT;
     private static final long IS_FS;
     private static final long IS_TDB2;
+    private static final long IS_COMUNICA;
     private static final long IS_EMIT_SERVER;
     private static final long IS_IT_SERVER;
     private static final long IS_TSV;
@@ -63,11 +64,12 @@ public enum SourceKind {
     private static final long IS_SERVER;
 
     static {
-        long hdt = 0, fs = 0, tdb = 0, fedx = 0;
+        long hdt = 0, fs = 0, tdb = 0, fedx = 0, comu = 0;
         long emit = 0, it = 0, tsv = 0, json = 0, ws = 0, proc = 0;
         for (SourceKind kind : values()) {
             String name = kind.name();
             int ordinal = kind.ordinal();
+            if (name.startsWith("COMUNICA_"))   comu |= 1L << ordinal;
             if (name.startsWith("COMUNICA_"))   proc |= 1L << ordinal;
             if (name.startsWith("VIRTUOSO_"))   proc |= 1L << ordinal;
             if (name.startsWith("FUSEKI_TDB2")) proc |= 1L << ordinal;
@@ -86,6 +88,7 @@ public enum SourceKind {
         IS_HDT         = hdt;
         IS_FS          = fs;
         IS_TDB2        = tdb;
+        IS_COMUNICA    = comu;
         IS_EMIT_SERVER = emit;
         IS_IT_SERVER   = it;
         IS_TSV         = tsv;
@@ -97,6 +100,7 @@ public enum SourceKind {
 
     public boolean      isHdt() { return (IS_HDT      &(1L<<ordinal())) != 0; }
     public boolean  isFsStore() { return (IS_FS       &(1L<<ordinal())) != 0; }
+    public boolean isComunica() { return (IS_COMUNICA &(1L<<ordinal())) != 0; }
     public boolean     isTdb2() { return (IS_TDB2     &(1L<<ordinal())) != 0; }
     public boolean   isServer() { return (IS_SERVER   &(1L<<ordinal())) != 0; }
     public boolean isFsServer() { return (IS_FS_SERVER&(1L<<ordinal())) != 0; }

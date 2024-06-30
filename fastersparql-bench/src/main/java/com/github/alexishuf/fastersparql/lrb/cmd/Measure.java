@@ -77,7 +77,10 @@ public class Measure implements Callable<Void>{
 
         Set<LrbSource> sources = srcOp.lrbSources();
         if (sources.size() == 1 && sources.iterator().next().equals(LrbSource.LargeRDFBench_all)) {
-            plans = PlanRegistry.unionSource();
+            var name2sparql = srcOp.srcKind.isComunica()
+                    ? PlanRegistry.NO_NULL_VAR_PROJECTION
+                    : PlanRegistry.RAW_SPARQL;
+            plans = PlanRegistry.unionSource(name2sparql);
         } else if (msrOp.builtinPlansJson) {
             plans = PlanRegistry.parseBuiltin();
         }
