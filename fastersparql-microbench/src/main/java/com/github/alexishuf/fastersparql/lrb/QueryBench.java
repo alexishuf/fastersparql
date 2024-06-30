@@ -22,6 +22,7 @@ import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.lrb.sources.SelectorKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
 import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
@@ -253,6 +254,9 @@ public class QueryBench {
                 || srcKind.serverFlowModel().equals(Optional.of(FlowModel.EMIT))) {
             ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
         }
+        // comunica enforces its own timeout
+        setProperty("fastersparql.comunica.timeout-secs",
+                    String.valueOf(params.getTimeout().convertTo(SECONDS)));
 //        SegmentRope.ALT = alt;
         setProperty(OP_CROSS_DEDUP, String.valueOf(crossSourceDedup));
         setProperty(OP_WEAKEN_DISTINCT, Boolean.toString(weakenDistinct));

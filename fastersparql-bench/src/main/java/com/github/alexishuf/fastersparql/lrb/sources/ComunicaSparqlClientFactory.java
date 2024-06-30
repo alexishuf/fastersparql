@@ -69,6 +69,8 @@ public class ComunicaSparqlClientFactory implements SparqlClientFactory {
         int port = ServerProcess.freePort(endpoint);
         cmdLine.add("--port");
         cmdLine.add(String.valueOf(port));
+        cmdLine.add("--timeout");
+        cmdLine.add(String.valueOf(comunicaQueryTimeoutSecs()));
         String name;
         if (path.getFileName().toString().endsWith(".list")) {
             name = "comunica-fed";
@@ -107,5 +109,22 @@ public class ComunicaSparqlClientFactory implements SparqlClientFactory {
         } catch (IOException e) {
             throw new FSException("Could not read "+listFile+": "+e.getMessage());
         }
+    }
+
+    private static final String TIMEOUT_PROP = "fastersparql.comunica.timeout-secs";
+    private static final int DEF_TIMEOUT = 60;
+    private static int comunicaQueryTimeoutSecs() {
+        int secs = DEF_TIMEOUT;
+        String str = System.getProperty(TIMEOUT_PROP);
+        if (str != null) str = str.trim();
+        try {
+            if (str != null && !str.isEmpty() && (secs=Integer.parseInt(str)) > 0)
+                return secs; // parsed a valid value
+            secs = DEF_TIMEOUT;
+        } catch (NumberFormatException e) {
+            log.error("Failed to parse value of {} property: {}", TIMEOUT_PROP, str);
+        }
+        log.info("Using default comunica --timeout=60");
+        return secs;
     }
 }
