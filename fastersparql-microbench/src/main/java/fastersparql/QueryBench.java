@@ -1,4 +1,7 @@
-package com.github.alexishuf.fastersparql.lrb;
+/* unconventional package because JMH profilers are hardcoded to genera aux result dirs using
+* the FQCN, which increases the change the resulting directory exceeds maximum name or maximum
+* path length limits of the underlying filesystem. */
+package fastersparql;
 
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
@@ -12,6 +15,7 @@ import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupH
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
+import com.github.alexishuf.fastersparql.lrb.BenchmarkEvent;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
 import com.github.alexishuf.fastersparql.lrb.query.PlanRegistry;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
@@ -74,14 +78,22 @@ public class QueryBench {
     @Param({"S.*"}) private String queries;
 
     @Param({"FS_STORE", "HDT_FILE"}) SourceKind srcKind;
-    @Param({"PREFERRED"}) SelectorKindType selKind;
-    @Param({"true"}) boolean builtinPlans;
-    @Param({"true", "false"}) boolean crossSourceDedup;
     @Param({"COMPRESSED"}) BatchKind batchKind;
     @Param({"ITERATE", "EMIT"}) FlowModel flowModel;
-    @Param({"false", "true"}) boolean weakenDistinct;
-    @Param({"true"}) boolean thermalCooldown;
     @Param({"false"}) boolean unionSource;
+    /* The following @Params are hardcoded to stop the name of the aux results dir,
+     * where profilers started by JMH store their results having a name that exceeds
+     * filesystem maximum file (or path) length. */
+//    @Param({"PREFERRED"}) SelectorKindType selKind;
+//    @Param({"true"}) boolean builtinPlans;
+//    @Param({"true", "false"}) boolean crossSourceDedup;
+//    @Param({"false", "true"}) boolean weakenDistinct;
+//    @Param({"true"}) boolean thermalCooldown;
+    SelectorKindType selKind = SelectorKindType.PREFERRED;
+    boolean builtinPlans = true;
+    boolean crossSourceDedup = true;
+    boolean weakenDistinct = true;
+    boolean thermalCooldown = true;
 //    @Param({"false","true"}) boolean alt;
 
     public enum SelectorKindType {
