@@ -1747,6 +1747,9 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return h;
     }
 
+    public static int hashCode(@Nullable Object term) {
+        return term == null ? FNV_BASIS : term.hashCode();
+    }
     public static int hashCode(@Nullable Term term) {
         return term == null ? FNV_BASIS : term.hashCode();
     }

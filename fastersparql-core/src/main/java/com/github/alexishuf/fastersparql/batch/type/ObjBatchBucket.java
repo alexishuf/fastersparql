@@ -15,39 +15,65 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
+import java.lang.reflect.Array;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
-import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.cleanLongsAtLeast;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.recycleLongs;
 import static java.lang.System.arraycopy;
 
-public abstract sealed class TermBatchBucket
-        extends AbstractOwned<TermBatchBucket>
-        implements RowBucket<TermBatch, TermBatchBucket> {
-    private static final ArrayAlloc<Term[]> TERMS = new ArrayAlloc<>(Term[].class,
-            "TermBatchBucket.TERMS", 4,
-            new LevelAlloc.Capacities()
-                    .set(0, 3, Alloc.THREADS*32)
-                    .set(4, 9, Alloc.THREADS*64)
-                    .set(10, 15, Alloc.THREADS*32)
-    );
+public abstract class ObjBatchBucket<T, B extends ObjBatch<B, T>>
+        extends AbstractOwned<ObjBatchBucket<T, B>>
+        implements RowBucket<B, ObjBatchBucket<T, B>> {
+    private static final ReentrantLock TYPE_2_ARRAY_ALLOC_LOCK = new ReentrantLock();
+    private static ArrayAlloc<?>[] TYPE_2_ARRAY_ALLOC = new ArrayAlloc[64];
 
-//    static {
-//        Primer.INSTANCE.sched(() -> {
-//            TERMS.primeLevelLocalAndShared(len2level(TermBatchType.PREFERRED_BATCH_TERMS));
-//            TERMS.primeLevelLocalAndShared(len2level(Short.MAX_VALUE));
-//        });
-//    }
+    private static <T, B extends ObjBatch<B, T>> ArrayAlloc<T[]>
+    arrayAlloc(ObjBatchType<T, B> type) {
+        int id = type.id;
+        ArrayAlloc<?> alloc;
+        if (id >= TYPE_2_ARRAY_ALLOC.length || (alloc= TYPE_2_ARRAY_ALLOC[id]) == null) {
+            return arrayAllocMake(type);
+        }
+        //noinspection unchecked
+        return (ArrayAlloc<T[]>)alloc;
+    }
 
-    private Term[] terms;
+    @SuppressWarnings("unchecked") private static <T, B extends ObjBatch<B, T>>
+    ArrayAlloc<T[]> arrayAllocMake(ObjBatchType<T, B> type) {
+        TYPE_2_ARRAY_ALLOC_LOCK.lock();
+        try {
+            var arrCls = (Class<T[]>)Array.newInstance(type.termClass(), 0).getClass();
+            if (TYPE_2_ARRAY_ALLOC.length < type.id) {
+                int newLen = Math.max(type.id + 1, 2 * TYPE_2_ARRAY_ALLOC.length);
+                TYPE_2_ARRAY_ALLOC = Arrays.copyOf(TYPE_2_ARRAY_ALLOC, newLen);
+            }
+            var alloc = (ArrayAlloc<T[]>)TYPE_2_ARRAY_ALLOC[type.id];
+            if (alloc != null)
+                return alloc;
+            alloc = new ArrayAlloc<>(arrCls,
+                    "ObjBatchBucket(" + type + ").arrayAlloc", 4,
+                    new LevelAlloc.Capacities()
+                            .set(0, 3, Alloc.THREADS * 32)
+                            .set(4, 9, Alloc.THREADS * 64)
+                            .set(10, 15, Alloc.THREADS * 32)
+            );
+            TYPE_2_ARRAY_ALLOC[type.id] = alloc;
+            return alloc;
+        } finally { TYPE_2_ARRAY_ALLOC_LOCK.unlock(); }
+    }
+
+    private T[] terms;
     private long[] has;
     private int rows, cols, rowsCapacity;
-    private LIFOPool<RowBucket<TermBatch, ?>> pool;
+    private final ArrayAlloc<T[]> arrayAlloc;
+    private final BatchType<B> batchType;
+    private LIFOPool<RowBucket<B, ?>> pool;
 
     static int estimateBytes(int rows, int cols) {
         return 16+6*4
@@ -55,16 +81,31 @@ public abstract sealed class TermBatchBucket
                 + 20+BS.longsFor(rows)*8;
     }
 
-
-    public TermBatchBucket(int rows, int cols) {
+    protected ObjBatchBucket(ObjBatchType<T, B> type, int rows, int cols) {
         this.rows         = rows;
         this.cols         = cols;
-        this.terms        = TERMS.createAtLeast(rows*cols);
+        this.batchType    = type;
+        this.arrayAlloc   = arrayAlloc(type);
+        this.terms        = arrayAlloc.createAtLeast(rows*cols);
         this.rowsCapacity = terms.length/Math.max(1, cols);
         this.has          = cleanLongsAtLeast(rowsCapacity);
     }
 
-    @Override public @Nullable TermBatchBucket recycle(Object currentOwner) {
+    public static <T, B extends ObjBatch<B, T>>
+    Orphan<ObjBatchBucket<T, B>> create(ObjBatchType<T, B> type, int rows, int cols) {
+        return new Concrete<>(type, rows, cols);
+    }
+
+    private static final class Concrete<T, B extends ObjBatch<B, T>>
+            extends ObjBatchBucket<T, B>
+            implements Orphan<ObjBatchBucket<T, B>> {
+        public Concrete(ObjBatchType<T, B> type, int rows, int cols) {
+            super(type, rows, cols);
+        }
+        @Override public ObjBatchBucket<T, B> takeOwnership(Object o) {return takeOwnership0(o);}
+    }
+
+    @Override public @Nullable ObjBatchBucket<T, B> recycle(Object currentOwner) {
         if (pool != null) {
             internalMarkRecycled(currentOwner);
             if (pool.offer(this) == null)
@@ -72,17 +113,12 @@ public abstract sealed class TermBatchBucket
             currentOwner = SpecialOwner.RECYCLED;
         }
         internalMarkGarbage(currentOwner);
-        terms = TERMS.offer(terms, terms.length);
+        terms = arrayAlloc.offer(terms, terms.length);
         has   = recycleLongs(has);
         return null;
     }
 
-    static final class Concrete extends TermBatchBucket implements Orphan<TermBatchBucket> {
-        public Concrete(int rows, int cols) {super(rows, cols);}
-        @Override public TermBatchBucket takeOwnership(Object o) {return takeOwnership0(o);}
-    }
-
-    @Override public @This TermBatchBucket setPool(LIFOPool<RowBucket<TermBatch, ?>> pool) {
+    @Override public @This ObjBatchBucket<T, B> setPool(LIFOPool<RowBucket<B, ?>> pool) {
         this.pool = pool;
         return this;
     }
@@ -95,7 +131,7 @@ public abstract sealed class TermBatchBucket
         int nRows = rows+addRows;
         if (nRows > rowsCapacity) {
             int safeCols = Math.max(1, cols);
-            terms = TERMS.grow(terms, terms.length, nRows*safeCols);
+            terms = arrayAlloc.grow(terms, terms.length, nRows*safeCols);
             rowsCapacity = terms.length/safeCols;
             int oldWords = has.length, requiredWords = BS.longsFor(rowsCapacity);
             if (requiredWords > oldWords) {
@@ -114,8 +150,8 @@ public abstract sealed class TermBatchBucket
             this.cols = cols;
         }
         if (rows > rowsCapacity) {
-            TERMS.offer(terms, terms.length);
-            terms        = TERMS.createAtLeast(rows*cols);
+            arrayAlloc.offer(terms, terms.length);
+            terms        = arrayAlloc.createAtLeast(rows*cols);
             rowsCapacity = terms.length/safeCols;
             int reqWords = BS.longsFor(rowsCapacity);
             if (reqWords > has.length) {
@@ -131,9 +167,9 @@ public abstract sealed class TermBatchBucket
 
     @Override public boolean has(int row) { return row < rows && BS.get(has, row); }
 
-    @Override public BatchType<TermBatch> batchType()        { return TERM; }
-    @Override public int                       cols()        { return cols; }
-    @Override public int                   capacity()        { return rows; }
+    @Override public BatchType<B> batchType() { return batchType; }
+    @Override public int               cols() { return cols; }
+    @Override public int           capacity() { return rows; }
 
     @Override public int hashCode(int row) {
         int acc = 0, cols = this.cols;
@@ -146,7 +182,7 @@ public abstract sealed class TermBatchBucket
         return acc;
     }
 
-    @Override public void set(int dst, TermBatch batch, int row) {
+    @Override public void set(int dst, B batch, int row) {
         int cols = this.cols;
         if (cols != batch.cols)
             throw new IllegalArgumentException("cols mismatch");
@@ -156,8 +192,8 @@ public abstract sealed class TermBatchBucket
         arraycopy(batch.arr, row*cols, terms, dst*cols, cols);
     }
 
-    @Override public void set(int dst, RowBucket<TermBatch, ?> other, int src) {
-        TermBatchBucket bucket = (TermBatchBucket)other;
+    @Override public void set(int dst, RowBucket<B, ?> other, int src) {
+        @SuppressWarnings("unchecked") ObjBatchBucket<T, B> bucket = (ObjBatchBucket<T, B>)other;
         int cols = this.cols;
         if (bucket.cols != cols)
             throw new IllegalArgumentException("cols mismatch");
@@ -182,7 +218,7 @@ public abstract sealed class TermBatchBucket
         }
     }
 
-    @Override public void putRow(TermBatch dst, int srcRow) {
+    @Override public void putRow(B dst, int srcRow) {
         if (BS.get(has, srcRow)) {
             if (dst.cols != cols)
                 throw new IllegalArgumentException("cols mismatch");
@@ -190,13 +226,13 @@ public abstract sealed class TermBatchBucket
         }
     }
 
-    @Override public boolean equals(int row, TermBatch other, int otherRow) {
+    @Override public boolean equals(int row, B other, int otherRow) {
         int cols = this.cols;
         if (cols != other.cols)
             throw new IllegalArgumentException("cols mismatch");
         if (!BS.get(has, row))
             return false;
-        Term[] la = terms, ra = other.arr;
+        T[] la = terms, ra = other.arr;
         for (int l = row*cols, r = otherRow*cols, e = l+cols; l < e; l++, r++)
             if (!Objects.equals(la[l], ra[r])) return false;
         return true;
@@ -211,7 +247,7 @@ public abstract sealed class TermBatchBucket
             dest.append('[');
             int cols = cols();
             for (int i = row*cols, end = i+cols; i < end; i++) {
-                Term term = terms[i];
+                var term = terms[i];
                 if (term == null) dest.append(DUMP_NULL);
                 else              dest.append(term);
                 dest.append(',').append(' ');
@@ -221,14 +257,14 @@ public abstract sealed class TermBatchBucket
         }
     }
 
-    @Override public String toString() { return "TermBatchBucket{capacity="+capacity()+"}"; }
+    @Override public String toString() { return "ObjBatchBucket{capacity="+capacity()+"}"; }
 
-    @Override public @NonNull Iterator<TermBatch> iterator() {
+    @Override public @NonNull Iterator<B> iterator() {
         return new It();
     }
 
-    private class It implements Iterator<TermBatch>, SafeCloseable {
-        private TermBatch tmp = TERM.create(cols).takeOwnership(this);
+    private class It implements Iterator<B>, SafeCloseable {
+        private B tmp = batchType.create(cols).takeOwnership(this);
         private int row = 0;
         private boolean filled = false;
 
@@ -239,8 +275,8 @@ public abstract sealed class TermBatchBucket
             if (hasNext && !filled) {
                 filled = true;
                 tmp.clear();
-                TermBatchBucket bucket = TermBatchBucket.this;
-                Term[] terms = bucket.terms;
+                ObjBatchBucket<T, B> bucket = ObjBatchBucket.this;
+                T[] terms = bucket.terms;
                 long[] has = bucket.has;
                 int rows = bucket.rows, cols = bucket.cols;
                 for (int used = 0, free = tmp.termsCapacity() ; used < free && row < rows; ++row) {
@@ -256,7 +292,7 @@ public abstract sealed class TermBatchBucket
             return hasNext;
         }
 
-        @Override public TermBatch next() {
+        @Override public B next() {
             if (!hasNext()) throw new NoSuchElementException();
             filled = false;
             return tmp;
