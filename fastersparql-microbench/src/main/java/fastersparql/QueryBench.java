@@ -105,7 +105,8 @@ public class QueryBench {
             return switch (this) {
                 case ASK -> SelectorKind.ASK;
                 case DICT -> SelectorKind.DICT;
-                case PREFERRED -> src.isFsStore() ? SelectorKind.FS_STORE : SelectorKind.ASK;
+                case PREFERRED -> src.isFsStore()&&!src.isServer()
+                                ? SelectorKind.FS_STORE : SelectorKind.ASK;
             };
         }
     }
