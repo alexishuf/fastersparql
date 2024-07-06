@@ -130,17 +130,7 @@ public class BatchBinding extends Binding {
         }
     }
 
-    /**
-     * If there is a term at column {@code i}, set {@code view} to it and return {@code true}.
-     *
-     * @param i the column to read from
-     * @param view A {@link TermView} that will have its segments replaced/remapped to be the
-     *             same as the term at column {@code i}
-     * @return {@code true} iff there was a non-null {@link Term} at column {@code i}, else,
-     *         {@code false}
-     * @throws IndexOutOfBoundsException if {@code i < 0 || i >= vars.size()}
-     */
-    final public boolean get(int i, TermView view) {
+    @Override public final boolean get(int i, TermView view) {
         if (i >= cols) return getFromRemainder(i, view);
         var batch = this.batch;
         return batch != null && batch.getView(row, i, view);
@@ -160,15 +150,7 @@ public class BatchBinding extends Binding {
         throw new IndexOutOfBoundsException("var not found");
     }
 
-    /**
-     * If there is a ter at column {@code i}, set {@code view} to its N-Triples
-     * form and return {@code true}.
-     *
-     * @param i the column (var index) to get
-     * @param view A {@link TwoSegmentRope} that will be remapped if there is a term.
-     * @return {@code true} iff there is a term at column {@code i}
-     */
-    final public boolean get(int i, TwoSegmentRope view) {
+    @Override public final boolean get(int i, TwoSegmentRope view) {
         if (i >= cols) return getFromRemainder(i, view);
         var batch = this.batch;
         return batch != null && batch.getRopeView(row, i, view);

@@ -4,8 +4,10 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -27,6 +29,42 @@ public abstract class Binding {
     public final @Nullable Term get(Term var) {
         int i = vars().indexOf(var);
         return i < 0 ? null : get(i);
+    }
+
+
+    /**
+     * If there is a ter at column {@code i}, set {@code view} to its N-Triples
+     * form and return {@code true}.
+     *
+     * @param i the column (var index) to get
+     * @param view A {@link TwoSegmentRope} that will be remapped if there is a term.
+     * @return {@code true} iff there is a term at column {@code i}
+     */
+    public boolean get(int i, TwoSegmentRope view) {
+        Term t = get(i);
+        if (t == null)
+            return false;
+        view. wrapFirst(t.first());
+        view.wrapSecond(t.second());
+        return true;
+    }
+
+    /**
+     * If there is a term at column {@code i}, set {@code view} to it and return {@code true}.
+     *
+     * @param i the column to read from
+     * @param view A {@link TermView} that will have its segments replaced/remapped to be the
+     *             same as the term at column {@code i}
+     * @return {@code true} iff there was a non-null {@link Term} at column {@code i}, else,
+     *         {@code false}
+     * @throws IndexOutOfBoundsException if {@code i < 0 || i >= vars.size()}
+     */
+    public boolean get(int i, TermView view) {
+        Term t = get(i);
+        if (t == null)
+            return false;
+        view.wrap(t.shared(), t.local(), t.sharedSuffixed());
+        return true;
     }
 
     /**
