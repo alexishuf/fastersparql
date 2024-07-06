@@ -66,8 +66,10 @@ public class Measure implements Callable<Void>{
 
     private @MonotonicNonNull File destDir;
     public PlanRegistry plans;
+    private @MonotonicNonNull BatchType<?> batchType;
 
     @Override public Void call() throws Exception {
+        batchType = msrOp.batchKind.asType(srcOp.srcKind);
         loadProfilers();
         destDir = msrOp.destDir();
         var tasks = qryOp.queries().stream()
@@ -295,13 +297,13 @@ public class Measure implements Callable<Void>{
                 fedMetrics.plan = plan;
                 plan.attach(planListener);
                 results = (StreamNode)switch (msrOp.flowModel) {
-                    case ITERATE -> it       = plan.execute(msrOp.batchType);
-                    case EMIT    -> emOrphan = plan.    emit(msrOp.batchType, EMPTY);
+                    case ITERATE -> it       = plan.execute(batchType);
+                    case EMIT    -> emOrphan = plan.    emit(batchType, EMPTY);
                 };
             } else {
                 results = (StreamNode) switch (msrOp.flowModel) {
-                    case ITERATE -> it       = fed.query(msrOp.batchType, task.parsed());
-                    case EMIT    -> emOrphan = fed. emit(msrOp.batchType, task.parsed(), EMPTY);
+                    case ITERATE -> it       = fed.query(batchType, task.parsed());
+                    case EMIT    -> emOrphan = fed. emit(batchType, task.parsed(), EMPTY);
                 };
             }
 //            if (debugPlan != null)
@@ -380,11 +382,10 @@ public class Measure implements Callable<Void>{
         currRep = rep;
         planMetrics = null;
         fedMetrics = null;
-        BatchType<?> bt = msrOp.batchType;
         return consumer = switch (msrOp.consumer) {
-            case COUNT -> consumer == null ? new Counter<>(bt) : (Counter<?>)consumer;
+            case COUNT -> consumer == null ? new Counter<>(batchType) : (Counter<?>)consumer;
             case SAVE,SAVE_FIRST -> {
-                var s = consumer == null ? new Serializer<>(bt, null, TSV, true)
+                var s = consumer == null ? new Serializer<>(batchType, null, TSV, true)
                                          : (Serializer<?>) consumer;
                 File f = taskFile(".tsv");
                 if (msrOp.consumer == SAVE || rep == -1 || rep == 0) {
@@ -392,7 +393,7 @@ public class Measure implements Callable<Void>{
                         s.output(new FileOutputStream(f), true);
                     } catch (Throwable t) {
                         log.error("Could not write to {}. Reverting to COUNT consumer", f, t);
-                        yield new Counter<>(bt);
+                        yield new Counter<>(batchType);
                     }
                 } else {
                     s.output(new NullOutputStream(), true);
@@ -401,7 +402,7 @@ public class Measure implements Callable<Void>{
             }
             case CHECK ->
                 checkerConsumers.computeIfAbsent(currTask.query(),
-                                                 k -> new Checker<>(bt, k));
+                                                 k -> new Checker<>(batchType, k));
         };
     }
 

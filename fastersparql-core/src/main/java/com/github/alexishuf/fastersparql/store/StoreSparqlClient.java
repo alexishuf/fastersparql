@@ -2287,7 +2287,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.startBindingNotifier = startNotifier;
             this.bindingNotifier = notifier;
             this.metrics = notifier == null ? null : notifier.bindQuery.metrics;
-            this.ropeView = batchType == TYPE ? null : new TwoSegmentRope();
+            this.ropeView = new TwoSegmentRope();
             this.dictId = (short)StoreSparqlClient.this.dictId;
             this.tp = tp;
             Vars leftVars = left.vars();

@@ -8,14 +8,12 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
-import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
 import com.github.alexishuf.fastersparql.lrb.BenchmarkEvent;
+import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.BatchKind;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
 import com.github.alexishuf.fastersparql.lrb.query.PlanRegistry;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
@@ -32,7 +30,6 @@ import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
@@ -110,26 +107,6 @@ public class QueryBench {
             };
         }
     }
-
-    public enum BatchKind {
-        COMPRESSED,
-        TERM,
-        NATIVE;
-
-        <B extends Batch<B>> BatchType<B> forSource(SourceKind src) {
-            //noinspection unchecked
-            return (BatchType<B>) switch (this) {
-                case COMPRESSED -> CompressedBatchType.COMPRESSED;
-                case TERM -> TermBatchType.TERM;
-                case NATIVE -> {
-                    if (src.isHdt())     yield HdtBatchType.HDT;
-                    if (src.isFsStore()) yield StoreBatchType.STORE;
-                    else                 throw new UnsupportedOperationException();
-                }
-            };
-        }
-    }
-
 
     private BatchType<?> batchType;
     private FederationHandle fedHandle;
@@ -299,7 +276,7 @@ public class QueryBench {
         queryList = new QueryOptions(List.of(queries)).queries();
         if (queryList.isEmpty())
             throw new IllegalArgumentException("No queries selected");
-        batchType = batchKind.forSource(srcKind);
+        batchType = batchKind.asType(srcKind);
         boundCounter   = new BoundCounter<>  (batchType);
         rowCounter     = new RowCounter<>    (batchType);
         ropeLenCounter = new RopeLenCounter<>(batchType);

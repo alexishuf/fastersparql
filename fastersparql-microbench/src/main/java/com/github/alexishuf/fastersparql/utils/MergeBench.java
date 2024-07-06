@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.emit.ReceiverFuture;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
+import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -48,7 +49,7 @@ public class MergeBench {
     private List<Batch<?>> columns;
 
     private <B extends Batch<B>> B makeBatch(int rows, int value) {
-        BatchType<B> type = (BatchType<B>) batchKind.asType();
+        BatchType<B> type = (BatchType<B>) batchKind.asType(SourceKind.FS_JSON_EMIT);
         B b = type.create(1).takeOwnership(this);
         for (int r = 0; r < rows; r++) {
             b.beginPut();
@@ -64,7 +65,7 @@ public class MergeBench {
     }
 
     @SuppressWarnings("unused") @Setup(Level.Iteration) public <B extends Batch<B>> void setup() {
-        type = batchKind.asType();
+        type = batchKind.asType(SourceKind.FS_JSON_EMIT);
         this.columns = new ArrayList<>();
         int next = 0;
         for (int i = 0; i < nShort; i++, next += shortHeight)

@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb;
 
 
 import com.github.alexishuf.fastersparql.FlowModel;
+import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
 import com.google.gson.Gson;
 import com.google.gson.JsonIOException;
@@ -50,7 +51,7 @@ public class Jsons2Csv implements Callable<Void> {
             QueryBench.SelectorKindType selKind,
             boolean builtinPlans,
             boolean crossSourceDedup,
-            QueryBench.BatchKind batchKind,
+            MeasureOptions.BatchKind batchKind,
             FlowModel flowModel,
             boolean weakenDistinct,
             boolean thermalCooldown,

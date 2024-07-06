@@ -3,9 +3,13 @@ package com.github.alexishuf.fastersparql.lrb.cmd;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.JenaBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
 import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
+import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
+import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.util.IOUtils;
 import com.github.alexishuf.fastersparql.util.concurrent.BackgroundTasks;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
@@ -42,21 +46,26 @@ public class MeasureOptions {
 
     public enum BatchKind {
         TERM,
-        COMPRESSED;
+        COMPRESSED,
+        NATIVE;
 
-        public BatchType<?> asType() {
+        public BatchType<?> asType(SourceKind src) {
             return switch (this) {
                 case TERM -> TermBatchType.TERM;
                 case COMPRESSED -> CompressedBatchType.COMPRESSED;
+                case NATIVE -> {
+                    if (src.isServer())  yield CompressedBatchType.COMPRESSED;
+                    if (src.isHdt())     yield HdtBatchType.HDT;
+                    if (src.isFsStore()) yield StoreBatchType.STORE;
+                    if (src.isTdb2())    yield JenaBatchType.JENA;
+                    else                 throw new UnsupportedOperationException();
+                }
             };
         }
     }
-    public BatchType<?> batchType = CompressedBatchType.COMPRESSED;
     @Option(names = "--batch", description = "The Batch implementation to use consume " +
             "the results with")
-    public void batchType(BatchKind kind) {
-        batchType = kind.asType();
-    }
+    public BatchKind batchKind = BatchKind.NATIVE;
 
     @Option(names = "--jfr", description = "record the execution of the queries using " +
             "JDK Flight Recorder. The JFR dump will be saved to the given file path. If this " +
