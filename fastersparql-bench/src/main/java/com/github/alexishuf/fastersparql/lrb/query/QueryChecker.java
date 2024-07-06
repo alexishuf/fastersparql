@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
@@ -23,16 +24,18 @@ import java.util.Comparator;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.batch.dedup.Dedup.strongForever;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 
 public abstract class QueryChecker<B extends Batch<B>>
         extends QueryRunner.BatchConsumer<B, QueryChecker<B>> {
     private static final String OK = "No errors";
     public final Vars vars;
     private final QueryName queryName;
-    private @Nullable StrongDedup<B> expected;
-    private @Nullable StrongDedup<B> observed;
+    private final boolean sane;
+    private @Nullable StrongDedup<CompressedBatch> expected;
+    private @Nullable StrongDedup<CompressedBatch> observed;
     private final int expectedRows;
-    public B unexpected;
+    public CompressedBatch unexpected;
     private int rows;
     private @Nullable Throwable error;
     private @Nullable String explanation;
@@ -40,7 +43,10 @@ public abstract class QueryChecker<B extends Batch<B>>
     public QueryChecker(BatchType<B> batchType, QueryName queryName){
         super(batchType);
         this.queryName = queryName;
-        B original     = queryName.expected(batchType);
+        this.sane = queryName.isAmputateNumberNoOp()
+                && queryName.isExpandUnicodeEscapesNoOp()
+                && queryName.isUnescapeSlashNoOp();
+        var original     = queryName.expected(COMPRESSED);
         vars           = queryName.parsed().publicVars();
         expectedRows   = original == null ? 0 : original.totalRows();
         init(original);
@@ -186,23 +192,23 @@ public abstract class QueryChecker<B extends Batch<B>>
         init(null);
     }
 
-    private void init(@Nullable B original) {
+    private void init(@Nullable CompressedBatch original) {
         rows = 0;
         explanation = null;
         int cols = vars.size();
         if (unexpected == null)
-            unexpected = batchType.create(cols).takeOwnership(this);
+            unexpected = COMPRESSED.create(cols).takeOwnership(this);
         else
             unexpected.clear(cols);
         if (observed == null || expected == null) {
             if (original == null)
-                original = queryName.expected(batchType);
+                original = queryName.expected(COMPRESSED);
             if (original != null) {
                 if (expected == null)
                     initExpected(original);
                 int exRows = original.totalRows();
                 if (observed == null)
-                    observed = strongForever(batchType, exRows, cols).takeOwnership(this);
+                    observed = strongForever(COMPRESSED, exRows, cols).takeOwnership(this);
                 else
                     observed.clear(cols);
             } else {
@@ -212,11 +218,11 @@ public abstract class QueryChecker<B extends Batch<B>>
         }
     }
 
-    private void initExpected(B original) {
-        B sanitized = queryName.isAmputateNumberNoOp() ? original
+    private void initExpected(CompressedBatch original) {
+        var sanitized = queryName.isAmputateNumberNoOp() ? original
                 : queryName.amputateNumbers(original.dup()).takeOwnership(this);
         assert expectedRows == original.totalRows();
-        expected = strongForever(batchType, rows, sanitized.cols).takeOwnership(this);
+        expected = strongForever(COMPRESSED, rows, sanitized.cols).takeOwnership(this);
         for (var n = sanitized; n != null; n = n.next) {
             for (int r = 0, nRows = n.rows; r < nRows; r++)
                 expected.add(n, r);
@@ -226,33 +232,52 @@ public abstract class QueryChecker<B extends Batch<B>>
     }
 
     @Override public void onBatch(Orphan<B> orphan) {
-        orphan = queryName.amputateNumbers(orphan);
-        orphan = queryName.expandUnicodeEscapes(orphan);
-        B b    = queryName.unescapeSlash(orphan).takeOwnership(this);
-        try {
-            check(b);
-        } finally {
-            b.recycle(this);
+        B in = orphan.takeOwnership(this);
+        CompressedBatch cb;
+        if (in instanceof CompressedBatch b) {
+            cb = b;
+        } else {
+            (cb = COMPRESSED.create(in.cols).takeOwnership(this)).putConverting(in);
+            Owned.safeRecycle(in, this);
         }
+        cb = sanitize(cb.releaseOwnership(this)).takeOwnership(this);
+        try {
+            check(cb);
+        } finally { Owned.safeRecycle(cb, this); }
     }
 
     @Override public void onBatchByCopy(B batch) {
-        if (queryName.isAmputateNumberNoOp() && queryName.isExpandUnicodeEscapesNoOp())
-            check(batch);
-        else
-            super.onBatchByCopy(batch);
+        if (sane && batch instanceof CompressedBatch cb) {
+            check(cb);
+        } else {
+            var cb = sanitize(COMPRESSED.convertOrCopy(batch)).takeOwnership(this);
+            try {
+                check(cb);
+            } finally { Owned.safeRecycle(cb, this); }
+        }
     }
 
-    private void check(B batch) {
-        for (B node = batch; node != null; node = node.next) {
+    private Orphan<CompressedBatch> sanitize(Orphan<CompressedBatch> orphan) {
+        if (!sane) {
+            orphan = queryName.amputateNumbers     (orphan);
+            orphan = queryName.expandUnicodeEscapes(orphan);
+            orphan = queryName.unescapeSlash       (orphan);
+        }
+        return orphan;
+    }
+
+    private void check(CompressedBatch cb) {
+        var expected = this.expected;
+        var observed = this.observed;
+        for (var node = cb; node != null; node = node.next) {
             rows += node.rows;
-            if (expected == null || observed == null) return;
-            for (int r = 0, rows = node.rows; r < rows; r++) {
-                if (!expected.contains(node, r))
-                    unexpected.putRow(node, r);
-                else
-                    observed.add(node, r);
+            if (expected == null || observed == null)
+                continue;
+            for (int r = 0, rows1 = node.rows; r < rows1; r++) {
+                if (!expected.contains(node, r)) unexpected.putRow(node, r);
+                else                             observed.add(node, r);
             }
         }
     }
+
 }
