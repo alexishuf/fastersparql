@@ -9,7 +9,7 @@ public class RopeEncoder {
             dst[dstPos] = (byte)c;
             return dstPos+1;
         } else {
-            byte last = (byte)(0x80|(c&0x3f)), beforeLast = (byte)(c>>6);
+            byte last = (byte)(0x80|(c&0x3f)), beforeLast = (byte)((c>>6)&0x3f);
             if (c < '\u0800') {
                 dst[dstPos  ] = (byte)(0xc0|beforeLast);
                 dst[dstPos+1] = last;
