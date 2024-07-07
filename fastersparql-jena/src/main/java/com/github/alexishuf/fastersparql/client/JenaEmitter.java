@@ -2,12 +2,12 @@ package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.JenaTermParser;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Query;
-import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.TxnType;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Var;
@@ -43,7 +43,7 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
                           String displayLocation,
                           SparqlQuery query, QueryExecBuilder execFac) {
         super(batchType, vars, CREATED, TASK_FLAGS);
-        var jQuery = QueryFactory.create(query.sparql().toString());
+        var jQuery = JenaSparqlQuery.unwrap(query);
         // required in order to make jena remember values assigned to variables at rebind():
         jQuery.setQueryResultStar(false);
         this.transactional   = transactional;
@@ -62,6 +62,7 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
         rs             = JenaUtils.safeClose(rs);
         exec           = JenaUtils.safeClose(exec);
         jenaTermParser = Owned.safeRecycle(jenaTermParser, this);
+        binder         = Owned.safeRecycle(binder, this);
         super.doRelease();
     }
 
@@ -79,7 +80,7 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
         resetForRebind(0, LOCKED_MASK);
         try {
             if (binder == null)
-                binder = new JenaQueryBinder();
+                binder = JenaQueryBinder.create().takeOwnership(this);
             exec = JenaUtils.safeClose(exec);
             currentQuery = binder.bind(originalQuery, binding);
         } finally {

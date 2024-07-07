@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Dataset;
-import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.DatasetGraph;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExec;
@@ -53,7 +52,7 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
         try {
             Vars vars = sparql.publicVars();
             boolean isAsk = sparql.isAsk();
-            var query = QueryFactory.create(sparql.sparql().toString());
+            var query = JenaSparqlQuery.unwrap(sparql);
             exec = QueryExec.dataset(dsg).query(query).build();
             var it = new RefJenaBIt<>(bt, vars, dsg, exec, isAsk);
             exec = null;

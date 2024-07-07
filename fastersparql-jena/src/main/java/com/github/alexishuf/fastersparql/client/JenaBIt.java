@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.client;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.JenaTermParser;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.ReadWrite;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;

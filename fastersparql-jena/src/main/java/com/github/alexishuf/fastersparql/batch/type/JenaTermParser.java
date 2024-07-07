@@ -1,9 +1,9 @@
-package com.github.alexishuf.fastersparql.client;
+package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.RopeEncoder;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.atlas.io.AWriter;
 import com.github.alexishuf.fastersparql.org.apache.jena.atlas.io.AWriterBase;
 import com.github.alexishuf.fastersparql.org.apache.jena.graph.Node;
@@ -111,8 +111,12 @@ public abstract sealed class JenaTermParser extends AbstractOwned<JenaTermParser
     public <B extends Batch<B>> void putTerm(B dst, int col, @Nullable Node node) {
         if (node == null)
             return;
-        parse(node);
-        dst.putTerm(col, shared, tmp.segment, tmp.utf8, localOff(), localLen(), isLit);
+        if (dst instanceof JenaBatch jb) {
+            jb.putTerm(col, node);
+        } else  {
+            parse(node);
+            dst.putTerm(col, shared, tmp.segment, tmp.utf8, localOff(), localLen(), isLit);
+        }
     }
 
     public FinalSegmentRope      shared() { return shared; }
@@ -122,4 +126,9 @@ public abstract sealed class JenaTermParser extends AbstractOwned<JenaTermParser
     public int                 localOff() { return isLit ? 0 : shared.len; }
     public int                 localLen() { return tmp.len-shared.len; }
 
+    public FinalSegmentRope   localCopy() {
+        int len = tmp.len - shared.len;
+        int begin = isLit ? 0 : shared.len, end = begin+len;
+        return RopeFactory.make(len).add(tmp.utf8, begin, end).take();
+    }
 }
