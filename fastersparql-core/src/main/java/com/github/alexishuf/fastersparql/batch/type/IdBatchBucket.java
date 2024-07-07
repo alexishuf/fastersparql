@@ -115,7 +115,7 @@ public abstract sealed class IdBatchBucket<B extends IdBatch<B>>
     @Override public int            cols() { return cols; }
     @Override public int        capacity() { return rows; }
     @Override public int hashCode(int row) {
-        int acc = 0, cols = this.cols, end = row*(cols+1);
+        int acc = 0, cols = this.cols, end = (row+1)*cols;
         if (end > ids.length)
             throw new IndexOutOfBoundsException(row);
         if (BS.get(has, row)) {
