@@ -1087,7 +1087,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
             byte f;
             if (var2BNode != null && localLen > 0
                     && ((f=local.get(JAVA_BYTE, localOff)) == '?' || f == '$')) {
-                dest.append(var2BNode.ntForName(local, localU8, localOff+1, localLen));
+                dest.append(var2BNode.ntForName(local, localU8, localOff+1, localLen-1));
             } else {
                 dest.append(local, localU8, localOff, localLen);
             }
