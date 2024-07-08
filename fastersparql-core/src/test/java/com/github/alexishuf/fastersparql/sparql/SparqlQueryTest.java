@@ -300,7 +300,7 @@ class SparqlQueryTest {
                 assertSame(q, q.bound(ArrayBinding.EMPTY), "bind() failed to detect no-op" + msg);
 
                 if (q instanceof OpaqueSparqlQuery oq) {
-                    assertEquals(sparql, oq.sparql().toString(), "bad sparql" + msg);
+                    assertEquals(sparql, oq.sparqlType().sparql(oq).toString(), "bad sparql" + msg);
                     List<Integer> posList = new ArrayList<>();
                     for (Rope name : d.all) {
                         for (String marker : List.of("?", "$")) {
@@ -536,7 +536,7 @@ class SparqlQueryTest {
                 assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
                 if (a instanceof OpaqueSparqlQuery oa) {
                     var oe = (OpaqueSparqlQuery) e;
-                    assertEquals(d.expected, oa.sparql().toString(), "bad sparql" + ctx);
+                    assertEquals(d.expected, oa.sparqlType().sparql(oa).toString(), "bad sparql" + ctx);
                     assertEquals(oe.aliasVars, oa.aliasVars, "bad aliasVars" + ctx);
                     assertArrayEquals(oe.varPos, oa.varPos, "bad varPos" + ctx);
                 }
@@ -625,7 +625,7 @@ class SparqlQueryTest {
                 assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
                 if (a instanceof OpaqueSparqlQuery oa) {
                     var oe = (OpaqueSparqlQuery) e;
-                    assertEquals(t.expected, oa.sparql().toString(), "bad sparql" + ctx);
+                    assertEquals(t.expected, oa.sparqlType().sparql(oa).toString(), "bad sparql" + ctx);
                     assertEquals(oe.aliasVars, oa.aliasVars, "bad aliasVars" + ctx);
                     assertArrayEquals(oe.varPos, oa.varPos, "bad varPos" + ctx);
                 }

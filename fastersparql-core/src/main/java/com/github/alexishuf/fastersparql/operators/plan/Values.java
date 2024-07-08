@@ -133,8 +133,7 @@ public final class Values extends Plan implements LeakyOwner {
     private static final byte[] UNDEF_u8 = "UNDEF".getBytes(StandardCharsets.UTF_8);
 
     @Override public void groupGraphPatternInner(ByteSink<?, ?> out, int indent,
-                                                 PrefixAssigner assigner,
-                                                 Var2BNodeAssigner var2BNode) {
+                                                 PrefixAssigner assigner) {
         out.newline(indent++).append(VALUES_u8).append(' ').append('(');
         for (int i = 0, n = publicVars.size(); i < n; i++) {
             if (i > 0) out.append(' ');

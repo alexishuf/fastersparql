@@ -12,6 +12,7 @@ import com.github.alexishuf.fastersparql.operators.metrics.MetricsListener;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.SparqlType;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip;
@@ -32,7 +33,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
 /** Represents a tree of operators applied to their arguments */
-public abstract sealed class Plan implements SparqlQuery, JournalNamed
+public abstract sealed class Plan
+        implements SparqlQuery, SparqlType.SparqlGenerator, JournalNamed
         permits Join, Union, LeftJoin, Minus, Exists, Modifier, Empty, Query, TriplePattern, Values {
     private static final AtomicInteger nextId = new AtomicInteger(1);
 
@@ -73,7 +75,7 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
             case QUERY -> {
                 Query q = (Query) this;
                 dest.append(QUERY_LBRAC).append(q.client.endpoint().uri()).append(']').append('(');
-                Rope sparql = sparql();
+                var sparql = sparqlType().sparql(this);
                 if (sparql.len() < 80)
                     dest.appendEscapingLF(sparql).append(')');
                 else
@@ -169,12 +171,18 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
         }
     }
 
-    @Override public SegmentRope sparql() {
+    @Override public SparqlType sparqlType() {
+        if (publicVars().isEmpty() && !isAsk() && !allVars().isEmpty())
+            return SparqlType.REQUIRES_MANUAL_PROJECTION;
+        return SparqlType.SPARQL;
+    }
+
+    @Override public SegmentRope generateSparql() {
         if (this instanceof Query q)
-            return q.sparql.sparql();
+            return q.sparql.sparqlType().sparql(q.sparql);
         try (var rb = PooledMutableRope.getWithCapacity(256)) {
             rb.append(SparqlSkip.SELECT_u8).append(' ').append('*');
-            groupGraphPattern(rb, 0, PrefixAssigner.NOP, null);
+            groupGraphPattern(rb, 0, PrefixAssigner.NOP);
             return FinalSegmentRope.asFinal(rb);
         }
     }
@@ -185,19 +193,17 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
      * @param out where to write the SPARQL to.
      */
     public final void groupGraphPattern(ByteSink<?, ?> out, int indent,
-                                        PrefixAssigner assigner,
-                                        Var2BNodeAssigner var2BNode) {
+                                        PrefixAssigner assigner) {
         out.newline(indent++).append('{');
-        groupGraphPatternInner(out, indent, assigner, var2BNode);
+        groupGraphPatternInner(out, indent, assigner);
         out.newline(--indent).append('}');
     }
 
     protected final void groupGraphPatternInnerOp(ByteSink<?, ?> out, int indent,
-                                                  PrefixAssigner assigner,
-                                                  Var2BNodeAssigner var2BNode) {
+                                                  PrefixAssigner assigner) {
         switch (type) {
-            case JOIN,TRIPLE,VALUES -> groupGraphPatternInner(out, indent, assigner, var2BNode);
-            default                 -> groupGraphPattern(out, indent, assigner, var2BNode);
+            case JOIN,TRIPLE,VALUES -> groupGraphPatternInner(out, indent, assigner);
+            default                 -> groupGraphPattern(out, indent, assigner);
         }
     }
 
@@ -205,28 +211,27 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
      * Equivalent to {@code groupGraphPattern(out, indent)} without the surrounding
      * {@code '{'} and {@code'}'}.
      */
-    public void groupGraphPatternInner(ByteSink<?, ?> out, int indent, PrefixAssigner assigner,
-                                       Var2BNodeAssigner var2BNode) {
+    public void groupGraphPatternInner(ByteSink<?, ?> out, int indent, PrefixAssigner assigner) {
         switch (type) {
             case JOIN -> {
                 for (int i = 0, n = opCount(); i < n; i++)
-                    op(i).groupGraphPatternInnerOp(out, indent, assigner, var2BNode);
+                    op(i).groupGraphPatternInnerOp(out, indent, assigner);
             }
             case UNION -> {
                 for (int i = 0, n = opCount(); i < n; i++)
                     op(i).groupGraphPattern(i>0 ? out.append(UNION_SP)
-                                                : out, indent, assigner, var2BNode);
+                                                : out, indent, assigner);
             }
             case QUERY -> {
                 SparqlQuery q = ((Query) this).sparql;
-                if (q instanceof Plan p) p.groupGraphPatternInner(out, indent, assigner, var2BNode);
-                else                     out.indented(indent, q.sparql());
+                if (q instanceof Plan p) p.groupGraphPatternInner(out, indent, assigner);
+                else                     out.indented(indent, q.sparqlType().sparql(q));
             }
             case TRIPLE -> {
                 var p = (TriplePattern) this;
-                p.s.toSparql(out.newline(indent), assigner, var2BNode);
-                p.p.toSparql(out.append(' '), assigner, var2BNode);
-                p.o.toSparql(out.append(' '), assigner, var2BNode);
+                p.s.toSparql(out.newline(indent), assigner);
+                p.p.toSparql(out.append(' '), assigner);
+                p.o.toSparql(out.append(' '), assigner);
                 out.append(' ').append('.');
             }
             case EMPTY -> {}
@@ -237,7 +242,7 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
                     p = switch (p.type) {
                         case LEFT_JOIN, MINUS, EXISTS, NOT_EXISTS, MODIFIER -> p.left;
                         default -> {
-                            p.groupGraphPatternInnerOp(out, indent, assigner, var2BNode);
+                            p.groupGraphPatternInnerOp(out, indent, assigner);
                             yield null;
                         }
                     };
@@ -246,17 +251,16 @@ public abstract sealed class Plan implements SparqlQuery, JournalNamed
                     switch (o.type) {
                         case EXISTS,NOT_EXISTS,MINUS,LEFT_JOIN -> {
                             out.newline(indent).append(o.sparqlName());
-                            requireNonNull(o.right).groupGraphPattern(out, indent, assigner,
-                                                                      var2BNode);
+                            requireNonNull(o.right).groupGraphPattern(out, indent, assigner);
                         }
                         case MODIFIER -> {
                             for (Expr e : ((Modifier)o).filters) {
                                 out.newline(indent);
                                 if (e instanceof Expr.Exists ex) {
                                     out.append(ex.negate() ? NOT_EXISTS_SP : EXISTS_SP);
-                                    ex.filter().groupGraphPattern(out, indent, assigner, var2BNode);
+                                    ex.filter().groupGraphPattern(out, indent, assigner);
                                 } else {
-                                    e.toSparql(out.append(FILTER_SP), assigner, var2BNode);
+                                    e.toSparql(out.append(FILTER_SP), assigner);
                                 }
                             }
                         }

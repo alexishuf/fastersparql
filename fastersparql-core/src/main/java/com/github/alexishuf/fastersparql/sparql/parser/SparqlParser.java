@@ -85,7 +85,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
             return p;
         var parser = create().takeOwnership(PARSE);
         try {
-            return parser.parse(q.sparql(), 0);
+            return parser.parse(q.sparqlType().sparql(q), 0);
         } finally {
             parser.recycle(PARSE);
         }

@@ -166,7 +166,7 @@ class HdtSparqlClientTest {
         for (int i = 0, n = list.size(); i < n; i++) {
             var r = list.get(i);
             if (r.query() instanceof Plan p)
-                list.add(r.query(new OpaqueSparqlQuery(p.sparql())));
+                list.add(r.query(new OpaqueSparqlQuery(p.sparqlType().sparql(p))));
             else
                 list.add(r.query(SparqlParser.parse(r.query())));
         }

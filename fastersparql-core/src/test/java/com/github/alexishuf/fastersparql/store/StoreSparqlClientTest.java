@@ -153,7 +153,7 @@ class StoreSparqlClientTest {
         public D withParsedOrOpaque() {
             boolean ubp = useeBindingAwareProtocol;
             if (results.query() instanceof Plan p)
-                return new D(ubp, split, results.query(new OpaqueSparqlQuery(p.sparql())));
+                return new D(ubp, split, results.query(new OpaqueSparqlQuery(p.sparqlType().sparql(p))));
             else if (results.query() instanceof OpaqueSparqlQuery q)
                 return new D(ubp, split, results.query(SparqlParser.parse(q)));
             else

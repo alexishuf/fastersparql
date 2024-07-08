@@ -246,7 +246,10 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
         /* --- --- --- WsStreamNode --- --- --- */
 
-        @Override public SegmentRope sparql() { return query.sparql(); }
+        @Override public SegmentRope sparql() {
+            // this is fine: parsers will project if SPARQL does not match qry.publicVars()
+            return query.sparqlType().sparql(query);
+        }
         @Override public void beforeSendBindQuery() {}
         @Override public void cancelBindings() {
             if (bindQuery != null) {
@@ -990,7 +993,9 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         /* --- --- --- WsStreamNode --- --- --- */
 
         @Override public SegmentRope sparql() {
-            return (binding == null ? query : query.bound(binding)).sparql();
+            var query = binding == null ? this.query : this.query.bound(binding);
+            // this is fine: parsers will project if SPARQL does not match qry.publicVars()
+            return query.sparqlType().sparql(query);
         }
 
         @Override public void beforeSendBindQuery() {

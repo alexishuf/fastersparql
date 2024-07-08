@@ -14,7 +14,7 @@ import static com.github.alexishuf.fastersparql.model.rope.Rope.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 import static java.util.Arrays.copyOf;
 
-public class OpaqueSparqlQuery implements SparqlQuery {
+public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerator {
     public final SegmentRope sparql;
     public final boolean isGraph;
     public final Vars publicVars;
@@ -54,10 +54,11 @@ public class OpaqueSparqlQuery implements SparqlQuery {
         return c == 'a' || c == 'A';
     }
 
-    @Override public SegmentRope sparql() { return sparql; }
-    @Override public boolean    isGraph() { return isGraph; }
-    @Override public Vars    publicVars() { return publicVars; }
-    @Override public Vars       allVars() { return allVars; }
+    @Override public SparqlType      sparqlType() { return SparqlType.SPARQL; }
+    @Override public SegmentRope generateSparql() { return sparql; }
+    @Override public boolean            isGraph() { return isGraph; }
+    @Override public Vars            publicVars() { return publicVars; }
+    @Override public Vars               allVars() { return allVars; }
 
     private static final int[] WS_WILDCARD = alphabet("*", WS);
 

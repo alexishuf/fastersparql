@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.sparql.expr;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
-import com.github.alexishuf.fastersparql.operators.plan.Var2BNodeAssigner;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
@@ -1071,26 +1070,18 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
      * becomes "a" and literals typed as XSD integer, decimal double and boolean are replaced by
      * their lexical forms (without quotes and datatype suffix).
      */
-    @Override public int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner,
-                                  Var2BNodeAssigner var2BNode) {
+    @Override public int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner) {
         SegmentRope local = local();
-        return toSparql(dest, assigner, var2BNode, finalShared(),
+        return toSparql(dest, assigner, finalShared(),
                  local.segment, local.utf8, local.offset, local.len, (flags & IS_SUFFIX) != 0);
     }
 
     public static int toSparql(ByteSink<?, ?> dest, PrefixAssigner assigner,
-                               Var2BNodeAssigner var2BNode,
                                SegmentRope shared,
                                MemorySegment local, byte @Nullable [] localU8,
                                long localOff, int localLen, boolean isLit) {
         if (shared == null || shared.len == 0) {
-            byte f;
-            if (var2BNode != null && localLen > 0
-                    && ((f=local.get(JAVA_BYTE, localOff)) == '?' || f == '$')) {
-                dest.append(var2BNode.ntForName(local, localU8, localOff+1, localLen-1));
-            } else {
-                dest.append(local, localU8, localOff, localLen);
-            }
+            dest.append(local, localU8, localOff, localLen);
             return localLen;
         }
         int oldLen = dest.len();

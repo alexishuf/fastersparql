@@ -4,12 +4,12 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Query;
-import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Var;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.syntax.PatternVarsVisitor;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.syntax.syntaxtransform.QueryTransformOps;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.SparqlType;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -17,22 +17,23 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 
-public class JenaSparqlQuery implements SparqlQuery {
+public class JenaSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerator {
     private final Query jenaQuery;
     private @MonotonicNonNull SegmentRope sparql;
     private @MonotonicNonNull Vars publicVars;
     private @MonotonicNonNull Vars allVars;
 
-    public static Query unwrap(SparqlQuery query) {
-        return query instanceof JenaSparqlQuery jsq ? jsq.jenaQuery
-                : QueryFactory.create(query.sparql().toString());
-    }
-
     public JenaSparqlQuery(Query jenaQuery) {
         this.jenaQuery = jenaQuery;
     }
 
-    @Override public SegmentRope sparql() {
+    public Query jenaQuery() {return jenaQuery;}
+
+    @Override public SparqlType sparqlType() {
+        return SparqlType.SPARQL;
+    }
+
+    @Override public SegmentRope generateSparql() {
         if (sparql == null)
             sparql = FinalSegmentRope.asFinal(jenaQuery.toString());
         return sparql;

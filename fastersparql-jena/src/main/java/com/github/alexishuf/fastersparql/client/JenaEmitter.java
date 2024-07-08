@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.emit.async.TaskEmitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Query;
+import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.TxnType;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Var;
@@ -15,6 +16,7 @@ import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExec;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExecBuilder;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.RowSet;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.SparqlType;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -43,7 +45,9 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
                           String displayLocation,
                           SparqlQuery query, QueryExecBuilder execFac) {
         super(batchType, vars, CREATED, TASK_FLAGS);
-        var jQuery = JenaSparqlQuery.unwrap(query);
+        var sparqlType = query.sparqlType();
+        Query jQuery = query instanceof JenaSparqlQuery jq ? jq.jenaQuery()
+                     : QueryFactory.create(sparqlType.sparql(query).toString());
         // required in order to make jena remember values assigned to variables at rebind():
         jQuery.setQueryResultStar(false);
         this.transactional   = transactional;
@@ -54,8 +58,10 @@ public abstract class JenaEmitter<B extends Batch<B>, E extends JenaEmitter<B, E
         this.prefBatchRows   = Math.max(1, bt.preferredRowsPerBatch(outCols));
         this.jVars           = new Var[vars.size()];
         int outIdx = 0;
-        for (String str : jQuery.getResultVars())
-            jVars[outIdx++] = Var.alloc(str);
+        if (sparqlType == SparqlType.SPARQL) {
+            for (String str : jQuery.getResultVars())
+                jVars[outIdx++] = Var.alloc(str);
+        }
     }
 
     @Override protected void doRelease() {

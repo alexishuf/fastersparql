@@ -69,9 +69,9 @@ class PlanTest {
         var dedup    = FS.dedup(FS.project(tp, Vars.EMPTY));
 
         String expected = "ASK \n{\n " + tpString + " .\n}";
-        assertEquals(expected, reduced.sparql().toString());
-        assertEquals(expected, distinct.sparql().toString());
-        assertEquals(expected, dedup.sparql().toString());
+        assertEquals(expected, reduced.sparqlType().sparql(reduced).toString());
+        assertEquals(expected, distinct.sparqlType().sparql(distinct).toString());
+        assertEquals(expected, dedup.sparqlType().sparql(dedup).toString());
     }
 
     @Test void testToAsk() {

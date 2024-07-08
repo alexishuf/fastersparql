@@ -67,7 +67,7 @@ public final class FedMetrics {
 
     @Override
     public String toString() {
-        SegmentRope sparql = input.sparql();
+        SegmentRope sparql = input.sparqlType().sparql(input);
         String sparqlString = sparql.toString().replace("\n", "\\n").replace("\r", "\\r");
         return format("FedMetrics{dispatchMs=%.3f, selectionAndAgglutinationMs=%.3f, " +
                       "optimizationMs=%.3f, input=%s, federation=%s, plan=%s}",

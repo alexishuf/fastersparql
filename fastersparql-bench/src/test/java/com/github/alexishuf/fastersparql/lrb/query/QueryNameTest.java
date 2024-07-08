@@ -39,7 +39,7 @@ class QueryNameTest {
     public void testOpaqueQuery(QueryName name) {
         OpaqueSparqlQuery q = name.opaque();
         assertNotNull(q);
-        assertTrue(q.sparql().len > 0);
+        assertTrue(q.sparqlType().sparql(q).len > 0);
         assertFalse(q.publicVars().isEmpty());
     }
 

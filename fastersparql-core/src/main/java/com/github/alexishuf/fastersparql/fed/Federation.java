@@ -376,7 +376,7 @@ public class Federation extends AbstractSparqlClient {
                     if (!(q.client instanceof UnboundSparqlClient)) yield q;
                     var sq = (q).sparql;
                     if (sq instanceof Plan p) yield p.transform(this, ctx);
-                    yield mutateSanitize(SparqlParser.parse(q.sparql()));
+                    yield mutateSanitize(SparqlParser.parse(q.sparqlType().sparql(q)));
                 }
                 default -> parent;
             };

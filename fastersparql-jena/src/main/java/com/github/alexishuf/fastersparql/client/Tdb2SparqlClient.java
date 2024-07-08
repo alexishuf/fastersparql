@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -8,12 +9,14 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.org.apache.jena.query.Dataset;
+import com.github.alexishuf.fastersparql.org.apache.jena.query.QueryFactory;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.DatasetGraph;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.core.Transactional;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExec;
 import com.github.alexishuf.fastersparql.org.apache.jena.sparql.exec.QueryExecBuilder;
 import com.github.alexishuf.fastersparql.org.apache.jena.tdb2.TDB2Factory;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.SparqlType;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -52,10 +55,14 @@ public class Tdb2SparqlClient extends AbstractSparqlClient {
         try {
             Vars vars = sparql.publicVars();
             boolean isAsk = sparql.isAsk();
-            var query = JenaSparqlQuery.unwrap(sparql);
+            var sparqlType = sparql.sparqlType();
+            var query = sparql instanceof JenaSparqlQuery jq ? jq.jenaQuery()
+                      : QueryFactory.create(sparqlType.sparql(sparql).toString());
             exec = QueryExec.dataset(dsg).query(query).build();
             var it = new RefJenaBIt<>(bt, vars, dsg, exec, isAsk);
             exec = null;
+            if (sparqlType == SparqlType.REQUIRES_MANUAL_PROJECTION)
+                ProcessorBIt.project(sparql.publicVars(), it);
             return it;
         } finally {
             if (exec != null) {

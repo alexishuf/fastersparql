@@ -101,11 +101,12 @@ public class PlanSparqlTest {
     void test() {
         List<D> data = data();
         for (int i = 0; i < data.size(); i++) {
-            String actual, ctx = "at data.get("+i+")="+data.get(i);
+            D d = data.get(i);
+            String actual, ctx = "at data.get("+i+")="+ d;
             try {
-                actual = data.get(i).in.sparql().toString();
+                actual = d.in.sparqlType().sparql(d.in).toString();
             } catch (Throwable t) { fail(ctx, t);  throw t; }
-            assertEquals(data.get(i).expected, actual, ctx);
+            assertEquals(d.expected, actual, ctx);
         }
     }
 }

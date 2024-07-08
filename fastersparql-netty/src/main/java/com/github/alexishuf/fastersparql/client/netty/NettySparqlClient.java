@@ -28,7 +28,6 @@ import com.github.alexishuf.fastersparql.exceptions.FSServerException;
 import com.github.alexishuf.fastersparql.model.MediaType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
@@ -102,7 +101,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
 
     private FullHttpRequest createRequest(SparqlQuery qry) {
         var cfg = endpoint.configuration();
-        SegmentRope sparql = qry.sparql();
+        // this is fine: parsers will project if SPARQL does not match qry.publicVars()
+        var sparql = qry.sparqlType().sparql(qry);
         var method = method(cfg, sparql.len());
         ByteBuf body = switch (method) {
             case POST -> asByteBuf(sparql);

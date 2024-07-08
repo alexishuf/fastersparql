@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.lrb.sources;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
+import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
@@ -13,6 +14,7 @@ import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.MutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
+import com.github.alexishuf.fastersparql.sparql.SparqlType;
 import com.github.alexishuf.fastersparql.sparql.results.InvalidSparqlResultsException;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
@@ -150,9 +152,13 @@ public class FedXSparqlClient extends AbstractSparqlClient {
         if (conn == null)
             conn = new ConnState(fedX.getConnection());
         try {
-            TupleQuery plan = conn.plan(sparql.sparql());
+            var type = sparql.sparqlType();
+            TupleQuery plan = conn.plan(type.sparql(sparql));
             plan.setMaxExecutionTime(0);
-            return new FedXBIt<>(bt, sparql.publicVars(), conn, plan);
+            BIt<B> it = new FedXBIt<>(bt, sparql.publicVars(), conn, plan);
+            if (type == SparqlType.REQUIRES_MANUAL_PROJECTION)
+                it = ProcessorBIt.project(sparql.publicVars(), it);
+            return it;
         } catch (Throwable t) {
             conn.close();
             throw t;
