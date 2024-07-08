@@ -123,7 +123,7 @@ public class QueryBench {
     private final BenchmarkEvent jfrEvent = new BenchmarkEvent();
     private Blackhole bh;
     private int drainTimeoutMs;
-    private boolean skipWarmup;
+    private boolean skip;
 
     private static class BoundCounter<B extends Batch<B>>
             extends QueryRunner.BoundCounter<B, BoundCounter<B>>
@@ -373,7 +373,7 @@ public class QueryBench {
         long drainTimeoutMs = warmup ? maxWarmupItMs : opts.getTimeout().convertTo(MILLISECONDS);
         this.drainTimeoutMs = (int)Math.min(Integer.MAX_VALUE, drainTimeoutMs);
         if (first) {
-            skipWarmup = false;
+            skip = false;
             System.gc();
             if (thermalCooldown) {
                 System.out.print("\nThermal cooldown of 5s...");
@@ -386,10 +386,18 @@ public class QueryBench {
         } else {
             if (idle > 1_000 && iterationNumber == 0)
                 System.out.printf("Will sleep %dms before each warmup iteration\n", idle);
-            if (warmup && iterationNumber == 1 && lastIterationMs > maxWarmupItMs) {
-                skipWarmup = true;
-                System.out.println("First warmup took more time than expected for the entire " +
-                                   "trial, will skip remaining warmup iterations");
+            if (warmup) {
+                if (iterationNumber == 1 && lastIterationMs > maxWarmupItMs) {
+                    skip = true;
+                    System.out.println("First warmup took more time than expected for the entire " +
+                                       "trial, will skip remaining warmup iterations");
+                }
+            } else if (skip) {
+                System.out.println("Skipping measurement iteration due to previous timeout");
+            } else if (lastIterationMs > drainTimeoutMs) {
+                skip = true;
+                System.out.println("Last measurement iteration timed-out. Will skip this " +
+                                   "and all subsequent measurement iterations.");
             }
             Async.uninterruptibleSleep(idle);
         }
@@ -500,7 +508,7 @@ public class QueryBench {
     }
 
     private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
-        if (skipWarmup)
+        if (skip)
             return lastBenchResult;
         this.bh = bh;
         Plan currentPlan = null;

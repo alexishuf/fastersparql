@@ -92,7 +92,7 @@ public class Jsons2Csv implements Callable<Void> {
     @Override public Void call() throws Exception {
         Map<Params, JmhResults> param2results = collectResults();
         try (var out = new PrintStream(destFile)) {
-            out.println("originDatetime,method,jvm,jdkVersion,vmVersion,warmupTime,warmupIterations,measurementTime,measurementIterations,threads,forks,jvmArgs,queries,source,selector,builtinPlans,crossSourceDedup,batch,flow,weakenDistinct,thermalCooldown,unionSource,fork,iteration,ms\r\n");
+            out.println("originDatetime,method,jvm,jdkVersion,vmVersion,warmupTime,warmupIterations,measurementTime,measurementIterations,threads,forks,jvmArgs,queries,source,selector,builtinPlans,crossSourceDedup,batch,flow,weakenDistinct,thermalCooldown,unionSource,fork,iteration,ms,timedout\r\n");
             StringBuilder shared = new StringBuilder();
             for (var r : param2results.values()) {
                 shared.setLength(0);
@@ -126,11 +126,23 @@ public class Jsons2Csv implements Callable<Void> {
                     throw new IllegalArgumentException("Expected scoreUnit=ms/op");
                 for (int fork = 0; fork < r.primaryMetric.rawData.length; fork++) {
                     double[] forkData = r.primaryMetric.rawData[fork];
+                    if (forkData.length == 0) continue;
+                    double firstMs = forkData[0];
+                    Boolean timeout = forkData.length == 1 ? null : true;
+                    for (int iteration = 1; iteration < forkData.length; iteration++) {
+                        if (forkData[iteration] > Math.min(firstMs/1_000.0, 10)) {
+                            timeout = false;
+                            break;
+                        }
+                    }
+                    String timeoutStr = timeout == null ? "" : timeout.toString();
                     for (int iteration = 0; iteration < forkData.length; iteration++) {
                         out.append(shared);
                         out.append(Integer.toString(fork)).append(',');
                         out.append(Integer.toString(iteration)).append(',');
-                        out.append(Double.toString(forkData[iteration])).append("\r\n");
+                        double ms = Boolean.TRUE.equals(timeout) ? firstMs : forkData[iteration];
+                        out.append(Double.toString(ms)).append(',');
+                        out.append(timeoutStr).append("\r\n");
                     }
                 }
             }
