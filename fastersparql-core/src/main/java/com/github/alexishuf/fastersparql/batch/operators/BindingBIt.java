@@ -18,6 +18,7 @@ import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -49,6 +50,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         super(projection != null ? projection : bindQuery.resultVars(),
               EmptyBIt.of(bindQuery.bindings.batchType()));
         this.guards = GUARDS_ALLOC.create();
+        this.guards.clear();
         var left = bindQuery.bindings;
         Vars leftPublicVars = left.vars();
         Vars rFree = bindQuery.query.publicVars().minus(leftPublicVars);
@@ -72,11 +74,14 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
         if (guards != null) {
-            for (var g : guards) {
+            for (int i = 0, n = guards.size(); i < n; ++i) {
+                var g = guards.get(i);
+                guards.set(i, null);
                 try {
                     g.close();
                 } catch (Throwable t) { reportCleanupError(t); }
             }
+            guards.clear();
             guards = GUARDS_ALLOC.offer(guards);
         }
         lb = Batch.safeRecycle(lb, this);
