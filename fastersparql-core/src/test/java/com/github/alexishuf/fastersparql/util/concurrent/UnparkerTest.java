@@ -25,7 +25,7 @@ class UnparkerTest {
                 semaphore.release();
             }, "parker-"+round);
             parked.start();
-            Unparker.unpark(parked);
+            LockSupport.unpark(parked);
             assertTimeout(ofSeconds(1), () -> semaphore.acquireUninterruptibly());
             assertEquals(0, semaphore.availablePermits());
         }
@@ -113,7 +113,7 @@ class UnparkerTest {
                 while (!interrupted()) {
                     canUnpark.acquire();
                     for (int i = parkersBegin; i < parkersEnd; i++)
-                        Unparker.unpark(parkers[i]);
+                        LockSupport.unpark(parkers[i]);
                 }
             } catch (InterruptedException ignored) {}
         }

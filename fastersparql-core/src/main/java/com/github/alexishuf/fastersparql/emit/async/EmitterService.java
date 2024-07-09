@@ -1,6 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
@@ -186,15 +186,16 @@ public final class EmitterService {
         }
     }
     private static abstract class Worker_2 extends Worker_1 {
-        protected static final VarHandle PARKED;
+        protected static final VarHandle PARKED, UNPARKED;
         static {
             try {
                 PARKED = MethodHandles.lookup().findVarHandle(Worker_2.class, "plainParked", int.class);
+                UNPARKED = MethodHandles.lookup().findVarHandle(Worker_2.class, "plainUnparked", int.class);
             } catch (NoSuchFieldException|IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
-        protected int plainParked;
+        protected int plainParked, plainUnparked;
 
         public Worker_2(@Nullable ThreadGroup group, EmitterService svc, int id) {
             super(group, svc, id);
@@ -213,21 +214,28 @@ public final class EmitterService {
         boolean unparkNow() {
             if ((int)PARKED.getOpaque(this) == 0)
                 return false;
-            plainParked = 1;
+            plainUnparked = 0;
+            plainParked   = 0;
             LockSupport.unpark(this);
             return true;
         }
 
-        boolean unpark() {
-            if ((int)PARKED.getOpaque(this) == 0)
-                return false;
-            Unparker.unpark(this);
-            return true;
+        boolean tryUnpark() {
+            if ((int)PARKED.getOpaque(this) != 0 && (int)UNPARKED.getOpaque(this) == 0) {
+                plainUnparked = 1; // will be read by UnparkWorkers.run()
+                return true;
+            }
+            return false;
+        }
+
+        void unpark() {
+            plainUnparked = 1; // will be read by UnparkWorkers.run()
         }
 
         void park() {
             if ((int)PARKED.getOpaque(this) == 0) {
-                plainParked = 1;
+                plainParked   = 1;    // notify intent to park
+                plainUnparked = 0;  // not parking yet, do not unpark me
             } else {
                 LockSupport.park();
                 plainParked = 0;
@@ -275,6 +283,7 @@ public final class EmitterService {
         } finally { SVC_INIT_LOCK.setRelease(0); }
     }
 
+    @SuppressWarnings("FieldCanBeLocal")
     private final EmitterService.Worker[] workers;
     private final BitSet cpuAffinity;
     private final TaskQueue queue;
@@ -289,6 +298,27 @@ public final class EmitterService {
         queue = new TaskQueue(workers);
         for (Worker w : workers)
             w.start();
+        Timestamp.onTick(0xd1454270, new UnparkWorkers(this));
+    }
+
+    private record UnparkWorkers(EmitterService svc) implements Runnable {
+        @Override public void run() { svc.unparkWorkers(); }
+        @Override public String toString() {return "UnparkWorkers";}
+    }
+
+    private boolean unparkWorkers() {
+        boolean unparked = false;
+        for (var w : workers) {
+            if ((int)Worker.UNPARKED.getOpaque(w) != 0) {
+                w.plainUnparked = 0; // do not unpark before a new Worker.unpark()
+                if ((int)Worker.PARKED.getOpaque(w) != 0) {
+                    w.plainParked = 0; // suppress w.unparkNow() until Worker.park()
+                    LockSupport.unpark(w);
+                    unparked = true;
+                }
+            }
+        }
+        return unparked;
     }
 
     @Override public String toString() {return "EmitterService";}
@@ -299,7 +329,7 @@ public final class EmitterService {
     }
 
     public static void yieldWorker() {
-        if (!Unparker.volunteer())
+        if (!SVC.unparkWorkers())
             Thread.yield();
     }
 

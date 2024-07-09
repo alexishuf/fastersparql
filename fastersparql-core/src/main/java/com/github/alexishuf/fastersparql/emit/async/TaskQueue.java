@@ -95,6 +95,7 @@ class TaskQueue {
             return task;
         }
 
+        @SuppressWarnings("BooleanMethodIsAlwaysInverted")
         final boolean spinOffer(@NonNull Task<?> task) {
             int size;
             while ((size=(int)S.getAndSetAcquire(this, LOCKED)) == LOCKED)
@@ -105,8 +106,8 @@ class TaskQueue {
             S.setRelease(this, size);
             switch (size) {
                 case 1 -> { if (!worker.unparkNow()) friend0.unpark(); }
-                case 2 -> { if (!friend0.unpark())   friend1.unpark(); }
-                case 3 ->                            friend1.unparkNow();
+                case 2 -> { if (!friend0.tryUnpark())friend1.unpark(); }
+                case 3 ->                            friend1.unpark();
             }
             return add;
         }

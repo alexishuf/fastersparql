@@ -50,13 +50,13 @@ public abstract class SingleThreadBackgroundTask<T, Q extends MessagePassingQueu
         while (!work.offer(item))
             Thread.yield(); // queue is unbounded, should never run
         if ((int)PARKED.compareAndExchangeAcquire(this, 1, 0) == 1)
-            Unparker.unpark(this);
+            LockSupport.unpark(this);
     }
 
     @Override public void sync(CountDownLatch latch) {
         if (sync.offer(latch)) {
             PARKED.setRelease(this, 0);
-            Unparker.unpark(this);
+            LockSupport.unpark(this);
         } else {
             assert false : "queue.offer() == false on unbounded queue";
             latch.countDown();
@@ -98,7 +98,7 @@ public abstract class SingleThreadBackgroundTask<T, Q extends MessagePassingQueu
     static final class AnswerSync implements Consumer<Object> {
         @Override public void accept(Object o) {
             try {
-                if      (o instanceof Thread         t) Unparker.unpark(t);
+                if      (o instanceof Thread         t) LockSupport.unpark(t);
                 else if (o instanceof CountDownLatch l) l.countDown();
                 else                                    log.error("Unexpected sync object: {}", o);
             } catch (Throwable t) {

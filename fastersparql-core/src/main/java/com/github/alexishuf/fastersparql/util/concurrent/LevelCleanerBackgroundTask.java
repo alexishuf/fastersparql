@@ -78,7 +78,7 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
 
     @Override public void sync(CountDownLatch latch) {
         if (sync.offer(latch)) {
-            Unparker.unpark(this);
+            LockSupport.unpark(this);
         } else {
             latch.countDown();
             assert false : "offer() == false on unbounded queue";
@@ -92,7 +92,7 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
             while (!queues[level].offer(obj))
                 Thread.yield(); // offer() always returns true as queue is unbounded
             if ((int)PARKED.compareAndExchangeRelease(this, 1, 0) == 1)
-                Unparker.unpark(this);
+                LockSupport.unpark(this);
         }
     }
 

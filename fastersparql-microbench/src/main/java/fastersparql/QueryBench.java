@@ -449,12 +449,12 @@ public class QueryBench {
         Watchdog.reset();
         dbgExecution = execution;
         watchdogPlan = plan;
-        Unparker.unpark(watchdog);
+        LockSupport.unpark(watchdog);
     }
     private void disarmWatchdog() {
         watchdogPlan = null;
         dbgExecution = null;
-        Unparker.unpark(watchdog);
+        LockSupport.unpark(watchdog);
     }
     private void dump(Plan plan, @Nullable StreamNode streamNode, String tag) {
         try {

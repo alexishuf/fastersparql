@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.grep;
 import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -229,7 +228,7 @@ public class FileScanner implements SafeCloseable {
                     LIVE_CHUNKS.getAndAddRelease(FileScanner.this, -1); // allow new FileChunkTask()
                 }
                 ACTIVE_CHUNKS.getAndAddRelease(FileScanner.this, -1);
-                Unparker.unpark((Thread)USER.getOpaque(FileScanner.this));
+                LockSupport.unpark((Thread)USER.getOpaque(FileScanner.this));
             }
         }
 

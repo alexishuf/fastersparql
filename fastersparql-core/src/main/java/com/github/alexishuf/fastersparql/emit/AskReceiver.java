@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -114,7 +113,7 @@ public abstract class AskReceiver<B extends Batch<B>>
         if (batch.rows > 0) {
             if ((int)RESULTS.getAndSetRelease(this, 1) > 0)
                 up.cancel(); // upstream should be a LIMIT 1 filter, if it was not, stop emitting
-            Unparker.unpark(consumer);
+            LockSupport.unpark(consumer);
         }
     }
 
@@ -122,7 +121,7 @@ public abstract class AskReceiver<B extends Batch<B>>
         this.state = state;
         if (plainResult == -1)
             RESULTS.setRelease(this, 0);
-        Unparker.unpark(consumer);
+        LockSupport.unpark(consumer);
     }
 
     @Override public void onComplete() { onTermination(Stateful.COMPLETED); }

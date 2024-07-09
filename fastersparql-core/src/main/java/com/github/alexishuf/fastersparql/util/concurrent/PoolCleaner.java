@@ -59,7 +59,7 @@ public class PoolCleaner implements BackgroundTask {
     @Override public void sync(CountDownLatch latch) {
         while (!sync.offer(latch))
             Thread.yield();
-        Unparker.unpark(thread);
+        LockSupport.unpark(thread);
     }
 
     protected void run() {

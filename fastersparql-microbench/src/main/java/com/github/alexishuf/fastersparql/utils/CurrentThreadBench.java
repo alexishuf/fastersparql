@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.utils;
 
 
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import org.openjdk.jmh.annotations.*;
 
 import java.lang.invoke.VarHandle;
@@ -51,13 +50,13 @@ public class CurrentThreadBench {
 
     @Benchmark public Thread unparkNotParked() {
         Thread t = thread;
-        Unparker.unpark(t);
+        LockSupport.unpark(t);
         return t;
     }
 
     @Benchmark public Thread unparkNull() {
         Thread t = nil;
-        Unparker.unpark(t);
+        LockSupport.unpark(t);
         return t;
     }
 }

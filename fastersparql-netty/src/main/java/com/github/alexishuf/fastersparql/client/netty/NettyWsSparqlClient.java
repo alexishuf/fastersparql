@@ -39,7 +39,6 @@ import com.github.alexishuf.fastersparql.util.StreamNodeRegistry;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.BitsetRunnable;
 import com.github.alexishuf.fastersparql.util.concurrent.LongRenderer;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import io.netty.buffer.ByteBuf;
@@ -254,7 +253,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
         @Override public void cancelBindings() {
             if (bindQuery != null) {
                 bindQuery.bindings.tryCancel();
-                Unparker.unpark(sendBindingsThread);
+                LockSupport.unpark(sendBindingsThread);
             }
         }
         @Override public String renderState() { return state().name(); }
@@ -267,7 +266,7 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
 
             @Override protected void handleBindRequest(long n) {
                 if (Async.maxRelease(WsBIt.BIND_REQUEST, WsBIt.this, n))
-                    Unparker.unpark(sendBindingsThread);
+                    LockSupport.unpark(sendBindingsThread);
             }
             @Override protected void onPing() {h.sendPingAck();}
         }

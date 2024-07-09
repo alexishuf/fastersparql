@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
@@ -65,7 +64,7 @@ public class QueueBench {
     @TearDown(Level.Trial) public void trialTearDown() throws InterruptedException {
         seedInputs.recycle(this);
         stopFeeder = true;
-        Unparker.unpark(feederThread);
+        LockSupport.unpark(feederThread);
         feederThread.join(1_000);
         System.out.printf("Max invocations/iteration: %d\n", maxInvocations);
     }
@@ -116,7 +115,7 @@ public class QueueBench {
         it.maxReadyItems(maxItems);
         while (this.it != null) Thread.onSpinWait();
         this.it = it;
-        Unparker.unpark(this.feederThread);
+        LockSupport.unpark(this.feederThread);
         int count = 0;
         try (var g = new Guard.BatchGuard<B>(this)) {
             for (B b; (b = g.nextBatch(it)) != null; ) {

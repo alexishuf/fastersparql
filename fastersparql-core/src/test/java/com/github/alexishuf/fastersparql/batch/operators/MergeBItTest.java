@@ -10,7 +10,6 @@ import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.util.IntList;
 import com.github.alexishuf.fastersparql.util.concurrent.DebugJournal;
-import com.github.alexishuf.fastersparql.util.concurrent.Unparker;
 import com.github.alexishuf.fastersparql.util.concurrent.Watchdog;
 import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
 import com.github.alexishuf.fastersparql.util.owned.Guard.ItGuard;
@@ -307,7 +306,7 @@ class MergeBItTest extends AbstractMergeBItTest {
 
         @Override public void close() {
             stop = true;
-            Unparker.unpark(thread);
+            LockSupport.unpark(thread);
             for (TermBatch b : batches) {
                 if (b != null) b.recycle(this);
             }
@@ -337,7 +336,7 @@ class MergeBItTest extends AbstractMergeBItTest {
             assertNull(this.cb, "still feeding");
             this.cb = cb;
             //journal.write("feed", cb, ": unpark()ing");
-            Unparker.unpark(thread);
+            LockSupport.unpark(thread);
         }
 
         public boolean await(long nanos) {
