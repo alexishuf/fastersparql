@@ -196,6 +196,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private byte yields;
         private long[] rowSkel;
         // ---------- fields below this line are accessed only on construction/rebind()
+        private int lastRebindSeq = -1;
         private @MonotonicNonNull Vars lastBindingVars;
         private byte sInCol, pInCol, oInCol;
         private final TriplePattern tp;
@@ -284,6 +285,9 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
+            if (lastRebindSeq == binding.sequence)
+                return; // duplicate rebind() due to diamond pattern (scatter/gather)
+            lastRebindSeq = binding.sequence;
             Vars bVars = binding.vars;
             if (EmitterStats.ENABLED  && stats != null)
                 stats.onRebind(binding);
