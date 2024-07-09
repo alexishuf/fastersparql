@@ -105,9 +105,9 @@ class TaskQueue {
                 data[base+((head+size++)&mask)] = task;
             S.setRelease(this, size);
             switch (size) {
-                case 1 -> { if (!worker.unparkNow()) friend0.unpark(); }
-                case 2 -> { if (!friend0.tryUnpark())friend1.unpark(); }
-                case 3 ->                            friend1.unpark();
+                case 1 -> worker.unparkNow();
+                case 2 -> friend0.unpark();
+                case 3 -> friend1.unpark();
             }
             return add;
         }
