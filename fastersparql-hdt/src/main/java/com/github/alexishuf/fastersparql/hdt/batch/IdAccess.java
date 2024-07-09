@@ -432,11 +432,12 @@ public class IdAccess {
         var string = toHdtString(term);
         if (string == null) return 0;
         var role = SUBJECT;
-        long id = dict.getShared().locate(string);
+        boolean isLit = term.type() == Term.Type.LIT;
+        long id = isLit ? 0 : dict.getShared().locate(string);
         if (id == 0) {
-            if ((id = dict.getSubjects().locate(string)) == 0) {
+            if (isLit || (id = dict.getSubjects().locate(string)) == 0) {
                 role = OBJECT;
-                if ((id = dict.getObjects().locate(string)) == 0) {
+                if ((id = dict.getObjects().locate(string)) == 0 && term.isIri()) {
                     role = PREDICATE;
                     id = dict.getPredicates().locate(string);
                 }
