@@ -91,7 +91,6 @@ import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
-import static java.lang.System.arraycopy;
 import static java.util.Arrays.copyOfRange;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
@@ -858,13 +857,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private BatchBinding requestedBinding;
         private Batch<?> requestedBindingBatch;
         long[] unsrcIds;
-        private short[] skelCol2InCol = EMPTY_SHORT;
-        private long [] rowSkels      = EMPTY_LONG;
         private volatile int asyncDone;
         private volatile int asyncBottom;
         private final short dictId;
         byte unsrcIdsCols, sOutCol, pOutCol, oOutCol;
-        private byte sInCol, pInCol, oInCol, rowSkelCols;
+        private byte sInCol, pInCol, oInCol;
         final long sId, pId, oId;
         private BatchBinding asyncBinding;
         private LocalityCompositeDict.Lookup asyncL;
@@ -899,8 +896,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             requestedBinding      = null;
             requestedBindingBatch = null;
             unsrcIds              = recycleLongsAndGetEmpty(unsrcIds);
-            rowSkels              = recycleLongsAndGetEmpty(rowSkels);
-            skelCol2InCol         = recycleShortsAndGetEmpty(skelCol2InCol);
             super.doRelease();
         }
 
@@ -922,19 +917,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             this.unsrcIdsCols = cols;
         }
 
-        void setupBindSkel(boolean bindSkel, Vars outVars, Vars bindingVars) {
-            if (bindSkel) {
-                int outCols = outVars.size();
-                rowSkelCols = (byte)outCols;
-                if (skelCol2InCol.length < outCols)
-                    skelCol2InCol = shortsAtLeast(outCols);
-                for (int c = 0; c < outCols; c++)
-                    skelCol2InCol[c] = (short)bindingVars.indexOf(outVars.get(c));
-            } else {
-                rowSkelCols = 0;
-            }
-        }
-
         void request(BatchBinding binding) {
             short bottom = (short) max(1, binding.row);
             Batch<?> bb = binding.batch;
@@ -942,8 +924,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             stop();
             if (rows*unsrcIdsCols > unsrcIds.length)
                 unsrcIds = longsAtLeast(rows*unsrcIdsCols, unsrcIds);
-            if (rows*rowSkelCols > rowSkels.length)
-                rowSkels = longsAtLeast(rows*rowSkelCols, rowSkels);
             requestedBindingBatch = bb;
             requestedBinding      = binding;
             asyncBinding          = binding;
@@ -1011,19 +991,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         private void fetchRowSync(BatchBinding b) {
-            short r = b.row;
+            int r = b.row;
             if (sInCol >= 0) unsrcIds[sOutCol] = toUnsourcedId(sInCol, r, b, syncL, syncV);
             if (pInCol >= 0) unsrcIds[pOutCol] = toUnsourcedId(pInCol, r, b, syncL, syncV);
             if (oInCol >= 0) unsrcIds[oOutCol] = toUnsourcedId(oInCol, r, b, syncL, syncV);
-            final byte rowSkelCols = this.rowSkelCols;
-            if (rowSkelCols != 0) {
-                final short[] skelCol2InCol = this.skelCol2InCol;
-                for (int c = 0; c < rowSkelCols; c++) {
-                    int bc = skelCol2InCol[c];
-                    rowSkels[c] = bc < 0 ? NOT_FOUND
-                            : source(toUnsourcedId(bc, r, b, syncL, syncV), dictId);
-                }
-            }
         }
 
         private LocalityCompositeDict.Lookup doAsyncInit() {
@@ -1042,12 +1013,11 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 return;
             var asyncV = this.asyncV;
             final var b = requireNonNull(this.asyncBinding); // compiler should copy reference to stack
-            long[] rowSkels = this.rowSkels;
             long[] unsrcIds = this.unsrcIds;
             byte  sInCol = this. sInCol,  pInCol = this. pInCol,  oInCol = this. oInCol;
             byte sOutCol = this.sOutCol, pOutCol = this.pOutCol, oOutCol = this.oOutCol;
             byte outCols = this.unsrcIdsCols;
-            byte rowSkelCols = this.rowSkelCols, i = 0;
+            byte i = 0;
             boolean notEnd = false;
             base = (short)(r*outCols);
             for (; i < CHUNK_ROWS && (notEnd=r>=asyncBottom); ++i, base-=outCols) {
@@ -1057,15 +1027,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     unsrcIds[base+pOutCol] = toUnsourcedId(pInCol, r, b, asyncL, asyncV);
                 if (oInCol >= 0)
                     unsrcIds[base+oOutCol] = toUnsourcedId(oInCol, r, b, asyncL, asyncV);
-                if (rowSkelCols > 0) {
-                    int rsBase = r*rowSkelCols;
-                    short[] skelCol2InCol = this.skelCol2InCol;
-                    for (int c = 0; c < rowSkelCols; c++) {
-                        int bc = skelCol2InCol[c];
-                        rowSkels[rsBase+c] = bc < 0 ? NOT_FOUND
-                                : source(toUnsourcedId(bc, r, b, asyncL, asyncV), dictId);
-                    }
-                }
                 asyncDone = r--;
             }
             if (notEnd)
@@ -1082,16 +1043,15 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 .flag(HAS_UNSET_OUT, "HAS_UNSET_OUT")
                 .build();
 
+        private boolean retry;
         private final byte cols;
+        private byte freeRoles;
         private byte outCol0, outCol1, outCol2;
         private final short dictId = (short)StoreSparqlClient.this.dictId;
-        private byte freeRoles;
-        //private byte yields;
-        private boolean retry;
         private Object it;
-        private long[] rowSkels = EMPTY_LONG;
-        private int rowSkelBegin;
+        private long skel0, skel1, skel2;
         // ---------- fields below this line are accessed only on construction/rebind()
+        private byte skel0unsrcCol, skel1unsrcCol, skel2unsrcCol;
         private final PrefetchTask pref;
         private int lastRebindSeq = -1;
         private final TriplePattern tp;
@@ -1101,7 +1061,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         public TPEmitter(TriplePattern tp, Vars outVars) {
             super(TYPE, outVars, CREATED, FLAGS);
             int cols = outVars.size();
-            if (cols > 127)
+            if (cols > 3 || !tp.vars.containsAll(outVars))
                 throw new IllegalArgumentException("Too many output columns");
             this.cols         = (byte)cols;
             this.tp           = tp;
@@ -1147,9 +1107,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
             lastBindingsVars = bindingVars;
             freeRoles = 0;
             int sInCol = -1, pInCol = -1, oInCol = -1;
-            if (tp.s.isVar() && (sInCol = bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
-            if (tp.p.isVar() && (pInCol = bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
-            if (tp.o.isVar() && (oInCol = bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
+            if (tp.s.isVar() && (sInCol=bindingVars.indexOf(tp.s)) < 0) freeRoles |= SUB_BITS;
+            if (tp.p.isVar() && (pInCol=bindingVars.indexOf(tp.p)) < 0) freeRoles |= PRE_BITS;
+            if (tp.o.isVar() && (oInCol=bindingVars.indexOf(tp.o)) < 0) freeRoles |= OBJ_BITS;
             pref.setInCols(sInCol, pInCol, oInCol);
             byte sc = (byte)vars.indexOf(tp.s);
             byte pc = (byte)vars.indexOf(tp.p);
@@ -1168,15 +1128,30 @@ public class StoreSparqlClient extends AbstractSparqlClient
             outCol0 = o0;
             outCol1 = o1;
             outCol2 = o2;
-            int colsSet = 0;
-            if (o0 != -1                        ) ++colsSet;
-            if (o1 != -1 && o1 != o0            ) ++colsSet;
-            if (o2 != -1 && o2 != o0 && o2 != o1) ++colsSet;
-            pref.setupBindSkel(colsSet < cols, vars, bindingVars);
-            if (colsSet < cols)
-                setFlagsRelease(HAS_UNSET_OUT);
-            else
-                clearFlagsRelease(HAS_UNSET_OUT);
+            skel0unsrcCol = -1;
+            skel1unsrcCol = -1;
+            skel2unsrcCol = -1;
+            boolean hasUnset = false;
+            if (sc >= 0 && sInCol >= 0) { // subject is a var filled from bindings
+                hasUnset = true;
+                if      (sc == 0) skel0unsrcCol = pref.sOutCol;
+                else if (sc == 1) skel1unsrcCol = pref.sOutCol;
+                else if (sc == 2) skel2unsrcCol = pref.sOutCol;
+            }
+            if (pc >= 0 && pInCol >= 0) { // predicate is a var filled from bindings
+                hasUnset = true;
+                if      (pc == 0) skel0unsrcCol = pref.pOutCol;
+                else if (pc == 1) skel1unsrcCol = pref.pOutCol;
+                else if (pc == 2) skel2unsrcCol = pref.pOutCol;
+            }
+            if (oc >= 0 && oInCol >= 0) { // subject is a var filled from bindings
+                hasUnset = true;
+                if      (oc == 0) skel0unsrcCol = pref.oOutCol;
+                else if (oc == 1) skel1unsrcCol = pref.oOutCol;
+                else if (oc == 2) skel2unsrcCol = pref.oOutCol;
+            }
+            if (hasUnset)   setFlagsRelease(HAS_UNSET_OUT);
+            else          clearFlagsRelease(HAS_UNSET_OUT);
         }
 
         @Override public void rebindPrefetchEnd() { pref.stop(); }
@@ -1208,8 +1183,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 if (!bVars.equals(lastBindingsVars))       bindingVarsChanged(bVars);
 
                 int fetchedRow = pref.awaitRow(binding), base = pref.unsrcIdsCols*fetchedRow;
-                rowSkels     = pref.rowSkels;
-                rowSkelBegin = cols*fetchedRow;
                 long[] unsourcedIds = pref.unsrcIds;
                 long s = pref.sOutCol < 0 ? pref.sId : unsourcedIds[base+pref.sOutCol];
                 long p = pref.pOutCol < 0 ? pref.pId : unsourcedIds[base+pref.pOutCol];
@@ -1224,6 +1197,10 @@ public class StoreSparqlClient extends AbstractSparqlClient
                     case     SUB_PRE_BITS -> ops.pairs  (o,    (Triples.PairIt  )it);
                     case SUB_PRE_OBJ_BITS -> spo.scan   (      (Triples.ScanIt  )it);
                 }
+                byte suc0 = skel0unsrcCol, suc1 = skel1unsrcCol, suc2 = skel2unsrcCol;
+                skel0 = suc0 < 0 ? NOT_FOUND : source(unsourcedIds[base+suc0], dictId);
+                skel1 = suc1 < 0 ? NOT_FOUND : source(unsourcedIds[base+suc1], dictId);
+                skel2 = suc2 < 0 ? NOT_FOUND : source(unsourcedIds[base+suc2], dictId);
             } finally {
                 unlock();
             }
@@ -1269,23 +1246,28 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return retry ? state : COMPLETED;
         }
 
+        private void fillSkel(long[] a, int base) {
+            if (cols > 0) a[base  ] = skel0;
+            if (cols > 1) a[base+1] = skel1;
+            if (cols > 2) a[base+2] = skel2;
+        }
+
         @SuppressWarnings("SameReturnValue") private void fillAsk(StoreBatch b) {
             if (it == TRUE) {
-                if ((statePlain()&HAS_UNSET_OUT) != 0)
-                    arraycopy(rowSkels, rowSkelBegin, b.arr, 0, cols);
+                fillSkel(b.arr, 0);
                 b.rows = 1;
             }
         }
 
         private void fillValue(StoreBatch b, short limit) {
-            short rows = 0;
-            long[] a = b.arr;
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
             boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0;
+            short rows = 0;
+            long[] a = b.arr;
             var it = (Triples.ValueIt)this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset     ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
+                if (hasUnset) fillSkel(a, base);
                 if (outCol0  >= 0) a[base+outCol0] = source(it.valueId, dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
@@ -1294,14 +1276,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         private void fillPair(StoreBatch b, short limit) {
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
             short rows = 0;
             boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0, outCol1 = this.outCol1;
             long[] a = b.arr;
-            long deadline = Timestamp.nextTick(LIMIT_TICKS);
             var it = (Triples.PairIt) this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset      ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
+                if (hasUnset) fillSkel(a, base);
                 if (outCol0   >= 0) a[base+outCol0] = source(it.subKeyId, dictId);
                 if (outCol1   >= 0) a[base+outCol1] = source(it.valueId,  dictId);
                 ++rows;
@@ -1311,14 +1293,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         private void fillSubKey(StoreBatch b, short limit) {
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
             short rows = 0;
             byte outCol0 = this.outCol0;
             boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             long[] a = b.arr;
-            long deadline = Timestamp.nextTick(LIMIT_TICKS);
             var it = (Triples.SubKeyIt)this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset      ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
+                if (hasUnset) fillSkel(a, base);
                 if (outCol0   >= 0) a[base+outCol0] = source(it.subKeyId, dictId);
                 ++rows;
                 if ((rows&DEADLINE_CHK) == DEADLINE_CHK && Timestamp.nanoTime() > deadline) break;
@@ -1327,14 +1309,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
         private void fillScan(StoreBatch b, short limit) {
+            long deadline = Timestamp.nextTick(LIMIT_TICKS);
             short rows = 0;
             boolean hasUnset = (statePlain()&HAS_UNSET_OUT) != 0;
             byte outCol0 = this.outCol0, outCol1 = this.outCol1, outCol2 = this.outCol2;
             long[] a = b.arr;
-            long deadline = Timestamp.nextTick(LIMIT_TICKS);
             var it = (Triples.ScanIt) this.it;
             for (int base = 0; rows < limit && (retry = it.advance()); base += cols) {
-                if (hasUnset      ) arraycopy(rowSkels, rowSkelBegin, a, base, cols);
+                if (hasUnset) fillSkel(a, base);
                 if (outCol0   >= 0) a[base+outCol0] = source(it.keyId,    dictId);
                 if (outCol1   >= 0) a[base+outCol1] = source(it.subKeyId, dictId);
                 if (outCol2   >= 0) a[base+outCol2] = source(it.valueId,  dictId);

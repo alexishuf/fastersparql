@@ -34,7 +34,10 @@ import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
-import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.concurrent.Async;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -49,13 +52,10 @@ import org.rdfhdt.hdt.triples.Triples;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
-
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.estimatorPeek;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
 import static java.lang.String.format;
-import static java.lang.System.arraycopy;
 import static java.util.Objects.requireNonNull;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
@@ -66,6 +66,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
     final int dictId;
     private final SingletonFederator federator;
     private final HdtCardinalityEstimator estimator;
+    private final IteratorTripleID emptyIt;
 
     public HdtSparqlClient(SparqlEndpoint ep) {
         super(ep);
@@ -85,6 +86,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         dictId = IdAccess.register(hdt.getDictionary());
         estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
         federator = new SingletonFederator(this, HDT, estimator);
+        emptyIt = hdt.getTriples().search(new TripleID(-1, -1, -1));
     }
 
     private void appendToSimpleLabel(StringBuilder sb, TriplePattern tp) {
@@ -184,9 +186,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
         private static final int LIMIT_TICKS       = 1;
         private static final int TIME_CHK_MASK     = 0x1f;
-        private static final int HAS_UNSET_OUT     = 0x01000000;
-        private static final Flags FLAGS = TASK_FLAGS.toBuilder()
-                .flag(HAS_UNSET_OUT, "UNSET_OUT").build();
 
         private IteratorTripleID it;
         private final short dictId = (short)HdtSparqlClient.this.dictId;
@@ -194,7 +193,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private final byte sOutCol, pOutCol, oOutCol;
         private boolean retry;
         private byte yields;
-        private long[] rowSkel;
         // ---------- fields below this line are accessed only on construction/rebind()
         private int lastRebindSeq = -1;
         private @MonotonicNonNull Vars lastBindingVars;
@@ -203,27 +201,20 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         private final Dictionary dict = HdtSparqlClient.this.hdt.getDictionary();
         private final Triples triples = HdtSparqlClient.this.hdt.getTriples();
         private final TermView view = new TermView();
-        private int @Nullable[] skelCol2InCol;
         private final TripleID search = new TripleID();
         private final Vars bindableVars;
 
         public TPEmitter(TriplePattern tp, Vars outVars) {
-            super(HDT, outVars, CREATED, FLAGS);
+            super(HDT, outVars, CREATED, TASK_FLAGS);
             int cols = outVars.size();
-            int sOutCol = outVars.indexOf(tp.s);
-            int pOutCol = outVars.indexOf(tp.p);
-            int oOutCol = outVars.indexOf(tp.o);
-            if (cols > 0x7f || sOutCol > 0x7f || pOutCol > 0x7f || oOutCol > 0x7f)
+            if (cols > 3 || !tp.vars.containsAll(outVars))
                 throw new IllegalArgumentException("Too many columns");
-            this.sOutCol = (byte)sOutCol;
-            this.pOutCol = (byte)pOutCol;
-            this.oOutCol = (byte)oOutCol;
-            this.cols = (byte)cols;
-            this.tp = tp;
+            this.sOutCol      = (byte)outVars.indexOf(tp.s);
+            this.pOutCol      = (byte)outVars.indexOf(tp.p);
+            this.oOutCol      = (byte)outVars.indexOf(tp.o);
+            this.cols         = (byte)cols;
+            this.tp           = tp;
             this.bindableVars = tp.allVars();
-            Arrays.fill(rowSkel = ArrayAlloc.longsAtLeast(cols), 0L);
-            if (!tp.publicVars().containsAll(outVars))
-                setFlagsRelease(HAS_UNSET_OUT);
             search.setSubject  (plain(dict, tp.s, SUBJECT));
             search.setPredicate(plain(dict, tp.p, PREDICATE));
             search.setObject   (plain(dict, tp.o, OBJECT));
@@ -238,14 +229,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
 
         @Override protected void doRelease() {
             try {
-                ArrayAlloc.LONG.offer(rowSkel, rowSkel.length);
-                if (skelCol2InCol != null)
-                    skelCol2InCol = ArrayAlloc.recycleInts(skelCol2InCol);
-                rowSkel = ArrayAlloc.EMPTY_LONG;
                 releaseRef();
-            } finally {
-                super.doRelease();
-            }
+            } finally {super.doRelease();}
         }
 
         @Override public TPEmitter takeOwnership(Object o) {return takeOwnership0(o);}
@@ -256,7 +241,7 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             HdtSparqlClient.this.appendToSimpleLabel(out, tp);
         }
 
-        private int bindingsVarsChanged(Vars bVars) {
+        private void bindingsVarsChanged(Vars bVars) {
             lastBindingVars = bVars;
             int sInCol = bVars.indexOf(tp.s);
             int pInCol = bVars.indexOf(tp.p);
@@ -266,22 +251,6 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             this.sInCol = (byte)sInCol;
             this.pInCol = (byte)pInCol;
             this.oInCol = (byte)oInCol;
-            var tpVars = tp.publicVars();
-            boolean hasUnset = false;
-            int cols = vars.size();
-            for (int c = 0; c < cols && !hasUnset; c++) {
-                var outVar = vars.get(c);
-                hasUnset = !tpVars.contains(outVar) || bVars.contains(outVar);
-            }
-            if (hasUnset) {
-                if (skelCol2InCol == null)
-                    skelCol2InCol = ArrayAlloc.intsAtLeast(cols);
-                for (int c = 0; c < cols; c++)
-                    skelCol2InCol[c] = bVars.indexOf(vars.get(c));
-                return setFlagsRelease(HAS_UNSET_OUT);
-            } else {
-                return clearFlagsRelease(HAS_UNSET_OUT);
-            }
         }
 
         @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -293,41 +262,21 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
                 stats.onRebind(binding);
             if (ResultJournal.ENABLED)
                 ResultJournal.rebindEmitter(this, binding);
-            int st = resetForRebind(0, LOCKED_MASK);
+            resetForRebind(0, LOCKED_MASK);
             try {
                 if (!bVars.equals(lastBindingVars))
-                    st = bindingsVarsChanged(bVars);
-                if ((st&HAS_UNSET_OUT) != 0) {
-                    int[] skelCol2InCol = this.skelCol2InCol;
-                    if (skelCol2InCol != null) {
-                        for (int c = 0; c < cols; c++) {
-                            BatchBinding nodeBinding = binding;
-                            Batch<?> node = requireNonNull(nodeBinding.batch);
-                            int bc = skelCol2InCol[c], nodeCols;
-                            while (bc >= (nodeCols=node.cols)) {
-                                bc -= nodeCols;
-                                nodeBinding = requireNonNull(nodeBinding.remainder);
-                                node = requireNonNull(nodeBinding.batch);
-                            }
-                            short row = nodeBinding.row;
-                            if (bc >= 0 && node instanceof HdtBatch hb) {
-                                long id = hb.arr[row*nodeCols + bc];
-                                if (id == NOT_FOUND || dictId(id) == dictId) {
-                                    rowSkel[c] = id;
-                                    node = null;
-                                }
-                            }
-                            if (node != null) {
-                                rowSkel[c] = bc < 0 || !node.getView(row, bc, view) ? NOT_FOUND
-                                        : IdAccess.encode(dictId, dict, view);
-                            }
-                        }
-                    }
+                    bindingsVarsChanged(bVars);
+                long s = search.getSubject(), p = search.getPredicate(), o = search.getObject();
+                if (       (s=findId(sInCol, binding, SUBJECT,   s)) == NOT_FOUND
+                        || (p=findId(pInCol, binding, PREDICATE, p)) == NOT_FOUND
+                        || (o=findId(oInCol, binding, OBJECT,    o)) == NOT_FOUND) {
+                    it = emptyIt;
+                } else {
+                    search.setSubject  (s);
+                    search.setPredicate(p);
+                    search.setObject   (o);
+                    it = triples.search(search);
                 }
-                search.setSubject  (findId(sInCol, binding, SUBJECT,   search.getSubject()));
-                search.setPredicate(findId(pInCol, binding, PREDICATE, search.getPredicate()));
-                search.setObject   (findId(oInCol, binding, OBJECT,    search.getObject()));
-                it = triples.search(search);
             } finally {
                 unlock();
             }
@@ -365,10 +314,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
             long[] arr = dst.arr;
             limit = Math.min(dst.termsCapacity/Math.max(1, cols), limit);
             short rows = 0;
-            long[] rowSkel = (statePlain()&HAS_UNSET_OUT) != 0 ? this.rowSkel : null;
             long deadline = Timestamp.nextTick(LIMIT_TICKS);
             for (int base = 0; (retry = it.hasNext()) && rows < limit; base += cols)  {
-                if (rowSkel  != null) arraycopy(rowSkel, 0, arr, base, cols);
                 var t = it.next();
                 if (sOutCol >= 0) arr[base+sOutCol] = encode(t.getSubject(),   dictId, SUBJECT);
                 if (pOutCol >= 0) arr[base+pOutCol] = encode(t.getPredicate(), dictId, PREDICATE);
