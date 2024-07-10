@@ -503,8 +503,8 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
                                      bind(right.o, this.o, OBJECT,    o));
             }
             BIt<HdtBatch> it = new HdtIteratorBIt(rightFreeVars, s, p, o, hdt.getTriples().search(query));
-            if (modifier != null)
-                it = modifier.executeFor(it, null, false);
+            if (modifier != null && !query.isNoMatch())
+                it = modifier.executeFor(it, binding, false);
             return it;
         }
     }
