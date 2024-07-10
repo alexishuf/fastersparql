@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
+import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
@@ -112,16 +113,17 @@ public class Jsons2Csv implements Callable<Void> {
                 shared.append(r.forks).append(',');
                 String jvmArgs = String.join(" ", r.jvmArgs).replaceAll("\"", "\"\"");
                 shared.append('"').append(jvmArgs).append("\",");
-                shared.append(r.params.queries).append(',');
-                shared.append(r.params.srcKind).append(',');
-                shared.append(r.params.selKind).append(',');
-                shared.append(r.params.builtinPlans).append(',');
-                shared.append(r.params.crossSourceDedup).append(',');
-                shared.append(r.params.batchKind).append(',');
-                shared.append(r.params.flowModel).append(',');
-                shared.append(r.params.weakenDistinct).append(',');
-                shared.append(r.params.thermalCooldown).append(',');
-                shared.append(r.params.unionSource).append(',');
+                Params p = r.params;
+                shared.append(p.queries).append(',');
+                shared.append(p.srcKind).append(',');
+                shared.append(p.selKind).append(',');
+                shared.append(p.builtinPlans).append(',');
+                shared.append(p.crossSourceDedup).append(',');
+                shared.append(p.batchKind).append(',');
+                shared.append(p.flowModel).append(',');
+                shared.append(p.weakenDistinct).append(',');
+                shared.append(p.thermalCooldown).append(',');
+                shared.append(p.unionSource).append(',');
                 if (!r.primaryMetric.scoreUnit.equals("ms/op"))
                     throw new IllegalArgumentException("Expected scoreUnit=ms/op");
                 for (int fork = 0; fork < r.primaryMetric.rawData.length; fork++) {
@@ -134,6 +136,14 @@ public class Jsons2Csv implements Callable<Void> {
                             timeout = false;
                             break;
                         }
+                    }
+                    if (Boolean.TRUE.equals(timeout)) {
+                        log.info("Timeout at {}s for {} src={} flow={} batch={}",
+                                format("%,7.3f", firstMs/1_000.0),
+                                format("%-7s", p.queries),
+                                format("%-25s", p.srcKind+(p.unionSource?"(union)": "")),
+                                p.flowModel.name().substring(0, 2),
+                                format("%-10s", p.batchKind));
                     }
                     String timeoutStr = timeout == null ? "" : timeout.toString();
                     for (int iteration = 0; iteration < forkData.length; iteration++) {
