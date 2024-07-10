@@ -198,6 +198,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 return false;
             dropAllQueued();
             cancelRequested = true;
+            canOffer.signalAll();
         } finally { unlock(); }
         boolean did = false;
         for (BIt<B> s : sources) {
