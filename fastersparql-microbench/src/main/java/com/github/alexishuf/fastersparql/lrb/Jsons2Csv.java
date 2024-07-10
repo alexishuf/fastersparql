@@ -9,6 +9,7 @@ import com.google.gson.JsonIOException;
 import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import fastersparql.QueryBench;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
@@ -31,6 +32,7 @@ import java.util.concurrent.Callable;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+import static java.util.Objects.requireNonNullElse;
 
 @Command(name = "json2csv", showDefaultValues = true, mixinStandardHelpOptions = true,
          description = "Scans directories for JSON files produced by JMH using -rff json, " +
@@ -50,12 +52,12 @@ public class Jsons2Csv implements Callable<Void> {
             String queries,
             SourceKind srcKind,
             QueryBench.SelectorKindType selKind,
-            boolean builtinPlans,
-            boolean crossSourceDedup,
+            @Nullable Boolean builtinPlans,
+            @Nullable Boolean crossSourceDedup,
             MeasureOptions.BatchKind batchKind,
             FlowModel flowModel,
-            boolean weakenDistinct,
-            boolean thermalCooldown,
+            @Nullable Boolean weakenDistinct,
+            @Nullable Boolean thermalCooldown,
             boolean unionSource
     ) { }
 
@@ -117,12 +119,12 @@ public class Jsons2Csv implements Callable<Void> {
                 shared.append(p.queries).append(',');
                 shared.append(p.srcKind).append(',');
                 shared.append(p.selKind).append(',');
-                shared.append(p.builtinPlans).append(',');
-                shared.append(p.crossSourceDedup).append(',');
+                shared.append(requireNonNullElse(p.builtinPlans, true)).append(',');
+                shared.append(requireNonNullElse(p.crossSourceDedup, true)).append(',');
                 shared.append(p.batchKind).append(',');
                 shared.append(p.flowModel).append(',');
-                shared.append(p.weakenDistinct).append(',');
-                shared.append(p.thermalCooldown).append(',');
+                shared.append(requireNonNullElse(p.weakenDistinct, false)).append(',');
+                shared.append(requireNonNullElse(p.thermalCooldown, true)).append(',');
                 shared.append(p.unionSource).append(',');
                 if (!r.primaryMetric.scoreUnit.equals("ms/op"))
                     throw new IllegalArgumentException("Expected scoreUnit=ms/op");
