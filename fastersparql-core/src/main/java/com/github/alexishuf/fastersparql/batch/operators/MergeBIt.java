@@ -109,8 +109,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                     if (guard.rows() == 0)
                         continue;
                 }
-                if (!cancelRequested)
-                    offer(guard.poll());
+                offer(guard.take());
             }
         } catch (BItReadCancelledException ignored) {
             lock(); // required for the load/acquire barrier
@@ -140,23 +139,30 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
     }
 
     public void offer(Orphan<B> b) throws CancelledException, TerminatedException {
-        boolean locked = lockAndGet();
+        boolean locked = lockAndGet(), isOfferingThread = false;
         try {
-            while (offering)
+            while (offering && !cancelRequested)
                 canOffer.awaitUninterruptibly();
-            offering = true;
-            locked = unlockAndGet();
-            super.offer(b);
-        } finally {
-            if (!locked)
-                lock();
-            offering = false;
-            try {
-                canOffer.signal();
-            } catch (Throwable t) {
-                log.error("canOffer.signal() failed on {}", this, t);
+            if (!cancelRequested) {
+                offering = isOfferingThread = true;
+                locked = unlockAndGet();
+                Orphan<B> orphan = b;
+                b = null;
+                super.offer(orphan);
             }
-            unlock();
+        } finally {
+            if (isOfferingThread) {
+                locked = lockAndGet();
+                offering = false;
+                try {
+                    canOffer.signal();
+                } catch (Throwable t) {
+                    log.error("canOffer.signal() failed on {}", this, t);
+                }
+            }
+            if (locked)
+                unlock();
+            Orphan.safeRecycle(b);
         }
     }
 
@@ -190,6 +196,7 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         try {
             if (isTerminated())
                 return false;
+            dropAllQueued();
             cancelRequested = true;
         } finally { unlock(); }
         boolean did = false;
@@ -200,7 +207,6 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
                 log.warn("Ignoring tryCancel() failure for {} by {}", s, this, t);
             }
         }
-        dropAllQueued();
         return did;
     }
 
