@@ -186,16 +186,15 @@ public final class EmitterService {
         }
     }
     private static abstract class Worker_2 extends Worker_1 {
-        protected static final VarHandle PARKED, UNPARKED;
+        protected static final VarHandle UNPARK;
         static {
             try {
-                PARKED = MethodHandles.lookup().findVarHandle(Worker_2.class, "plainParked", int.class);
-                UNPARKED = MethodHandles.lookup().findVarHandle(Worker_2.class, "plainUnparked", int.class);
+                UNPARK = MethodHandles.lookup().findVarHandle(Worker_2.class, "plainUnpark", int.class);
             } catch (NoSuchFieldException|IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
         }
-        protected int plainParked, plainUnparked;
+        protected int plainUnpark, parkCall;
 
         public Worker_2(@Nullable ThreadGroup group, EmitterService svc, int id) {
             super(group, svc, id);
@@ -211,34 +210,24 @@ public final class EmitterService {
             super(group, svc, id);
         }
 
-        boolean unparkNow() {
-            if ((int)PARKED.getOpaque(this) == 0)
-                return false;
-            plainUnparked = 0;
-            plainParked   = 0;
-            LockSupport.unpark(this);
-            return true;
-        }
-
-        boolean tryUnpark() {
-            if ((int)PARKED.getOpaque(this) != 0 && (int)UNPARKED.getOpaque(this) == 0) {
-                plainUnparked = 1; // will be read by UnparkWorkers.run()
-                return true;
+        void unparkNow() {
+            if (Thread.currentThread() != this) {
+                plainUnpark = 0;
+                LockSupport.unpark(this);
             }
-            return false;
         }
 
         void unpark() {
-            plainUnparked = 1; // will be read by UnparkWorkers.run()
+            plainUnpark = 1; // will be read by UnparkWorkers.run()
         }
 
         void park() {
-            if ((int)PARKED.getOpaque(this) == 0) {
-                plainParked   = 1;    // notify intent to park
-                plainUnparked = 0;  // not parking yet, do not unpark me
+            if (parkCall == 0) {
+                parkCall = 1; // force park() caller to poll for work twice
             } else {
-                LockSupport.park();
-                plainParked = 0;
+                parkCall = 0;
+                if ((int)UNPARK.getOpaque(this) == 0) // only park if not unpark()ed
+                    LockSupport.park();
             }
         }
 
@@ -309,13 +298,10 @@ public final class EmitterService {
     private boolean unparkWorkers() {
         boolean unparked = false;
         for (var w : workers) {
-            if ((int)Worker.UNPARKED.getOpaque(w) != 0) {
-                w.plainUnparked = 0; // do not unpark before a new Worker.unpark()
-                if ((int)Worker.PARKED.getOpaque(w) != 0) {
-                    w.plainParked = 0; // suppress w.unparkNow() until Worker.park()
-                    LockSupport.unpark(w);
-                    unparked = true;
-                }
+            if ((int)Worker.UNPARK.getOpaque(w) != 0) {
+                w.plainUnpark = 0; // do not unpark before a new Worker.unpark()
+                LockSupport.unpark(w);
+                unparked = true;
             }
         }
         return unparked;
