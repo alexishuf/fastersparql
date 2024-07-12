@@ -85,17 +85,21 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     }
 
     @Override public @Nullable Orphan<B> nextBatch(@Nullable Orphan<B> offer) {
-        lock();
         try (var g = new Guard.BatchGuard<B>(this)) {
             g.set(offer);
             do {
                 BatchProcessor<B, ?> p = processor;
                 while (g.nextBatch(inner) != null) {
-                    if (p != null) {
-                        B b = g.set(p.processInPlace(g.poll()));
-                        if (b == null || b.rows == 0)
-                            continue;
-                    }
+                    lock();
+                    try {
+                        if (isTerminated()) {
+                            break;
+                        } else if (p != null) {
+                            B b = g.set(p.processInPlace(g.poll()));
+                            if      (b      == null) break;
+                            else if (b.rows ==    0) continue;
+                        }
+                    } finally { unlock(); }
                     return onNextBatch(g.take());
                 }
             } while (nextSource());
@@ -104,8 +108,6 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         } catch (Throwable t) {
             onTermination(t);
             throw new BItReadFailedException(this, t);
-        } finally {
-            unlock();
         }
     }
 
