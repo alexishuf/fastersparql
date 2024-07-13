@@ -1,8 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.MutableRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
@@ -25,6 +24,7 @@ import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.LEN_M
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.SH_SUFF_MASK;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.hashUnsafe;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.*;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -112,6 +112,15 @@ public abstract sealed class CompressedRowBucket
     private static short readLen(byte[] d, int c) {
         int i = (c<<2) + 2;
         return (short)( (d[i]&0xff) | ((d[i+1]&0xff) << 8) );
+    }
+    private Bytes hide(int row) {
+        Bytes d = rowsData[row];
+        if (d != null) {
+            BS.clear(has, row);
+            rowsData[row] = null;
+            Arrays.fill(d.arr, 0, Math.min(d.arr.length, cols<<2), (byte)0);
+        }
+        return d;
     }
 
     @Override public void maximizeCapacity() {
@@ -226,19 +235,19 @@ public abstract sealed class CompressedRowBucket
     }
 
     @Override public void set(int dst, CompressedBatch batch, int row) {
-        rowsData[dst] = batch.copyToBucket(rowsData[dst], rowsDataHolder, shared, dst, row);
+        rowsData[dst] = batch.copyToBucket(hide(dst), rowsDataHolder, shared, dst, row);
         BS.set(has, dst);
     }
 
     @Override public void set(int dst, int src) {
         if (dst == src)
             return;
-        Bytes s, d = rowsData[dst];
+        Bytes s, d = hide(dst);
         if (BS.get(has, src)) {
             BS.set(has, dst);
             s = rowsData[src];
+            arraycopy(shared, src*cols, shared, dst*cols, cols);
             rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsDataHolder, s.arr.length);
-            arraycopy(shared, src * cols, shared, dst * cols, cols);
         } else {
             BS.clear(has, dst);
             rowsData[dst] = d.recycle(rowsDataHolder);
@@ -250,11 +259,11 @@ public abstract sealed class CompressedRowBucket
         int cols = this.cols;
         if (bucket.cols < cols)
             throw new IllegalArgumentException("cols mismatch");
-        Bytes s = bucket.rowsData[src], d = rowsData[dst];
+        Bytes s = bucket.rowsData[src], d = hide(dst);
         if (BS.get(bucket.has, src)) {
-            BS.set(has, dst);
-            rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsDataHolder, s.arr.length);
             arraycopy(bucket.shared, src*bucket.cols, shared, dst*cols, cols);
+            rowsData[dst] = Bytes.copy(s.arr, 0, d, rowsDataHolder, s.arr.length);
+            BS.set(has, dst);
         } else if (d != null) {
             BS.clear(has, dst);
             rowsData[dst] = d.recycle(rowsDataHolder);
@@ -281,7 +290,7 @@ public abstract sealed class CompressedRowBucket
                 int len = readLen(data.arr, c);
                 boolean suffixed = (len & SH_SUFF_MASK) != 0;
                 len &= LEN_MASK;
-                if (sh.len + len == 0) {
+                if (len == 0 || rowsData[row] == null) {
                     if (other.termType(otherRow, c) != null) {
                         eq = false;
                         break;
@@ -294,6 +303,9 @@ public abstract sealed class CompressedRowBucket
                     }
                 }
             }
+        } catch (NumberFormatException|InvalidSparqlException e) {
+            // concurrent set(). False negative is cheaper than synchronizing
+            return false;
         }
         return eq;
     }
@@ -312,8 +324,10 @@ public abstract sealed class CompressedRowBucket
                 SegmentRope sh = shared[shIdx];
                 int flLen = readLen(d.arr, c), fstLen, sndLen = flLen&LEN_MASK;
                 long fstOff, sndOff = readOff(d.arr, c);
-                if (sh == null) {
+                if (sh == null)
                     sh = FinalSegmentRope.EMPTY;
+                if (sndLen == 0 || rowsData[row] == null) {
+                    continue;
                 } else if (Term.isNumericDatatype(sh)) {
                     if (tmp == null)
                         tmp = PooledTermView.ofEmptyString();
@@ -328,8 +342,8 @@ public abstract sealed class CompressedRowBucket
                     fst = d.arr;   fstOff = sndOff;    fstLen = sndLen;
                     snd = sh.utf8; sndOff = sh.offset; sndLen = sh.len;
                 }
-                int termHash = SegmentRope.hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
-                h ^=           SegmentRope.hashUnsafe(termHash,  snd, sndOff, sndLen);
+                int termHash = hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
+                h ^=           hashUnsafe(termHash,  snd, sndOff, sndLen);
             }
         } finally {
             if (tmp != null) tmp.close();
@@ -347,8 +361,10 @@ public abstract sealed class CompressedRowBucket
                 SegmentRope sh = shared[shIdx];
                 int flLen = readLen(d.arr, c), fstLen, sndLen = flLen&LEN_MASK;
                 long fstOff, sndOff = readOff(d.arr, c);
-                if (sh == null) {
+                if (sh == null)
                     sh = FinalSegmentRope.EMPTY;
+                if (sndLen == 0 || rowsData[row] == null) {
+                    continue;
                 } else if (Term.isNumericDatatype(sh)) {
                     if (tmp == null)
                         tmp = PooledTermView.ofEmptyString();
