@@ -131,30 +131,32 @@ public class Jsons2Csv implements Callable<Void> {
                 for (int fork = 0; fork < r.primaryMetric.rawData.length; fork++) {
                     double[] forkData = r.primaryMetric.rawData[fork];
                     if (forkData.length == 0) continue;
-                    double firstMs = forkData[0];
-                    Boolean timeout = forkData.length == 1 ? null : true;
-                    for (int iteration = 1; iteration < forkData.length; iteration++) {
-                        if (forkData[iteration] > Math.min(firstMs/1_000.0, 10)) {
-                            timeout = false;
-                            break;
-                        }
+                    int toutIteration = Integer.MAX_VALUE;
+                    double timeoutMs = -1;
+                    for (int i = 0; i < forkData.length-1 && i < toutIteration; i++) {
+                        timeoutMs = forkData[i];
+                        boolean isTimeout = true;
+                        for (int after = i+1; isTimeout && after < forkData.length; after++)
+                            isTimeout = forkData[after] < Math.min(timeoutMs/1_000.0, 10);
+                        if (isTimeout)
+                            toutIteration = i;
                     }
-                    if (Boolean.TRUE.equals(timeout)) {
+                    if (toutIteration < forkData.length) {
                         log.info("Timeout at {}s for {} src={} flow={} batch={}",
-                                format("%,7.3f", firstMs/1_000.0),
+                                format("%,7.3f", timeoutMs/1_000.0),
                                 format("%-7s", p.queries),
                                 format("%-25s", p.srcKind+(p.unionSource?"(union)": "")),
                                 p.flowModel.name().substring(0, 2),
                                 format("%-10s", p.batchKind));
                     }
-                    String timeoutStr = timeout == null ? "" : timeout.toString();
+                    var notTimeout = forkData.length > 1 ? "false"  : "";
                     for (int iteration = 0; iteration < forkData.length; iteration++) {
                         out.append(shared);
                         out.append(Integer.toString(fork)).append(',');
                         out.append(Integer.toString(iteration)).append(',');
-                        double ms = Boolean.TRUE.equals(timeout) ? firstMs : forkData[iteration];
+                        double ms = iteration >= toutIteration ? timeoutMs : forkData[iteration];
                         out.append(Double.toString(ms)).append(',');
-                        out.append(timeoutStr).append("\r\n");
+                        out.append(iteration >= toutIteration ? "true" : notTimeout).append("\r\n");
                     }
                 }
             }
