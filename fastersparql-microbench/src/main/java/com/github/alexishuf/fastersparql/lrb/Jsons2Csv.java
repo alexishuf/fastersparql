@@ -17,10 +17,7 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.io.PrintStream;
+import java.io.*;
 import java.lang.reflect.Type;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -28,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -73,6 +72,8 @@ public class Jsons2Csv implements Callable<Void> {
     private static final class JmhResults {
         transient File originFile;
         transient long lastModified;
+        transient boolean oom;
+        transient boolean failed;
         String benchmark;
         String jvm;
         String jdkVersion;
@@ -95,7 +96,7 @@ public class Jsons2Csv implements Callable<Void> {
     @Override public Void call() throws Exception {
         Map<Params, JmhResults> param2results = collectResults();
         try (var out = new PrintStream(destFile)) {
-            out.println("originDatetime,method,jvm,jdkVersion,vmVersion,warmupTime,warmupIterations,measurementTime,measurementIterations,threads,forks,jvmArgs,queries,source,selector,builtinPlans,crossSourceDedup,batch,flow,weakenDistinct,thermalCooldown,unionSource,fork,iteration,ms,timedout\r\n");
+            out.println("originDatetime,method,jvm,jdkVersion,vmVersion,warmupTime,warmupIterations,measurementTime,measurementIterations,threads,forks,jvmArgs,queries,source,selector,builtinPlans,crossSourceDedup,batch,flow,weakenDistinct,thermalCooldown,unionSource,fork,iteration,ms,timedout,failed,oom\r\n");
             StringBuilder shared = new StringBuilder();
             for (var r : param2results.values()) {
                 shared.setLength(0);
@@ -156,8 +157,15 @@ public class Jsons2Csv implements Callable<Void> {
                         out.append(Integer.toString(iteration)).append(',');
                         double ms = iteration >= toutIteration ? timeoutMs : forkData[iteration];
                         out.append(Double.toString(ms)).append(',');
-                        out.append(iteration >= toutIteration ? "true" : notTimeout).append("\r\n");
+                        out.append(iteration >= toutIteration ? "true" : notTimeout);
+                        out.append(",false,false\r\n");
                     }
+                }
+                if (r.failed) {
+                    out.append(shared);
+                    out.append(Integer.toString(r.primaryMetric.rawData.length)); //fork
+                    out.append(",0,,false,true,"); // ,iteration,ms,timedout,failed,
+                    out.append(Boolean.toString(r.oom)).append("\r\n");
                 }
             }
         }
@@ -172,6 +180,15 @@ public class Jsons2Csv implements Callable<Void> {
     }
 
     private static final class ResultsCollector {
+        private static final String PARAMS_LINE_PREFIX = "# Parameters: (";
+        private static final String OOM = "OutOfMemoryError";
+        private static final String FAILED = "<forked VM failed with exit code ";
+        private static final Pattern BATCH_KIND = Pattern.compile("[( ]batchKind = (\\w+)");
+        private static final Pattern FLOW_MODEL = Pattern.compile("[( ]flowModel = (\\w+)");
+        private static final Pattern QUERIES = Pattern.compile("[( ]queries = (\\w+)");
+        private static final Pattern SRC_KIND = Pattern.compile("[( ]srcKind = (\\w+)");
+        private static final Pattern UNION_SOURCE = Pattern.compile("[( ]unionSource = (\\w+)");
+        private static final Pattern JSON_SUFF = Pattern.compile("\\.json$");
         private static final Type LIST_OF_RESULTS = new TypeToken<List<JmhResults>>(){}.getType();
         private final Map<Params, JmhResults> param2res = new HashMap<>();
         private final Gson gson = new Gson();
@@ -180,27 +197,103 @@ public class Jsons2Csv implements Callable<Void> {
             if (files == null)
                 throw new IOException("Could not list files in "+dir);
             for (File f : files) {
-                if (f.getName().toLowerCase().endsWith(".json") && f.length() > 0) {
-                    try (var reader = new FileReader(f, UTF_8)) {
-                        List<JmhResults> list = gson.fromJson(reader, LIST_OF_RESULTS);
-                        for (var results : list) {
-                            results.originFile   = f;
-                            results.lastModified = f.lastModified();
-                            JmhResults old = param2res.get(results.params);
-                            if (old == null || old.lastModified < results.lastModified) {
-                                if (old != null)
-                                    log.info("Replacing {} with {}", old.originFile, f);
-                                param2res.put(results.params, results);
-                            }
-                        }
-                    } catch (JsonSyntaxException e) {
-                        log.warn("Ignoring invalid JSON at {}", f.getAbsolutePath(), e);
-                    } catch (JsonIOException e) {
-                        throw new IOException("Failed to read from "+f.getAbsolutePath(), e);
-                    }
+                if (f.getName().toLowerCase().endsWith(".json")) {
+                    visitJson(f);
+                    visitLog(new File(dir, JSON_SUFF.matcher(f.getName()).replaceAll(".log")));
                 } else if (f.isDirectory()) {
                     visit(f);
                 }
+            }
+        }
+
+        private void visitJson(File f) throws IOException {
+            if (f.length() == 0)
+                return; // empty
+            try (var reader = new FileReader(f, UTF_8)) {
+                List<JmhResults> list = gson.fromJson(reader, LIST_OF_RESULTS);
+                for (var results : list) {
+                    results.originFile   = f;
+                    results.lastModified = f.lastModified();
+                    JmhResults old = param2res.get(results.params);
+                    if (old == null || old.lastModified < results.lastModified) {
+                        if (old != null)
+                            log.info("Replacing {} with {}", old.originFile, f);
+                        param2res.put(results.params, results);
+                    }
+                }
+            } catch (JsonSyntaxException e) {
+                log.warn("Ignoring invalid JSON at {}", f.getAbsolutePath(), e);
+            } catch (JsonIOException e) {
+                throw new IOException("Failed to read from "+ f.getAbsolutePath(), e);
+            }
+        }
+
+        private void visitLog(File f) {
+            if (!f.isFile() || f.length() == 0)
+                return;
+            try (var reader = new BufferedReader(new FileReader(f))) {
+                boolean oom = false;
+                Params params = null;
+                for (String line; (line=reader.readLine()) != null; ) {
+                    if (line.startsWith(PARAMS_LINE_PREFIX)) {
+                        params = null;
+                        oom = false;
+                        Matcher m = BATCH_KIND.matcher(line);
+                        if (!m.find())
+                            continue;
+                        var batchKind = MeasureOptions.BatchKind.valueOf(m.group(1));
+                        if (!(m = FLOW_MODEL.matcher(line)).find())
+                            continue;
+                        var flowModel = FlowModel.valueOf(m.group(1));
+                        if (!(m=QUERIES.matcher(line)).find())
+                            continue;
+                        String queries = m.group(1);
+                        if (!(m=SRC_KIND.matcher(line)).find())
+                            continue;
+                        SourceKind srcKind;
+                        try {
+                            srcKind = SourceKind.valueOf(m.group(1));
+                        } catch (IllegalArgumentException e) {
+                            log.warn("Ignoring bogus srcKind={} at {}", m.group(1), f.getPath());
+                            continue;
+                        }
+                        if (!(m=UNION_SOURCE.matcher(line)).find())
+                            continue;
+                        boolean unionSource = Boolean.TRUE.equals(Boolean.valueOf(m.group(1)));
+                        params = new Params(queries, srcKind, null,
+                                null, null, batchKind, flowModel,
+                                null, null, unionSource);
+                    } else if (line.contains(OOM)) {
+                        oom = true;
+                    } else if (line.startsWith(FAILED) && params != null) {
+                        var results             = new JmhResults();
+                        results.originFile      = f;
+                        results.lastModified    = f.lastModified();
+                        results.failed          = true;
+                        results.oom             = oom;
+                        results.benchmark       = "";
+                        results.jvmArgs         = List.of();
+                        results.jvm             = "";
+                        results.jdkVersion      = "";
+                        results.vmVersion       = "";
+                        results.warmupTime      = "";
+                        results.measurementTime = "";
+                        results.params          = params;
+                        results.primaryMetric   = new PrimaryMetric(Double.NaN, Double.NaN,
+                                new double[0], Map.of(), "ms/op",
+                                new double[0][]);
+                        if (param2res.getOrDefault(params, null) == null) {
+                            param2res.put(params, results);
+                            log.info("Recorded Forked VM failure for {} from {}",
+                                     params, f.getPath());
+                        }
+                        params = null;
+                        oom = false;
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("Ignoring {} reading from {}: {}", e.getClass().getSimpleName(),
+                         f.getAbsolutePath(), e.getMessage());
             }
         }
     }
