@@ -187,8 +187,11 @@ public class Jsons2Csv implements Callable<Void> {
                             results.originFile   = f;
                             results.lastModified = f.lastModified();
                             JmhResults old = param2res.get(results.params);
-                            if (old == null || old.lastModified < results.lastModified)
+                            if (old == null || old.lastModified < results.lastModified) {
+                                if (old != null)
+                                    log.info("Replacing {} with {}", old.originFile, f);
                                 param2res.put(results.params, results);
+                            }
                         }
                     } catch (JsonSyntaxException e) {
                         log.warn("Ignoring invalid JSON at {}", f.getAbsolutePath(), e);
