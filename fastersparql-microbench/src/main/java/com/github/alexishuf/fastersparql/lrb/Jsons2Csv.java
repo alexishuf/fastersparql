@@ -21,6 +21,7 @@ import java.io.*;
 import java.lang.reflect.Type;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,8 +30,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static java.lang.String.format;
+import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+import static java.util.Arrays.copyOf;
 import static java.util.Objects.requireNonNullElse;
 
 @Command(name = "json2csv", showDefaultValues = true, mixinStandardHelpOptions = true,
@@ -43,6 +46,14 @@ public class Jsons2Csv implements Callable<Void> {
     @Option(names = {"-o", "--output"}, required = true,
             description = "Destination csv file, which will be overwritten")
     private File destFile;
+
+    @Option(names = {"-a", "--add-root"}, arity = "0..*",
+            description = "Any directory will be recursively scanned and iterations " +
+                    "found in JSON files will be added to iterations already parsed from " +
+                    "other JSON files. I.e., this will add iteration measurements as a new fork," +
+                    "instead of replacing all data.")
+    private List<File> addRoots;
+
     @Parameters(paramLabel = "DIRS", arity = "1..*",
                 description = "A directory to be recursively scanned for JSON files")
     private List<File> roots;
@@ -176,6 +187,10 @@ public class Jsons2Csv implements Callable<Void> {
         var collector = new ResultsCollector();
         for (File dir : roots)
             collector.visit(dir);
+        if (addRoots != null) {
+            for (File dir : addRoots)
+                collector.visitAdd(dir);
+        }
         return collector.param2res;
     }
 
@@ -192,6 +207,7 @@ public class Jsons2Csv implements Callable<Void> {
         private static final Type LIST_OF_RESULTS = new TypeToken<List<JmhResults>>(){}.getType();
         private final Map<Params, JmhResults> param2res = new HashMap<>();
         private final Gson gson = new Gson();
+
         void visit(File dir) throws IOException {
             File[] files = dir.listFiles();
             if (files == null)
@@ -202,6 +218,19 @@ public class Jsons2Csv implements Callable<Void> {
                     visitLog(new File(dir, JSON_SUFF.matcher(f.getName()).replaceAll(".log")));
                 } else if (f.isDirectory()) {
                     visit(f);
+                }
+            }
+        }
+
+        void visitAdd(File dir) throws IOException {
+            File[] files = dir.listFiles();
+            if (files == null)
+                throw new IOException("Could not list files in "+dir);
+            for (File f : files) {
+                if (f.getName().toLowerCase().endsWith(".json")) {
+                    visitJsonAdd(f);
+                } else if (f.isDirectory()) {
+                    visitAdd(f);
                 }
             }
         }
@@ -219,6 +248,42 @@ public class Jsons2Csv implements Callable<Void> {
                         if (old != null)
                             log.info("Replacing {} with {}", old.originFile, f);
                         param2res.put(results.params, results);
+                    }
+                }
+            } catch (JsonSyntaxException e) {
+                log.warn("Ignoring invalid JSON at {}", f.getAbsolutePath(), e);
+            } catch (JsonIOException e) {
+                throw new IOException("Failed to read from "+ f.getAbsolutePath(), e);
+            }
+        }
+
+        private void visitJsonAdd(File f) throws IOException {
+            if (f.length() == 0)
+                return; // empty
+            try (var reader = new FileReader(f, UTF_8)) {
+                List<JmhResults> list = gson.fromJson(reader, LIST_OF_RESULTS);
+                for (var results : list) {
+                    results.originFile   = f;
+                    results.lastModified = f.lastModified();
+                    JmhResults old = param2res.get(results.params);
+                    if (old == null || old.lastModified < results.lastModified) {
+                        if (old == null) {
+                            param2res.put(results.params, results);
+                        } else {
+                            double[][] oForks =     old.primaryMetric.rawData;
+                            double[][] nForks = results.primaryMetric.rawData;
+                            log.info("Adding {} forks, {} iterations from {} for {}",
+                                     nForks.length,
+                                     Arrays.stream(nForks).mapToInt(a -> a.length).sum(),
+                                     f, results.params);
+                            var merged = copyOf(oForks, oForks.length+nForks.length);
+                            arraycopy(nForks, 0, merged, oForks.length, nForks.length);
+                            PrimaryMetric opm = old.primaryMetric;
+                            old.primaryMetric = new PrimaryMetric(
+                                    opm.score, opm.scoreError, opm.scoreConfidence,
+                                    opm.scorePercentiles, opm.scoreUnit, merged
+                            );
+                        }
                     }
                 }
             } catch (JsonSyntaxException e) {
