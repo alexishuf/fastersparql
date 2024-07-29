@@ -326,9 +326,12 @@ public abstract sealed class CompressedRowBucket
                 long fstOff, sndOff = readOff(d.arr, c);
                 if (sh == null)
                     sh = FinalSegmentRope.EMPTY;
-                if (sndLen == 0 || rowsData[row] == null) {
-                    continue;
-                } else if (Term.isNumericDatatype(sh)) {
+                if (rowsData[row] == null) {
+                    int dataBegin = cols << 2;
+                    sndOff = Math.max(dataBegin, sndOff);
+                    sndLen = Math.min(d.arr.length-dataBegin, sndLen);
+                }
+                if (Term.isNumericDatatype(sh)) {
                     if (tmp == null)
                         tmp = PooledTermView.ofEmptyString();
                     tmp.wrap(sh, d.segment, d.arr, sndOff, sndLen, true);
@@ -363,9 +366,12 @@ public abstract sealed class CompressedRowBucket
                 long fstOff, sndOff = readOff(d.arr, c);
                 if (sh == null)
                     sh = FinalSegmentRope.EMPTY;
-                if (sndLen == 0 || rowsData[row] == null) {
-                    continue;
-                } else if (Term.isNumericDatatype(sh)) {
+                if (rowsData[row] == null) {
+                    int dataBegin = cols << 2;
+                    sndOff = Math.max(dataBegin, sndOff);
+                    sndLen = Math.min(d.arr.length-dataBegin, sndLen);
+                }
+                if (Term.isNumericDatatype(sh)) {
                     if (tmp == null)
                         tmp = PooledTermView.ofEmptyString();
                     tmp.wrap(sh, d.segment, d.arr, sndOff, sndLen, true);
