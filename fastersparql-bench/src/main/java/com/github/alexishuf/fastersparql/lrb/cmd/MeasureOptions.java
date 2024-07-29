@@ -46,12 +46,13 @@ public class MeasureOptions {
 
     public enum BatchKind {
         TERM,
+        TERM_NI,
         COMPRESSED,
         NATIVE;
 
         public BatchType<?> asType(SourceKind src) {
             return switch (this) {
-                case TERM -> TermBatchType.TERM;
+                case TERM, TERM_NI -> TermBatchType.TERM;
                 case COMPRESSED -> CompressedBatchType.COMPRESSED;
                 case NATIVE -> {
                     if (src.isServer())  yield CompressedBatchType.COMPRESSED;

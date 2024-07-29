@@ -237,6 +237,8 @@ public class QueryBench {
     }
 
     @Setup(Level.Trial) public void trialSetup(BenchmarkParams params) throws IOException {
+        if (batchKind == BatchKind.TERM_NI)
+            System.setProperty(FSProperties.BATCH_NO_INTERN_IRI, "true");
         if (srcKind.isFsServer())
             ThreadPoolsPartitioner.registerPartition(SharedEventLoopGroupHolder.class.getSimpleName());
         if (flowModel == FlowModel.EMIT

@@ -1,22 +1,32 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.FSProperties.BATCH_NO_INTERN_IRI;
+import static com.github.alexishuf.fastersparql.FSProperties.batchNoInternIri;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 
 public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
+    private static final Logger log = LoggerFactory.getLogger(TermBatch.class);
+    private static final boolean NO_INTERN_IRI = batchNoInternIri();
+
+    static {
+        if (NO_INTERN_IRI)
+            log.warn("{}=true, this will cause excess latency and garbage", BATCH_NO_INTERN_IRI);
+    }
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -114,7 +124,22 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
     /* --- --- --- mutators --- --- --- */
 
     @Override protected void putTermConverting(int dstCol, Batch<?> other, int row, int col) {
-        putTerm(dstCol, other.get(row, col));
+        FinalTerm t =  NO_INTERN_IRI ? makeTermNoIntern(other, row, col) : other.get(row, col);
+        putTerm(dstCol, t);
+    }
+
+    private FinalTerm makeTermNoIntern(Batch<?> other, int row, int col) {
+        if (other.termType(row, col) == Term.Type.IRI) {
+            try (var view = PooledTwoSegmentRope.ofEmpty()) {
+                if (other.getRopeView(row, col, view)) {
+                    var copy = new byte[view.len];
+                    view.copy(0, view.len, copy, 0);
+                    return new FinalTerm(EMPTY, new FinalSegmentRope(copy), false);
+                }
+                return null;
+            }
+        }
+        return other.get(row, col);
     }
 
     @Override public void putTerm(int col, Term t) {
@@ -133,6 +158,8 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
         FinalTerm term;
         if ((shared == null || shared.len == 0) && localLen == 0) {
             term = null;
+        } else if (NO_INTERN_IRI && !sharedSuffix) {
+            term = makeTermNoIntern(shared, local, localOff, localLen);
         } else {
             var localRope = new SegmentRopeView().wrap(local, localU8, localOff, localLen);
             SegmentRope fst, snd;
@@ -141,5 +168,15 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
             term = Term.wrap(fst, snd);
         }
         tail.arr[tail.offerRowBase+col] = term;
+    }
+
+    private FinalTerm makeTermNoIntern(FinalSegmentRope shared, MemorySegment local,
+                                       long localOff, int localLen) {
+        int shLen = shared == null ? 0 : shared.len;
+        byte[] copy = new byte[shLen + localLen];
+        if (shLen > 0)
+            shared.copy(0, shLen, copy, 0);
+        MemorySegment.copy(local, ValueLayout.JAVA_BYTE, localOff, copy, shLen, localLen);
+        return new FinalTerm(EMPTY, new FinalSegmentRope(copy), false);
     }
 }

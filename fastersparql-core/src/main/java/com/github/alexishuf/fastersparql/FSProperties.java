@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.BItReadCancelledException;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.OwnershipException;
+import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
@@ -58,6 +59,7 @@ public class FSProperties {
     public static final String BATCH_MIN_WAIT_US         = "fastersparql.batch.min-wait-us";
     public static final String BATCH_MAX_WAIT_US         = "fastersparql.batch.max-wait-us";
     public static final String BATCH_SELF_VALIDATE       = "fastersparql.batch.self-validate";
+    public static final String BATCH_NO_INTERN_IRI       = "fastersparql.batch.no-intern-iri";
     public static final String WS_IMPLICIT_REQUEST       = "fastersparql.ws.server.implicit-request";
     public static final String IT_QUEUE_BATCHES          = "fastersparql.it.queue.batches";
     public static final String IT_TRACE_CANCEL           = "fastersparql.it.cancel.trace";
@@ -97,6 +99,7 @@ public class FSProperties {
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
+    public static final boolean DEF_BATCH_NO_INTERN_IRI       = false;
     public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
@@ -149,7 +152,8 @@ public class FSProperties {
     private static Boolean CACHE_POOL_STATS             = null;
     private static Boolean CACHE_POOL_TRANS_EVENTS      = null;
     private static Boolean CACHE_BATCH_JFR_ENABLED      = null;
-    private static Batch.Validation CACHE_BATCH_SELF_VALIDATE   = null;
+    private static Boolean CACHE_BATCH_NO_INTERN_IRI    = null;
+    private static Batch.Validation CACHE_BATCH_SELF_VALIDATE     = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER      = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_BIND = null;
     private static JoinReorderStrategy CACHE_OP_JOIN_REORDER_HASH = null;
@@ -266,6 +270,7 @@ public class FSProperties {
         CACHE_OWNED_PRINT_LEAKS         = null;
         CACHE_POOL_STATS                = null;
         CACHE_POOL_TRANS_EVENTS         = null;
+        CACHE_BATCH_NO_INTERN_IRI       = null;
         CACHE_BATCH_SELF_VALIDATE       = null;
         CACHE_OP_JOIN_REORDER           = null;
         CACHE_OP_JOIN_REORDER_BIND      = null;
@@ -740,6 +745,25 @@ public class FSProperties {
                     ? Batch.Validation.EXPENSIVE : Batch.Validation.NONE;
             v = readEnum(BATCH_SELF_VALIDATE, SELF_VALIDATIONS_VALUES, def);
             CACHE_BATCH_SELF_VALIDATE = v;
+        }
+        return v;
+    }
+
+    /**
+     * Whether {@link TermBatch} behavior should be changed to never perform interning
+     * of IRI prefixes.
+     *
+     * <p>This will have negative impact on latency when terms are parsed into a
+     * {@link TermBatch} or batches of other types are converted into a {@link TermBatch}.
+     * <strong>There is no positive impact</strong> when this option is enabled. It should only
+     * be used for experiments demonstrating why it is a bad idea. The default is
+     * {@code false}.</p>
+     */
+    public static boolean batchNoInternIri() {
+        var v = CACHE_BATCH_NO_INTERN_IRI;
+        if (v == null) {
+            v = readBoolean(BATCH_NO_INTERN_IRI, DEF_BATCH_NO_INTERN_IRI);
+            CACHE_BATCH_NO_INTERN_IRI = v;
         }
         return v;
     }

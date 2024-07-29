@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -28,6 +29,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     private static final Logger log = LoggerFactory.getLogger(Batch.class);
     protected static final boolean SELF_VALIDATE           = batchSelfValidate().ordinal() >  NONE.ordinal();
     protected static       boolean SELF_VALIDATE_EXPENSIVE = batchSelfValidate().ordinal() >= EXPENSIVE.ordinal();
+    private static final boolean NO_INTERN_IRI = FSProperties.batchNoInternIri();
 
     /**
      * Disable expensive checks in {@link #validate()}. This will trigger de-optimization of
@@ -1405,6 +1407,8 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
                           long localOff, int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
+        if (NO_INTERN_IRI && !sharedSuffix)
+            return makeTermNoInternIri(shared, local, localOff, localLen);
         var localRope = RopeFactory.make(localLen).add(local, localOff, localLen).take();
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
@@ -1412,16 +1416,40 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         return Term.wrap(fst, snd);
     }
 
+    private Term makeTermNoInternIri(FinalSegmentRope shared, MemorySegment local,
+                                     long localOff, int localLen) {
+        int shLen = shared == null ? 0 : shared.len;
+        byte[] copy = new byte[shLen + localLen];
+        if (shLen > 0)
+            shared.copy(0, shLen, copy, 0);
+        MemorySegment.copy(local, ValueLayout.JAVA_BYTE, localOff, copy, shLen, localLen);
+        var rope = new FinalSegmentRope(copy);
+        return new FinalTerm(FinalSegmentRope.EMPTY, rope, false);
+    }
+
     private Term makeTerm(SegmentRope shared, PlainRope local, int localOff,
                           int localLen, boolean sharedSuffix) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
+        if (NO_INTERN_IRI && !sharedSuffix)
+            return makeTermNoInternIri(shared, local, localOff, localLen);
         var localRope = RopeFactory.make(localLen)
                                    .add(local, localOff, localOff+localLen).take();
         SegmentRope fst, snd;
         if (sharedSuffix) { fst = localRope; snd =    shared; }
         else              { fst =    shared; snd = localRope; }
         return Term.wrap(fst, snd);
+    }
+
+    private Term makeTermNoInternIri(SegmentRope shared, PlainRope local,
+                                     int localOff, int localLen) {
+        int shLen = shared == null ? 0 : shared.len;
+        byte[] copy = new byte[shLen + localLen];
+        if (shLen > 0)
+            shared.copy(0, shLen, copy, 0);
+        local.copy(localOff, localOff+localLen, copy, shLen);
+        var rope = new FinalSegmentRope(copy);
+        return new FinalTerm(FinalSegmentRope.EMPTY, rope, false);
     }
 
     /**
