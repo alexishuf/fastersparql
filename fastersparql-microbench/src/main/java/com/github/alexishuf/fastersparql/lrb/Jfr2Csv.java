@@ -18,10 +18,13 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.String.format;
 import static java.lang.System.nanoTime;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNullElse;
@@ -49,23 +52,52 @@ public class Jfr2Csv implements Callable<Void> {
     @Override public Void call() throws Exception {
         checkOutputPaths();
         checkInputsPaths();
-        long t0 = nanoTime();
+        long findStartNs = nanoTime();
         Map<Params, List<File>> params2jfrFiles = new HashMap<>();
         new JfrFinder(params2jfrFiles).visitAll(roots);
         int jfrFilesCount = params2jfrFiles.values().stream().mapToInt(List::size).sum();
-        var duration = Duration.ofNanos(nanoTime() - t0);
-        log.info("Found {} JFR files in {}s", jfrFilesCount, duration.toMillis()/1_000.0);
+        log.info("Found {} JFR files in {}s",
+                 jfrFilesCount, duration2string(findStartNs, nanoTime()));
 
-        t0 = nanoTime();
         List<TasksWeights> weightsList = Collections.synchronizedList(new ArrayList<>());
-        params2jfrFiles.entrySet().parallelStream()
-                .forEach(e -> makeTasksWeights(e.getKey(), e.getValue(), weightsList));
-        duration = Duration.ofNanos(nanoTime() - t0);
-        log.info("Processed {} JFR files in {}m {}s", jfrFilesCount, duration.toMinutes(),
-                 duration.toSecondsPart() + duration.toMillisPart()/1_000.0);
+        long procStartNs = nanoTime();
+        var stopProgressReport = new Semaphore(0);
+        Thread.startVirtualThread(() -> {
+            Thread.currentThread().setName("Jfr2Csv.ProgressReporter");
+            try {
+                while (!stopProgressReport.tryAcquire(10, TimeUnit.SECONDS)) {
+                    int done = weightsList.size();
+                    long nsPerFile = (nanoTime()-procStartNs)/done;
+                    log.info("Processed {}/{} JFR files, {}% ETA {}", done, jfrFilesCount,
+                            format("%.3f", 100.0/jfrFilesCount*done),
+                            duration2string(0, (jfrFilesCount-done)*nsPerFile));
+                }
+            } catch (InterruptedException e) {
+                log.error("Interrupted. Will stop reporting progress");
+            }
+        });
+
+        try {
+            params2jfrFiles.entrySet().parallelStream()
+                    .forEach(e -> makeTasksWeights(e.getKey(), e.getValue(), weightsList));
+        } finally {
+            stopProgressReport.release();
+        }
+        log.info("Processed {} JFR files in {}",
+                 jfrFilesCount, duration2string(procStartNs, nanoTime()));
         log.info("Writing to {}...", destFile);
         writeOutputCsv(weightsList);
         return null;
+    }
+
+    private static String duration2string(long startNs, long endNs) {
+        var d = Duration.ofNanos(endNs - startNs);
+        if (d.toHours() > 0)
+            return format("%d:%d:%d", d.toHours(), d.toMinutesPart(), d.toSecondsPart());
+        else if (d.toMinutes() > 0)
+            return format("%d:%d", d.toMinutesPart(), d.toSecondsPart());
+        else
+            return format("%d seconds", d.toSeconds());
     }
 
     private void writeOutputCsv(List<TasksWeights> infos) throws IOException {
@@ -161,19 +193,41 @@ public class Jfr2Csv implements Callable<Void> {
         TICK,
         WATCHDOG,
         STRING2ID,
+        STRING2ID_BIND,
         ID2STRING,
+        ID2STRING_BIND,
         TP_REBIND,
         REBIND,
+        EM_REBIND,
+        IT_REBIND,
+        PLAN_BIND,
+        PARSE_SPARQL,
+        FS_PARSE_SPARQL,
+        JENA_PARSE_SPARQL,
+        JENA_TXN,
+        OPTIMIZER,
+        FS_OPTIMIZER,
+        JENA_OPTIMIZER,
         CANCEL,
+        TASK_QUEUES,
         TASK_TAKE,
         TASK_PUT,
+        EM_TASK_TAKE,
+        EM_TASK_PUT,
+        IT_TASK_TAKE,
+        IT_TASK_PUT,
         VTHREAD_SWITCH,
         PAGE_FAULT,
         LOCK,
         UNLOCK,
         ATOMICS,
+        MERGEBIT_OFFER_SYNC,
+        GATHERING_ONBATCH_SYNC,
         BIT_CONS_PARK,
         BIT_PROD_PARK,
+        BIT_INIT,
+        BIT_CLEANUP,
+        EM_CLEANUP,
         BATCH_CONVERSION,
         BATCH_QUICK_APPEND,
         BATCH_APPEND,
@@ -184,6 +238,8 @@ public class Jfr2Csv implements Callable<Void> {
         PUT_TERM,
         PUT_TERM_COPY,
         PUT_TERM_PAGE_FAULT,
+        JENA_TERM2NODE,
+        JENA_PARSE_NODE,
         ALLOC_CREATE,
         ALLOC_OFFER,
         WEAK_DEDUP,
@@ -235,29 +291,71 @@ public class Jfr2Csv implements Callable<Void> {
                     new TaskPattern(SourceKind::isFsStore,
                             "LocalityCompositeDict\\.Lookup\\.find")
             };
+            PATTERNS[STRING2ID_BIND.ordinal()] = new TaskPattern[] {
+                    new TaskPattern(SourceKind::isHdt,
+                            "org\\.rdfhdt.*\\.stringToId|IdAccess\\.encode",
+                            "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
+                            true),
+                    new TaskPattern(SourceKind::isFsStore,
+                            "LocalityCompositeDict\\.Lookup\\.find",
+                            "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
+                            true)
+            };
             PATTERNS[ID2STRING.ordinal()] = new TaskPattern[] {
                     new TaskPattern(SourceKind::isHdt, "IdAccess\\.to(NT|Term|String)"),
                     new TaskPattern(SourceKind::isFsStore, "LocalityCompositeDict\\.Lookup.get")
             };
+            PATTERNS[ID2STRING_BIND.ordinal()] = new TaskPattern[] {
+                    new TaskPattern(SourceKind::isHdt,
+                            "IdAccess\\.to(NT|Term|String)",
+                            "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
+                            true),
+                    new TaskPattern(SourceKind::isFsStore,
+                            "LocalityCompositeDict\\.Lookup.get",
+                            "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
+                            true)
+            };
             PATTERNS[TP_REBIND.ordinal()] = new TaskPattern[] {
                     new TaskPattern("TPEmitter\\.rebind")
             };
-            PATTERNS[REBIND.ordinal()] = new TaskPattern[] {
-                    new TaskPattern("rebind")
+            PATTERNS[EM_REBIND.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("\\.rebind$")
+            };
+            PATTERNS[IT_REBIND.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("BindingBIt\\.(re)?bind")
+            };
+            PATTERNS[PLAN_BIND.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Plan\\.bound")
+            };
+            PATTERNS[FS_PARSE_SPARQL.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("SparqlParser\\.parse$")
+            };
+            PATTERNS[JENA_PARSE_SPARQL.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("QueryFactory\\.create$")
+            };
+            PATTERNS[JENA_TXN.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("DatasetGraphTxnCtl")
+            };
+            PATTERNS[FS_OPTIMIZER.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Optimizer\\.(optimize|shallowOptimize)")
+            };
+            PATTERNS[JENA_OPTIMIZER.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Algebra\\.optimize", "QueryEngineMain\\.modifyOp", false)
             };
             PATTERNS[CANCEL.ordinal()] = new TaskPattern[] {
                     new TaskPattern("\\.(do|try)Cancel$|cancel$")
             };
-            PATTERNS[TASK_TAKE.ordinal()] = new TaskPattern[] {
-                    new TaskPattern(FlowModel.ITERATE,
-                            "ThreadPoolExecutor\\.getTask|ForkJoinPool\\.awaitWork"),
-                    new TaskPattern(FlowModel.EMIT, "TaskQueue\\.take"),
+            PATTERNS[IT_TASK_TAKE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("ThreadPoolExecutor\\.getTask|ForkJoinPool\\.awaitWork"),
             };
-            PATTERNS[TASK_PUT.ordinal()] = new TaskPattern[] {
-                    new TaskPattern(FlowModel.ITERATE,
-                            "(ThreadPoolExecutor|ForkJoinPool)\\.execute|VirtualThreads\\.unpark"),
-                    new TaskPattern(FlowModel.EMIT,
-                            "TaskQueue\\.put|Task\\.awake(SameWorker|Parallel)"),
+            PATTERNS[EM_TASK_TAKE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("TaskQueue\\.take"),
+            };
+            PATTERNS[IT_TASK_PUT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("(ThreadPoolExecutor|ForkJoinPool)\\.execute|VirtualThreads\\.unpark"),
+            };
+            PATTERNS[EM_TASK_PUT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("TaskQueue\\.put|Task\\.awake(SameWorker|Parallel)"),
             };
             PATTERNS[VTHREAD_SWITCH.ordinal()] = new TaskPattern[] {
                     new TaskPattern("jvmti_vthread|Continuation\\.|VirtualThread\\.(un)?mount")
@@ -272,13 +370,31 @@ public class Jfr2Csv implements Callable<Void> {
                     new TaskPattern("\\.unlock")
             };
             PATTERNS[ATOMICS.ordinal()] = new TaskPattern[] {
-                    new TaskPattern("VarHandleGuards")
+                    new TaskPattern("VarHandleGuards|\\.compareAndSet")
+            };
+            PATTERNS[MERGEBIT_OFFER_SYNC.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("\\.(awaitUninterruptibly|lock|unlock|park|unpark)$",
+                                    "MergeBIt\\.offer", true)
+            };
+            PATTERNS[GATHERING_ONBATCH_SYNC.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("\\.lock$|\\.unlock|VarHandleGuards",
+                            "GatheringEmitter[.$]Connector\\.onBatch",
+                            true)
             };
             PATTERNS[BIT_CONS_PARK.ordinal()] = new TaskPattern[] {
                     new TaskPattern("LockSupport\\.park", "SPSCBIt.nextBatch", false)
             };
             PATTERNS[BIT_PROD_PARK.ordinal()] = new TaskPattern[] {
                     new TaskPattern("LockSupport\\.park", "SPSCBIt.offer", false)
+            };
+            PATTERNS[BIT_INIT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("BIt.<init>")
+            };
+            PATTERNS[BIT_CLEANUP.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("BIt.cleanup$")
+            };
+            PATTERNS[EM_CLEANUP.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("(Emitter|Stage|Processor|Filter|Merger|Task).doRelease$")
             };
             PATTERNS[BATCH_CONVERSION.ordinal()] = new TaskPattern[] {
                     new TaskPattern("put(Row)?Converting|FromStoreConverter\\.onBatchByCopy|(Store|Hdt)?ConverterStage\\.onBatchByCopy")
@@ -316,6 +432,12 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[PUT_TERM_PAGE_FAULT.ordinal()] = new TaskPattern[] {
                     new TaskPattern("page_fault", "\\.putTerm", true)
             };
+            PATTERNS[JENA_TERM2NODE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("JenaTermParser\\.parse")
+            };
+            PATTERNS[JENA_PARSE_NODE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("JenaNodeParser\\.makeNode")
+            };
             PATTERNS[WEAK_DEDUP.ordinal()] = new TaskPattern[] {
                     new TaskPattern("WeakDedup\\.isDuplicate")
             };
@@ -328,7 +450,13 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[PROJECT_IN_PLACE.ordinal()] = new TaskPattern[] {
                     new TaskPattern("projectInPlace")
             };
-            PATTERNS[GC.ordinal()] = new TaskPattern[0];
+            PATTERNS[GC.ordinal()]           = new TaskPattern[0];
+            PATTERNS[PARSE_SPARQL.ordinal()] = new TaskPattern[0];
+            PATTERNS[REBIND.ordinal()]       = new TaskPattern[0];
+            PATTERNS[OPTIMIZER.ordinal()]    = new TaskPattern[0];
+            PATTERNS[TASK_QUEUES.ordinal()]  = new TaskPattern[0];
+            PATTERNS[TASK_TAKE.ordinal()]    = new TaskPattern[0];
+            PATTERNS[TASK_PUT.ordinal()]     = new TaskPattern[0];
             String missing = Arrays.stream(ALL).filter(t -> PATTERNS[t.ordinal()] == null)
                     .map(Objects::toString).collect(joining(", "));
             if (!missing.isEmpty())
@@ -337,14 +465,28 @@ public class Jfr2Csv implements Callable<Void> {
 
         public boolean matches(Params params, RecordedThread thread, List<RecordedFrame> frames,
                                StringBuilder tmp) {
-            if (this == GC) {
-                return thread != null && thread.getOSName().startsWith("GC Thread");
-            }
-            for (var taskPattern : PATTERNS[ordinal()]) {
-                if (taskPattern.matches(params, frames, tmp))
-                    return true;
-            }
-            return false;
+            return switch (this) {
+                case GC -> thread != null && thread.getOSName().startsWith("GC Thread");
+                case OPTIMIZER -> JENA_OPTIMIZER.matches(params, thread, frames, tmp)
+                        || FS_OPTIMIZER.matches(params, thread, frames, tmp);
+                case PARSE_SPARQL -> FS_PARSE_SPARQL.matches(params, thread, frames, tmp)
+                        || JENA_PARSE_SPARQL.matches(params, thread, frames, tmp);
+                case REBIND -> EM_REBIND.matches(params, thread, frames, tmp)
+                        || IT_REBIND.matches(params, thread, frames, tmp);
+                case TASK_TAKE -> EM_TASK_TAKE.matches(params, thread, frames, tmp)
+                        || IT_TASK_TAKE.matches(params, thread, frames, tmp);
+                case TASK_PUT -> EM_TASK_PUT.matches(params, thread, frames, tmp)
+                        || IT_TASK_PUT.matches(params, thread, frames, tmp);
+                case TASK_QUEUES -> TASK_TAKE.matches(params, thread, frames, tmp)
+                        || TASK_PUT.matches(params, thread, frames, tmp);
+                default -> {
+                    for (var taskPattern : PATTERNS[ordinal()]) {
+                        if (taskPattern.matches(params, frames, tmp))
+                            yield true;
+                    }
+                    yield false;
+                }
+            };
         }
     }
 
@@ -363,6 +505,11 @@ public class Jfr2Csv implements Callable<Void> {
             this(flow, null, Pattern.compile(regexp), null, false);
         }
         public TaskPattern(String regexp, String callerRegexp, boolean allowIndirectCaller) {
+            this(null, null, Pattern.compile(regexp),
+                    Pattern.compile(callerRegexp), allowIndirectCaller);
+        }
+        public TaskPattern(Predicate<SourceKind> sourceKindMatcher,
+                           String regexp, String callerRegexp, boolean allowIndirectCaller) {
             this(null, null, Pattern.compile(regexp),
                     Pattern.compile(callerRegexp), allowIndirectCaller);
         }
