@@ -197,6 +197,7 @@ public class Jsons2Csv implements Callable<Void> {
     private static final class ResultsCollector {
         private static final String PARAMS_LINE_PREFIX = "# Parameters: (";
         private static final String OOM = "OutOfMemoryError";
+        private static final String OOM_KILLED = "OOM-killed";
         private static final String FAILED = "<forked VM failed with exit code ";
         private static final Pattern BATCH_KIND = Pattern.compile("[( ]batchKind = (\\w+)");
         private static final Pattern FLOW_MODEL = Pattern.compile("[( ]flowModel = (\\w+)");
@@ -328,7 +329,7 @@ public class Jsons2Csv implements Callable<Void> {
                         params = new Params(queries, srcKind, null,
                                 null, null, batchKind, flowModel,
                                 null, null, unionSource);
-                    } else if (line.contains(OOM)) {
+                    } else if (line.contains(OOM) || line.contains(OOM_KILLED)) {
                         oom = true;
                     } else if (line.startsWith(FAILED) && params != null) {
                         var results             = new JmhResults();
