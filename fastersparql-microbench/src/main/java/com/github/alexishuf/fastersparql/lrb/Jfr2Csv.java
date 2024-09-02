@@ -58,6 +58,7 @@ public class Jfr2Csv implements Callable<Void> {
         int jfrFilesCount = params2jfrFiles.values().stream().mapToInt(List::size).sum();
         log.info("Found {} JFR files in {}s",
                  jfrFilesCount, duration2string(findStartNs, nanoTime()));
+        int totalWeights = jfrFilesCount + params2jfrFiles.keySet().size();
 
         List<TasksWeights> weightsList = Collections.synchronizedList(new ArrayList<>());
         long procStartNs = nanoTime();
@@ -68,9 +69,9 @@ public class Jfr2Csv implements Callable<Void> {
                 while (!stopProgressReport.tryAcquire(10, TimeUnit.SECONDS)) {
                     int done = weightsList.size();
                     long nsPerFile = (nanoTime()-procStartNs)/done;
-                    log.info("Processed {}/{} JFR files, {}% ETA {}", done, jfrFilesCount,
-                            format("%.3f", 100.0/jfrFilesCount*done),
-                            duration2string(0, (jfrFilesCount-done)*nsPerFile));
+                    log.info("Computed {}/{} rows, {}% ETA {}", done, totalWeights,
+                            format("%.3f", 100.0/totalWeights*done),
+                            duration2string(0, (totalWeights-done)*nsPerFile));
                 }
             } catch (InterruptedException e) {
                 log.error("Interrupted. Will stop reporting progress");
@@ -102,7 +103,7 @@ public class Jfr2Csv implements Callable<Void> {
 
     private void writeOutputCsv(List<TasksWeights> infos) throws IOException {
         try (var w = new FileWriter(destFile, UTF_8)) {
-            w.append("queries,source,batch,flow,unionSource,origin");
+            w.append("queries,source,batch,flow,unionSource,origin,samples,excludedSamples,includedSamples");
             for (Task task : Task.ALL)
                 w.append(',').append(task.headerName());
             w.append("\r\n");
@@ -113,7 +114,10 @@ public class Jfr2Csv implements Callable<Void> {
                         .append(p.batchKind.name()).append(',')
                         .append(p.flowModel.name()).append(',')
                         .append(String.valueOf(p.unionSource)).append(',')
-                        .append(weights.origin);
+                        .append(weights.origin).append(',')
+                        .append(Long.toString(weights.samples)).append(',')
+                        .append(Long.toString(weights.excludedSamples)).append(',')
+                        .append(Long.toString(weights.includedSamples()));
                 for (Task task : Task.ALL)
                     w.append(',').append(Double.toString(weights.get(task)));
                 w.append("\r\n");
@@ -196,6 +200,7 @@ public class Jfr2Csv implements Callable<Void> {
         STRING2ID_BIND,
         ID2STRING,
         ID2STRING_BIND,
+        TP_SEARCH,
         TP_REBIND,
         REBIND,
         EM_REBIND,
@@ -218,7 +223,13 @@ public class Jfr2Csv implements Callable<Void> {
         IT_TASK_PUT,
         VTHREAD_SWITCH,
         PAGE_FAULT,
+        NEW,
+        NEW_PAGE_FAULT,
+        NEW_OR_PAGE_FAULT,
+        NEW_OR_PAGE_FAULT_REBIND,
+        MMAP_PAGE_FAULT,
         LOCK,
+        LOCKBIND,
         UNLOCK,
         ATOMICS,
         MERGEBIT_OFFER_SYNC,
@@ -226,18 +237,22 @@ public class Jfr2Csv implements Callable<Void> {
         BIT_CONS_PARK,
         BIT_PROD_PARK,
         BIT_INIT,
+        EM_INIT,
         BIT_CLEANUP,
         EM_CLEANUP,
         BATCH_CONVERSION,
+        BATCH_HASH,
         BATCH_QUICK_APPEND,
         BATCH_APPEND,
         BATCH_COPY,
         BATCH_CREATE,
         BATCH_RECYCLE,
         ROPE_INTERN,
+        ROPE_INTERN_PAGE_FAULT,
         PUT_TERM,
         PUT_TERM_COPY,
         PUT_TERM_PAGE_FAULT,
+        GC_PAGE_FAULT,
         JENA_TERM2NODE,
         JENA_PARSE_NODE,
         ALLOC_CREATE,
@@ -289,7 +304,7 @@ public class Jfr2Csv implements Callable<Void> {
                     new TaskPattern(SourceKind::isHdt,
                             "org\\.rdfhdt.*\\.stringToId|IdAccess\\.encode"),
                     new TaskPattern(SourceKind::isFsStore,
-                            "LocalityCompositeDict\\.Lookup\\.find")
+                            "LocalityCompositeDict[.$]Lookup\\.find")
             };
             PATTERNS[STRING2ID_BIND.ordinal()] = new TaskPattern[] {
                     new TaskPattern(SourceKind::isHdt,
@@ -297,13 +312,13 @@ public class Jfr2Csv implements Callable<Void> {
                             "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
                             true),
                     new TaskPattern(SourceKind::isFsStore,
-                            "LocalityCompositeDict\\.Lookup\\.find",
+                            "LocalityCompositeDict[.$]Lookup\\.find",
                             "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
                             true)
             };
             PATTERNS[ID2STRING.ordinal()] = new TaskPattern[] {
                     new TaskPattern(SourceKind::isHdt, "IdAccess\\.to(NT|Term|String)"),
-                    new TaskPattern(SourceKind::isFsStore, "LocalityCompositeDict\\.Lookup.get")
+                    new TaskPattern(SourceKind::isFsStore, "LocalityCompositeDict[.$]Lookup.get")
             };
             PATTERNS[ID2STRING_BIND.ordinal()] = new TaskPattern[] {
                     new TaskPattern(SourceKind::isHdt,
@@ -311,9 +326,13 @@ public class Jfr2Csv implements Callable<Void> {
                             "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
                             true),
                     new TaskPattern(SourceKind::isFsStore,
-                            "LocalityCompositeDict\\.Lookup.get",
+                            "LocalityCompositeDict[.$]Lookup.get",
                             "BIt\\.bind$|Plan\\.bound$|\\.rebind$",
                             true)
+            };
+            PATTERNS[TP_SEARCH.ordinal()] = new TaskPattern[] {
+                    new TaskPattern(SourceKind::isHdt, "BitmapTriples\\.search"),
+                    new TaskPattern(SourceKind::isFsStore, "Triples\\.(values|pairs|subKeys|contains)")
             };
             PATTERNS[TP_REBIND.ordinal()] = new TaskPattern[] {
                     new TaskPattern("TPEmitter\\.rebind")
@@ -358,10 +377,19 @@ public class Jfr2Csv implements Callable<Void> {
                     new TaskPattern("TaskQueue\\.put|Task\\.awake(SameWorker|Parallel)"),
             };
             PATTERNS[VTHREAD_SWITCH.ordinal()] = new TaskPattern[] {
-                    new TaskPattern("jvmti_vthread|Continuation\\.|VirtualThread\\.(un)?mount")
+                    new TaskPattern("jvmti_vthread|Continuation\\.(on|unpin|pin|mount|unmount)|VirtualThread\\.(un)?mount")
             };
             PATTERNS[PAGE_FAULT.ordinal()] = new TaskPattern[] {
                     new TaskPattern("exc_page_fault")
+            };
+            PATTERNS[NEW_PAGE_FAULT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("exc_page_fault",
+                            "arraycopy|\\.(create|make|copy|fill|dup|<init>|wrap)|WorkerThread::run",
+                            true),
+                    new TaskPattern("do_anonymous_page"),
+            };
+            PATTERNS[NEW.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("new_(instance|array(_nonzero)?)_C|allocate_(instance|common)")
             };
             PATTERNS[LOCK.ordinal()] = new TaskPattern[] {
                     new TaskPattern("\\.lock")
@@ -390,6 +418,9 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[BIT_INIT.ordinal()] = new TaskPattern[] {
                     new TaskPattern("BIt.<init>")
             };
+            PATTERNS[EM_INIT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("(Emitter|BindingStage.*|ScatterStage.*).<init>")
+            };
             PATTERNS[BIT_CLEANUP.ordinal()] = new TaskPattern[] {
                     new TaskPattern("BIt.cleanup$")
             };
@@ -398,6 +429,9 @@ public class Jfr2Csv implements Callable<Void> {
             };
             PATTERNS[BATCH_CONVERSION.ordinal()] = new TaskPattern[] {
                     new TaskPattern("put(Row)?Converting|FromStoreConverter\\.onBatchByCopy|(Store|Hdt)?ConverterStage\\.onBatchByCopy")
+            };
+            PATTERNS[BATCH_HASH.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Batch\\.hash")
             };
             PATTERNS[BATCH_QUICK_APPEND.ordinal()] = new TaskPattern[] {
                     new TaskPattern("Batch\\.quickAppend")
@@ -422,6 +456,9 @@ public class Jfr2Csv implements Callable<Void> {
             };
             PATTERNS[ROPE_INTERN.ordinal()] = new TaskPattern[] {
                     new TaskPattern("SharedRopes\\.intern")
+            };
+            PATTERNS[ROPE_INTERN_PAGE_FAULT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("exc_page_fault", "SharedRopes\\.intern", true)
             };
             PATTERNS[PUT_TERM.ordinal()] = new TaskPattern[] {
                     new TaskPattern("\\.putTerm")
@@ -450,13 +487,18 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[PROJECT_IN_PLACE.ordinal()] = new TaskPattern[] {
                     new TaskPattern("projectInPlace")
             };
-            PATTERNS[GC.ordinal()]           = new TaskPattern[0];
-            PATTERNS[PARSE_SPARQL.ordinal()] = new TaskPattern[0];
-            PATTERNS[REBIND.ordinal()]       = new TaskPattern[0];
-            PATTERNS[OPTIMIZER.ordinal()]    = new TaskPattern[0];
-            PATTERNS[TASK_QUEUES.ordinal()]  = new TaskPattern[0];
-            PATTERNS[TASK_TAKE.ordinal()]    = new TaskPattern[0];
-            PATTERNS[TASK_PUT.ordinal()]     = new TaskPattern[0];
+            PATTERNS[GC.ordinal()]                       = new TaskPattern[0];
+            PATTERNS[GC_PAGE_FAULT.ordinal()]            = new TaskPattern[0];
+            PATTERNS[NEW_OR_PAGE_FAULT.ordinal()]        = new TaskPattern[0];
+            PATTERNS[NEW_OR_PAGE_FAULT_REBIND.ordinal()] = new TaskPattern[0];
+            PATTERNS[MMAP_PAGE_FAULT.ordinal()]          = new TaskPattern[0];
+            PATTERNS[PARSE_SPARQL.ordinal()]             = new TaskPattern[0];
+            PATTERNS[REBIND.ordinal()]                   = new TaskPattern[0];
+            PATTERNS[LOCKBIND.ordinal()]                 = new TaskPattern[0];
+            PATTERNS[OPTIMIZER.ordinal()]                = new TaskPattern[0];
+            PATTERNS[TASK_QUEUES.ordinal()]              = new TaskPattern[0];
+            PATTERNS[TASK_TAKE.ordinal()]                = new TaskPattern[0];
+            PATTERNS[TASK_PUT.ordinal()]                 = new TaskPattern[0];
             String missing = Arrays.stream(ALL).filter(t -> PATTERNS[t.ordinal()] == null)
                     .map(Objects::toString).collect(joining(", "));
             if (!missing.isEmpty())
@@ -467,12 +509,24 @@ public class Jfr2Csv implements Callable<Void> {
                                StringBuilder tmp) {
             return switch (this) {
                 case GC -> thread != null && thread.getOSName().startsWith("GC Thread");
+                case GC_PAGE_FAULT -> thread != null && thread.getOSName().startsWith("GC Thread")
+                        && PAGE_FAULT.matches(params, thread, frames, tmp);
+                case NEW_OR_PAGE_FAULT -> NEW.matches(params, thread, frames, tmp)
+                        || NEW_PAGE_FAULT.matches(params, thread, frames, tmp);
+                case NEW_OR_PAGE_FAULT_REBIND ->
+                        NEW_OR_PAGE_FAULT.matches(params, thread, frames, tmp)
+                                && REBIND.matches(params, thread, frames, tmp);
+                case MMAP_PAGE_FAULT ->
+                    PAGE_FAULT.matches(params, thread, frames, tmp)
+                            && !NEW_PAGE_FAULT.matches(params, thread, frames, tmp);
                 case OPTIMIZER -> JENA_OPTIMIZER.matches(params, thread, frames, tmp)
                         || FS_OPTIMIZER.matches(params, thread, frames, tmp);
                 case PARSE_SPARQL -> FS_PARSE_SPARQL.matches(params, thread, frames, tmp)
                         || JENA_PARSE_SPARQL.matches(params, thread, frames, tmp);
                 case REBIND -> EM_REBIND.matches(params, thread, frames, tmp)
                         || IT_REBIND.matches(params, thread, frames, tmp);
+                case LOCKBIND -> LOCK.matches(params, thread, frames, tmp)
+                        && REBIND.matches(params, thread, frames, tmp);
                 case TASK_TAKE -> EM_TASK_TAKE.matches(params, thread, frames, tmp)
                         || IT_TASK_TAKE.matches(params, thread, frames, tmp);
                 case TASK_PUT -> EM_TASK_PUT.matches(params, thread, frames, tmp)
@@ -501,16 +555,13 @@ public class Jfr2Csv implements Callable<Void> {
                            String regexp) {
             this(null, sourceKindMatcher, Pattern.compile(regexp), null, false);
         }
-        public TaskPattern(@Nullable FlowModel flow, String regexp) {
-            this(flow, null, Pattern.compile(regexp), null, false);
-        }
         public TaskPattern(String regexp, String callerRegexp, boolean allowIndirectCaller) {
             this(null, null, Pattern.compile(regexp),
                     Pattern.compile(callerRegexp), allowIndirectCaller);
         }
         public TaskPattern(Predicate<SourceKind> sourceKindMatcher,
                            String regexp, String callerRegexp, boolean allowIndirectCaller) {
-            this(null, null, Pattern.compile(regexp),
+            this(null, sourceKindMatcher, Pattern.compile(regexp),
                     Pattern.compile(callerRegexp), allowIndirectCaller);
         }
 
@@ -576,12 +627,14 @@ public class Jfr2Csv implements Callable<Void> {
                 weights[t.ordinal()] = task2samples[t.ordinal()]/(double)samples;
             for (Task t : Task.INCLUDE)
                 weights[t.ordinal()] = task2samples[t.ordinal()]/nonExcludedSamples;
-            return new TasksWeights(params, origin, weights);
+            return new TasksWeights(params, origin, samples, excludedSamples, weights);
         }
     }
 
-    private record TasksWeights (Params params, String origin, double[] weights) {
+    private record TasksWeights(Params params, String origin, long samples, long excludedSamples,
+                                double[] weights) {
         public double get(Task task) { return weights[task.ordinal()]; }
+        public long includedSamples() { return samples-excludedSamples; }
     }
 
     private record JfrFinder(Map<Params, List<File>> out) {
