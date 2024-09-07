@@ -113,7 +113,7 @@ public class ServerProcess implements SafeCloseable {
             throw makeDeadException(processEndpoint);
         }
     }
-    private static final Duration PORT_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration PORT_TIMEOUT = Duration.ofMinutes(10);
 
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public boolean waitForPort(Duration duration) {
