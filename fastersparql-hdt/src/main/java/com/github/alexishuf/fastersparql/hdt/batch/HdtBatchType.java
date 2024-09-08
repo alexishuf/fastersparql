@@ -2,10 +2,7 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.operators.ConverterBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchConverter;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.IdBatchType;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
@@ -113,10 +110,19 @@ public class HdtBatchType extends IdBatchType<HdtBatch> {
     }
 
     @Override public int hashId(long id) {
-        if (id == 0) return Rope.FNV_BASIS;
+        if (id == 0 || id == IdAccess.NOT_FOUND)
+            return Rope.FNV_BASIS;
+        int hashBucket = (int)(id ^ (id>>>HASH_DICT_RSL));
+        int hash = IdHashCache.get(HASH_CACHE, id, hashBucket, 0);
+        if (hash != 0)
+            return hash;
         Term term = IdAccess.toTerm(id);
-        return term == null ? Rope.FNV_BASIS : term.hashCode();
+        hash = term == null ? Rope.FNV_BASIS : term.hashCode();
+        IdHashCache.set(HASH_CACHE, id, hashBucket, hash);
+        return hash;
     }
+    private static final int HASH_DICT_RSL = IdAccess.DICT_BIT-(IdHashCache.BUCKET_BITS-4);
+    private static final long[] HASH_CACHE = IdHashCache.create(IdAccess.NOT_FOUND);
 
     @Override public boolean equals(long lId, long rId) {
         return HdtBatch.equals(lId, rId);

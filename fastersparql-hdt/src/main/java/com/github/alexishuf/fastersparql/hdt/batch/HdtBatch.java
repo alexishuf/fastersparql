@@ -139,6 +139,9 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
         return true;
     }
 
+    @Override public int hash(int row, int col) {
+        return HDT.hashId(id(row, col));
+    }
 
     /* --- --- --- mutators --- --- --- */
 

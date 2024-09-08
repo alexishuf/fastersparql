@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.store.batch;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
+import com.github.alexishuf.fastersparql.batch.type.IdHashCache;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.*;
@@ -19,6 +20,7 @@ import java.lang.foreign.MemorySegment;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.batch.StoreBatchType.STORE;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
@@ -68,26 +70,34 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
     public static int hashId(long id) {
         if (id == NOT_FOUND)
             return FNV_BASIS;
+        int hashBucket = (int)(id ^ (id >>> HASH_DICT_RSL));
+        int hash = IdHashCache.get(HASH_CACHE, id, hashBucket, 0);
+        if (hash != 0)
+            return hash;
         var lookup = dict(dictId(id)).lookup().takeOwnership(HASH_ID);
         try {
+            FinalSegmentRope sh;
             var r = lookup.get(unsource(id));
-            if (r == null || r.len == 0)
-                return FNV_BASIS;
-            if (r.sndLen > MIN_INTERNED_LEN && r.snd.get(JAVA_BYTE, r.sndOff) == '"') {
-                var sh = SHARED_ROPES.internDatatype(r, r.fstLen, r.len);
-                if (Term.isNumericDatatype(sh)) {
-                    try (var tmp = PooledTermView.of(sh, r.fst, r.fstU8, r.fstOff,
-                            r.fstLen, true)) {
-                        return tmp.hashCode();
-                    }
+            if (r == null || r.len == 0) {
+                hash = FNV_BASIS;
+            } else if (r.sndLen > MIN_INTERNED_LEN && r.snd.get(JAVA_BYTE, r.sndOff) == '"'
+                    && isNumericDatatype(sh=SHARED_ROPES.internDatatype(r, r.fstLen, r.len))) {
+                try (var tmp = PooledTermView.of(sh, r.fst, r.fstU8, r.fstOff,
+                                                 r.fstLen, true)) {
+                    hash = tmp.hashCode();
                 }
+            } else {
+                hash = r.hashCode();
             }
-            return r.hashCode();
         } finally {
             lookup.recycle(HASH_ID);
         }
+        IdHashCache.set(HASH_CACHE, id, hashBucket, hash);
+        return hash;
     }
     private static final StaticMethodOwner HASH_ID = new StaticMethodOwner("StoreBatch.hashId");
+    private static final int HASH_DICT_RSL = DICT_BIT-(IdHashCache.BUCKET_BITS-4);
+    private static final long[] HASH_CACHE = IdHashCache.create(NOT_FOUND);
 
     @Override public int hash(int row, int col) {return hashId(id(row, col));}
 
@@ -127,9 +137,9 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
 
             // numeric datatypes require parsing the numbers, compare as terms
             SegmentRope leftDt = datatypeSuff(left), rightDt = datatypeSuff(right);
-            if (Term.isNumericDatatype(leftDt))
-                return Term.isNumericDatatype(rightDt) && tsr2term(left).equals(tsr2term(right));
-            if (Term.isNumericDatatype(rightDt))
+            if (isNumericDatatype(leftDt))
+                return isNumericDatatype(rightDt) && tsr2term(left).equals(tsr2term(right));
+            if (isNumericDatatype(rightDt))
                 return false;
 
             // non-null, non-numeric, different dicts, compare by string
