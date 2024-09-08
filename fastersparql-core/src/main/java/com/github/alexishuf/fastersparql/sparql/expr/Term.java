@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
@@ -11,6 +12,8 @@ import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -22,6 +25,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.make;
 import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.requiredBytes;
@@ -38,6 +42,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 @SuppressWarnings("StaticInitializerReferencesSubClass")
 public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, JournalNamed
         permits TermView, FinalTerm {
+    private static final Logger log = LoggerFactory.getLogger(Term.class);
     public static final int BYTES = 16 + 2*4 + 6*4;
     public enum Type {
         BLANK,
@@ -639,23 +644,35 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 yield wrap(prefix, suffix);
             }
             case '<' -> {
-                SegmentRope prefix = SHARED_ROPES.internPrefixOf(r, begin, end);
-                if (prefix == P_RDF)
-                    yield internRdf(r, begin+P_RDF.len, end);
-                if (prefix == P_XSD)
-                    yield internXsd(r, begin+P_XSD.len, end);
-                int suffixLen = end-begin-prefix.len;
-                SegmentRope suffix;
-                if (prefix.len > 0 && suffixLen <=3)
-                    suffix = internIriLocal(r, begin+prefix.len, suffixLen, true);
-                else
-                    suffix = asFinal(r, begin+prefix.len, end);
+                SegmentRope prefix, suffix;
+                if (NO_INTERN_IRIS) {
+                    prefix = SHARED_ROPES.internPrefixOf(r, begin, end);
+                    if (prefix == P_RDF)
+                        yield internRdf(r, begin+P_RDF.len, end);
+                    if (prefix == P_XSD)
+                        yield internXsd(r, begin+P_XSD.len, end);
+                    int suffixLen = end-begin-prefix.len;
+                    if (prefix.len > 0 && suffixLen <=3)
+                        suffix = internIriLocal(r, begin+prefix.len, suffixLen, true);
+                    else
+                        suffix = asFinal(r, begin+prefix.len, end);
+                } else {
+                    prefix = EMPTY;
+                    suffix = asFinal(r, begin, end);
+                }
                 yield new FinalTerm(prefix, suffix, false);
             }
             case '?', '$', '_' -> wrap(null, asFinal(r, begin, end));
             default -> throw new InvalidTermException(r.toString(begin, end), 0,
                                                       "Does not start with <, \", ?, $ or _");
         };
+    }
+    private static final boolean NO_INTERN_IRIS = FSProperties.batchNoInternIri();
+    static {
+        if (NO_INTERN_IRIS) {
+            log.warn("{} enabled! Will not intern IRIs when spawning Term from a string that is not already spolit into prefix and local. This will increase heap usage, heap fragmentation and will increase cache misses. Use only for testing purposes",
+                     FSProperties.BATCH_NO_INTERN_IRI);
+        }
     }
 
     /**
