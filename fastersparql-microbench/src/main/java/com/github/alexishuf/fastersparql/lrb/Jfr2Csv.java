@@ -53,12 +53,12 @@ public class Jfr2Csv implements Callable<Void> {
         checkOutputPaths();
         checkInputsPaths();
         long findStartNs = nanoTime();
-        Map<Params, List<File>> params2jfrFiles = new HashMap<>();
-        new JfrFinder(params2jfrFiles).visitAll(roots);
-        int jfrFilesCount = params2jfrFiles.values().stream().mapToInt(List::size).sum();
+        var jfrFiles = new JfrFiles();
+        roots.parallelStream().map(r -> new JfrFinder().visit(r)).forEachOrdered(jfrFiles::add);
+        int jfrFilesCount = jfrFiles.filesCount();
         log.info("Found {} JFR files in {}s",
                  jfrFilesCount, duration2string(findStartNs, nanoTime()));
-        int totalWeights = jfrFilesCount + params2jfrFiles.keySet().size();
+        int totalWeights = jfrFilesCount + jfrFiles.paramsCount();
 
         List<TasksWeights> weightsList = Collections.synchronizedList(new ArrayList<>());
         long procStartNs = nanoTime();
@@ -79,7 +79,7 @@ public class Jfr2Csv implements Callable<Void> {
         });
 
         try {
-            params2jfrFiles.entrySet().parallelStream()
+            jfrFiles.param2files.entrySet().parallelStream()
                     .forEach(e -> makeTasksWeights(e.getKey(), e.getValue(), weightsList));
         } finally {
             stopProgressReport.release();
@@ -637,7 +637,29 @@ public class Jfr2Csv implements Callable<Void> {
         public long includedSamples() { return samples-excludedSamples; }
     }
 
-    private record JfrFinder(Map<Params, List<File>> out) {
+    record JfrFile(File file, long modifiedMs) {
+        public JfrFile(File file) { this(file, file.lastModified()); }
+        public boolean isNewerThan(JfrFile other) {
+            return other == null || modifiedMs > other.modifiedMs;
+        }
+    }
+
+    static final class JfrFiles {
+        private final Map<Params, List<File>> param2files = new HashMap<>();
+
+        public void add(Map<Params, JfrFile> param2file) {
+            for (var e : param2file.entrySet()) {
+                //noinspection unused
+                var list = param2files.computeIfAbsent(e.getKey(), k -> new ArrayList<>());
+                list.add(e.getValue().file);
+            }
+        }
+
+        public int paramsCount() {return param2files.keySet().size();}
+        public int  filesCount() {return param2files.values().stream().mapToInt(List::size).sum();}
+    }
+
+    private record JfrFinder() {
         private static final Pattern RX = Pattern.compile("fastersparql\\.QueryBench\\.termLen-AverageTime-batchKind-(.*)-flowModel-(.*)-queries-(.*)-srcKind-(.*)-unionSource-(.*)");
         private static final int BATCH_KIND_GRP   = 1;
         private static final int FLOW_GRP         = 2;
@@ -645,14 +667,18 @@ public class Jfr2Csv implements Callable<Void> {
         private static final int SRC_KIND_GRP     = 4;
         private static final int UNION_SOURCE_GRP = 5;
 
-        private void visitAll(Collection<File> dirs) throws IOException {
-            for (File dir : dirs) visit(dir);
+        public Map<Params, JfrFile> visit(File dir) {
+            Map<Params, JfrFile> param2jfr = new HashMap<>();
+            visit0(dir, param2jfr);
+            return param2jfr;
         }
 
-        private void visit(File dir) throws IOException {
+        private void visit0(File dir, Map<Params, JfrFile> param2jfr) {
             var subDirs = dir.listFiles(File::isDirectory);
-            if (subDirs == null)
-                throw new IOException("Could list contents of "+dir);
+            if (subDirs == null) {
+                log.error("Could not list contents of {}", dir);
+                return;
+            }
             log.info("Scanning {} dirs in {}...", subDirs.length, dir);
             for (File subDir : subDirs) {
                 Matcher matcher = RX.matcher(subDir.getName());
@@ -674,16 +700,17 @@ public class Jfr2Csv implements Callable<Void> {
                                           " file: {}. error: {}", jfr, e.getMessage());
                             }
                             if (params != null) {
-                                //noinspection unused
-                                var files = out.computeIfAbsent(params, k -> new ArrayList<>());
-                                files.add(jfr);
+                                JfrFile offer = new JfrFile(jfr);
+                                JfrFile old = param2jfr.getOrDefault(params, null);
+                                if (offer.isNewerThan(old))
+                                    param2jfr.put(params, offer);
                             }
                         } catch (Exception e) {
                             log.warn("Ignoring broken JFR at {}", jfr);
                         }
                     }
                 } else if (subDir.isDirectory()) {
-                    visit(subDir);
+                    visit0(subDir, param2jfr);
                 }
             }
         }
