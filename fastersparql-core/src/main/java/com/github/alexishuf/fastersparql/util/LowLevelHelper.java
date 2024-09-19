@@ -5,6 +5,8 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.VectorSpecies;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import sun.misc.Unsafe;
 
 import java.lang.reflect.Constructor;
@@ -40,5 +42,8 @@ public class LowLevelHelper {
         U = u;
         HAS_UNSAFE = u != null;
         U8_BASE = u == null ? 0 : u.arrayBaseOffset(byte[].class);
+        var log = LoggerFactory.getLogger(LowLevelHelper.class);
+        log.info("Unsafe usage is {}", HAS_UNSAFE ? "enabled" : "disabled");
+        log.info("Vectorization API usage is {}", ENABLE_VEC ? "enabled" : "disabled");
     }
 }
