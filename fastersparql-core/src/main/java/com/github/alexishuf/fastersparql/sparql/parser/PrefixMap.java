@@ -141,6 +141,10 @@ public abstract sealed class PrefixMap extends AbstractOwned<PrefixMap> {
         return Term.wrap(prefix.shared(), local);
     }
 
+    public @Nullable Term prefixTerm(Rope str, int begin, int colonIdx) {
+        return (Term) map.get(str, begin, colonIdx);
+    }
+
     /**
      * Equivalent to {@link PrefixMap#expand(Rope, int, int, int)} but computes
      * {@code colonIdx}.

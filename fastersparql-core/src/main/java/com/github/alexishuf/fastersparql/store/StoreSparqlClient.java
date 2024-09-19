@@ -1380,11 +1380,39 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
     }
 
+    private static final boolean WASTE = FSProperties.batchNoInternIri();
+    static {
+        if (WASTE) {
+            log.warn("{}=true, wasteful batch conversion from NATIVE to TERM/COMPRESSED",
+                     FSProperties.BATCH_NO_INTERN_IRI);
+        }
+    }
+
+    private <B extends Batch<B>>
+    void putTermWaste(B dst, int col, TwoSegmentRope t) {
+        byte fst = t.get(0);
+        switch (fst) {
+            case '"' -> {
+                var sh = t.fstLen == 0
+                       ? FinalSegmentRope.EMPTY
+                       : new FinalSegmentRope(t.snd, t.sndU8, t.sndOff, t.sndLen);
+                dst.putTerm(col, sh, t, 0, t.len-sh.len, true);
+            }
+            case '_', '<' ->
+                dst.putTerm(col, FinalSegmentRope.EMPTY, t, 0, t.len, false);
+            default -> throw new IllegalArgumentException("Not an RDF term");
+        }
+    }
+
+
     private <B extends Batch<B>>
     void putTerm(B dst, int col, long unsourcedId, LocalityCompositeDict.Lookup lookup) {
         TwoSegmentRope t = lookup.get(unsourcedId);
         if (t == null) {
             dst.putNullTerm(col);
+            return;
+        } else if (WASTE) {
+            putTermWaste(dst, col, t);
             return;
         }
         byte fst         = t.get(0);

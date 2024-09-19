@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.model.rope;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.lang.foreign.MemorySegment;
@@ -21,21 +22,32 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
         chunkSegment = MemorySegment.ofArray(dst = chunk = new byte[initialChunkSize]);
     }
 
+    private static final boolean WASTE = FSProperties.batchNoInternIri();
     protected final void reserve(int bytes) {
-        byte[] dst = this.chunk;
-        if (this.chunkPos + bytes < dst.length) {
-            this.dstPos = this.chunkPos;
+        if (WASTE) {
+            reserveWaste(bytes);
         } else {
-            if (bytes < CHUNK_SIZE && this.chunk.length > FULL_CHUNK) {
-                this.chunk        = dst = new byte[CHUNK_SIZE];
-                this.chunkSegment = MemorySegment.ofArray(dst);
-                this.chunkPos     = 0;
+            byte[] dst = this.chunk;
+            if (this.chunkPos + bytes < dst.length) {
+                this.dstPos = this.chunkPos;
             } else {
-                dst = new byte[bytes];
+                if (bytes < CHUNK_SIZE && this.chunk.length > FULL_CHUNK) {
+                    this.chunk        = dst = new byte[CHUNK_SIZE];
+                    this.chunkSegment = MemorySegment.ofArray(dst);
+                    this.chunkPos     = 0;
+                } else {
+                    dst = new byte[bytes];
+                }
+                this.dstPos = 0;
             }
-            this.dstPos = 0;
+            this.dst = dst;
         }
-        this.dst = dst;
+    }
+
+    private void reserveWaste(int bytes) {
+        chunkSegment = MemorySegment.ofArray(chunk = dst = new byte[bytes]);
+        chunkPos     = 0;
+        dstPos       = 0;
     }
 
     protected final FinalSegmentRope take0() {

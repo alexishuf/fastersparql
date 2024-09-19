@@ -566,7 +566,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                     // ensure suffix is interned as some methods rely on reference equality.
                     if (suffix.len >= MIN_INTERNED_LEN)
                         suffix = SHARED_ROPES.internDatatype(suffix, 0, suffix.len);
-                } else if (prefix.len <= 4) {
+                } else if (prefix.len <= 4 && !MUST_WASTE) {
                     yield internPlain(prefix, 0, prefix.len, false);
                 } else if (prefix.reverseSkipUntil(0, prefix.len, '"') == 0) {
                     throw new InvalidTermException(prefix, prefix.len, "No closing \"");
@@ -594,7 +594,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 } else if (prefix == P_XSD) {
                     yield internXsd(suffix, 0, suffix.len);
                 }
-                if (suffix.len <= 3) {
+                if (suffix.len <= 3 && !MUST_WASTE) {
                     suffix = internIriLocal(suffix, 0, suffix.len, false);
                 } else if (suffix.get(suffix.len-1) != '>') {
                     throw new InvalidTermException(suffix, suffix.len - 1, "No closing >");
@@ -637,7 +637,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                         case 'f' -> FALSE;
                         default -> throw new InvalidTermException(r.sub(begin, end), 1, "boolean must be true or false");
                     };
-                } else if (suffix.len == 0 && end-begin <=4) {
+                } else if (suffix.len == 0 && end-begin <=4 && !MUST_WASTE) {
                     yield internPlain(r, begin, end - suffix.len - begin, true);
                 }
                 var prefix = asFinal(r, begin, end-suffix.len);
@@ -645,7 +645,10 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
             }
             case '<' -> {
                 SegmentRope prefix, suffix;
-                if (NO_INTERN_IRIS) {
+                if (MUST_WASTE) {
+                    prefix = EMPTY;
+                    suffix = asFinal(r, begin, end);
+                } else {
                     prefix = SHARED_ROPES.internPrefixOf(r, begin, end);
                     if (prefix == P_RDF)
                         yield internRdf(r, begin+P_RDF.len, end);
@@ -656,20 +659,20 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                         suffix = internIriLocal(r, begin+prefix.len, suffixLen, true);
                     else
                         suffix = asFinal(r, begin+prefix.len, end);
-                } else {
-                    prefix = EMPTY;
-                    suffix = asFinal(r, begin, end);
                 }
                 yield new FinalTerm(prefix, suffix, false);
             }
-            case '?', '$', '_' -> wrap(null, asFinal(r, begin, end));
+            case '?', '$', '_' -> {
+                var suffix = asFinal(r, begin, end);
+                yield wrap(null, suffix);
+            }
             default -> throw new InvalidTermException(r.toString(begin, end), 0,
                                                       "Does not start with <, \", ?, $ or _");
         };
     }
-    private static final boolean NO_INTERN_IRIS = FSProperties.batchNoInternIri();
+    private static final boolean MUST_WASTE = FSProperties.batchNoInternIri();
     static {
-        if (NO_INTERN_IRIS) {
+        if (MUST_WASTE) {
             log.warn("{} enabled! Will not intern IRIs when spawning Term from a string that is not already spolit into prefix and local. This will increase heap usage, heap fragmentation and will increase cache misses. Use only for testing purposes",
                      FSProperties.BATCH_NO_INTERN_IRI);
         }
@@ -695,12 +698,10 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 yield wrap(rope, suffix);
             }
             case '<' -> {
-                SegmentRope prefix = SHARED_ROPES.internPrefixOf(rope, 0, rope.len);
-                if (prefix != null) {
-                    rope.offset += prefix.len;
-                    rope.len -= prefix.len;
-                }
-                yield wrap(prefix, rope);
+                var p = MUST_WASTE ? EMPTY : SHARED_ROPES.internPrefixOf(rope, 0, rope.len);
+                rope.offset += p.len;
+                rope.len    -= p.len;
+                yield wrap(p, rope);
             }
             default -> wrap(null, rope);
         };

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
@@ -12,6 +13,7 @@ import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
@@ -210,7 +212,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                                 stopped = p = in.skip(p, end, PN_PREFIX);
                                 if      (p         == end) yield Result.EOF;
                                 else if (in.get(p) != ':') yield Result.MALFORMED;
-                                else if (prefixMap.expand(in, iriBegin, p, p+1) == null)
+                                else if (prefixMap.prefixTerm(in, iriBegin, p) == null)
                                     yield Result.MALFORMED; // unresolved prefix
                                 stopped = p = in.skip(p+1, end, PN_LOCAL);
                                 while (in.get(p-1) == '.' && !in.isEscaped(p-1)) --p;
@@ -298,7 +300,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
         if (result == null) throw new IllegalStateException("parse() not called");
         switch (in.get(begin)) {
             case '<' -> {
-                var s      = SHARED_ROPES.internPrefixOf(in, begin, stopped);
+                var s      = WASTE ? EMPTY : SHARED_ROPES.internPrefixOf(in, begin, stopped);
                 shared     = s;
                 sharedSuffixed = false;
                 localBegin = begin + s.len;
@@ -363,13 +365,15 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                     }
                     case TTL_KIND_PREFIXED  -> {
                         int colon = in.skip(begin, stopped, PN_PREFIX);
-                        //expanding with empty localName causes no allocation
-                        Term term = prefixMap.expand(in, begin, colon, colon + 1);
-                        if (term == null)
+                        var prefix = prefixMap.prefixTerm(in, begin, colon);
+                        if (prefix == null)
                             throw new InvalidTermException(in, begin, "Unresolved prefix");
-                        shared = term.finalShared();
-                        SegmentRope local = term.local();
-                        buf.append(local, 0, local.len-1);
+                        shared = WASTE ? ttlPrefixedWASTE(buf, prefix) : prefix.finalShared();
+                        var notInterned = prefix.local();
+                        int n = notInterned.len-1; // do not copy closing  '>'
+                        if (n > 0)
+                            buf.append(notInterned, 0, n);
+
                         unescapePrefixedLocal(buf, colon+1);
                     }
                     default -> throw new IllegalStateException("corrupted");
@@ -378,6 +382,11 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                     localEnd = buf.len;
             }
         }
+    }
+
+    private FinalSegmentRope ttlPrefixedWASTE(MutableRope buf, Term prefix) {
+        buf.append(prefix.finalShared());
+        return EMPTY;
     }
 
     /**
@@ -439,14 +448,15 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                 case TTL_KIND_FALSE    -> FALSE;
                 case TTL_KIND_TYPE     -> RDF_TYPE;
                 case TTL_KIND_PREFIXED -> Term.wrap(sh, ropeFactory.asFinal(lBuf));
-                case TTL_KIND_BNODE    -> {
-                    var r = asFinal(in, begin, stopped);
-                    yield Term.splitAndWrap(r);
-                }
+                case TTL_KIND_BNODE    -> WASTE
+                        ? Term.valueOf(in, begin, stopped)
+                        : Term.splitAndWrap(asFinal(in, begin, stopped));
+
                 default -> throw new IllegalStateException("corrupted");
             };
         };
     }
+    private static final boolean WASTE = FSProperties.batchNoInternIri();
 
     /**
      * If {@link TermParser#parse(SegmentRope, int, int)} returned {@code true}, this is the
@@ -521,7 +531,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
             if (alphabet == BN_LABEL) {
                 ttlKind = TTL_KIND_BNODE;
                 return Result.TTL;
-            } else if (prefixMap.expand(in, begin, colon, colon + 1) == null) {
+            } else if (prefixMap.prefixTerm(in, begin, colon) == null) {
                 return Result.MALFORMED;
             } else {
                 ttlKind = TTL_KIND_PREFIXED;

@@ -355,8 +355,7 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
         }
         private static final FinalSegmentRope[] P_ROPES = new FinalSegmentRope[1000];
         static {
-            for (int i = 0; i < P_ROPES.length; i++)
-                P_ROPES[i] = RopeFactory.make(12).add('p').add(i).take();
+            for (int i = 0; i < P_ROPES.length; i++) P_ROPES[i] = makeP(i);
         }
     }
 }
