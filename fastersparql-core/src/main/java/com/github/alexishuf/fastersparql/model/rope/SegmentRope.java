@@ -405,11 +405,22 @@ public abstract class SegmentRope extends PlainRope {
         return (int)(i-offset);
     }
 
-    @Override public int skipWS(int begin, int end) {
+    private int safeSkipWS(int begin, int end) {
         long i = begin+offset, e = i + rangeLen(begin, end); // checks bounds
         for (byte c; i < e && (c = segment.get(JAVA_BYTE, i)) <= ' ' && c >= 0; ) ++i;
         return (int) (i - offset);
     }
+    @Override public int skipWS(int begin, int end) {
+        if (U == null)
+            return safeSkipWS(begin, end);
+        final byte[] utf8 = this.utf8;
+        final long phys = (utf8 == null ? 0 : U8_BASE) + segment.address()+offset;
+        long i = phys+begin;
+        final long e = i+rangeLen(begin, end); // checks bounds
+        for (byte c; i < e && (c = U.getByte(utf8, i)) <= SPACE && c >= 0; ) ++i;
+        return (int)(i-phys);
+    }
+    private static final byte SPACE = (byte)' ';
 
     @Override public int reverseSkipUntil(int begin, int end, char c) {
         long physBegin = begin+offset, i = physBegin+rangeLen(begin, end)-1; // checks bounds
