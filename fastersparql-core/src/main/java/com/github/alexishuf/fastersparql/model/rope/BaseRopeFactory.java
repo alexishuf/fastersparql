@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.model.rope;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import org.checkerframework.common.returnsreceiver.qual.This;
+import org.slf4j.LoggerFactory;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -12,63 +13,64 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 @SuppressWarnings("unchecked")
 sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
         permits PrivateRopeFactory, RopeFactory {
-    protected static final int CHUNK_SIZE = 128;
-    protected static final int FULL_CHUNK = CHUNK_SIZE-32;
-    private MemorySegment chunkSegment;
-    private byte[] chunk, dst;
-    private int chunkPos, dstPos;
-
-    protected BaseRopeFactory(int initialChunkSize) {
-        chunkSegment = MemorySegment.ofArray(dst = chunk = new byte[initialChunkSize]);
+    protected static final int CHUNK_SIZE = 128-24;
+    private   static final int FULL_CHUNK = CHUNK_SIZE;
+    private   static final byte[] EMPTY_CHUNK = new byte[0];
+    private static final boolean WASTE = FSProperties.batchNoInternIri();
+    static {
+        if (WASTE) {
+            var logger = LoggerFactory.getLogger(BaseRopeFactory.class);
+            logger.warn("{}=true, RopeFactory will not reuse chunks",
+                        FSProperties.BATCH_NO_INTERN_IRI);
+        }
     }
 
-    private static final boolean WASTE = FSProperties.batchNoInternIri();
+    private MemorySegment chunkSegment;
+    private byte[] chunk;
+    private int begin, dstPos;
+
+    protected BaseRopeFactory(int initialChunkSize) {
+        chunkSegment = MemorySegment.ofArray(chunk = new byte[initialChunkSize]);
+    }
+
     protected final void reserve(int bytes) {
         if (WASTE) {
             reserveWaste(bytes);
         } else {
-            byte[] dst = this.chunk;
-            if (this.chunkPos + bytes < dst.length) {
-                this.dstPos = this.chunkPos;
+            if (this.begin + bytes < chunk.length) {
+                this.dstPos = this.begin;
             } else {
-                if (bytes < CHUNK_SIZE && this.chunk.length > FULL_CHUNK) {
-                    this.chunk        = dst = new byte[CHUNK_SIZE];
-                    this.chunkSegment = MemorySegment.ofArray(dst);
-                    this.chunkPos     = 0;
-                } else {
-                    dst = new byte[bytes];
-                }
+                this.chunk        = new byte[Math.max(bytes, CHUNK_SIZE)];
+                this.chunkSegment = MemorySegment.ofArray(chunk);
+                this.begin = 0;
                 this.dstPos = 0;
             }
-            this.dst = dst;
         }
+    }
+    private void detachChunk() {
+        this.chunk  = EMPTY_CHUNK;
+        this.begin  = 0;
+        this.dstPos = 0;
     }
 
     private void reserveWaste(int bytes) {
-        chunkSegment = MemorySegment.ofArray(chunk = dst = new byte[bytes]);
-        chunkPos     = 0;
+        chunkSegment = MemorySegment.ofArray(chunk = new byte[bytes]);
+        begin        = 0;
         dstPos       = 0;
     }
 
     protected final FinalSegmentRope take0() {
-        MemorySegment seg = chunkSegment;
-        int begin = 0, len = dstPos;
-        byte[] dst = this.dst;
-        if (dst == chunk) {
-            begin    = chunkPos;
-            chunkPos = len;
-            len     -= begin;
+        final int begin = this.begin, end = dstPos, len = end-begin;
+        if (len > 1) {
+            var rope = new FinalSegmentRope(chunkSegment, chunk, begin, len);
+            if (end < FULL_CHUNK)
+                this.begin = end;
+            else
+                detachChunk();
+            return rope;
         } else {
-            this.dst    = chunk;
-            this.dstPos = chunkPos;
-            seg         = MemorySegment.ofArray(dst);
+            return len == 0 ? FinalSegmentRope.EMPTY : SINGLE_CHAR_ROPES[chunk[begin]];
         }
-        if (len > 1)
-            return new FinalSegmentRope(seg, dst, begin, len);
-        else if (len == 0)
-            return FinalSegmentRope.EMPTY;
-        else
-            return SINGLE_CHAR_ROPES[dst[begin]];
     }
 
     private static final FinalSegmentRope[] SINGLE_CHAR_ROPES;
@@ -86,30 +88,30 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
     public @This F add(CharSequence cs) {
         if (cs instanceof Rope r)
             return add(r);
-        dstPos = RopeEncoder.charSequence2utf8(cs, 0, cs.length(), dst, dstPos);
+        dstPos = RopeEncoder.charSequence2utf8(cs, 0, cs.length(), chunk, dstPos);
         return (F)this;
     }
 
     public @This F add(CharSequence cs, int begin, int end) {
         if (cs instanceof Rope r)
             return add(r, begin, end);
-        dstPos = RopeEncoder.charSequence2utf8(cs, begin, end, dst, dstPos);
+        dstPos = RopeEncoder.charSequence2utf8(cs, begin, end, chunk, dstPos);
         return (F)this;
     }
 
     public @This F add(byte b) {
-        dst[dstPos++] = b;
+        chunk[dstPos++] = b;
         return (F)this;
     }
 
     public @This F add(char c) {
-        dstPos = RopeEncoder.char2utf8(c, dst, dstPos);
+        dstPos = RopeEncoder.char2utf8(c, chunk, dstPos);
         return (F)this;
     }
 
     public @This F add(long n) {
         if (n >= 0 && n < 10) {
-            dst[dstPos++] = (byte)('0'+n);
+            chunk[dstPos++] = (byte)('0'+n);
         } else if (n == Long.MIN_VALUE) {
             add(MIN_LONG_U8);
         } else {
@@ -117,9 +119,9 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
             dstPos = i;
             n = Math.abs(n);
             for (long rem = n%10; n  > 0; n = n/10, rem = n%10)
-                dst[--i] = (byte)('0' + rem);
+                chunk[--i] = (byte)('0' + rem);
             if (sign == 1)
-                dst[--i] = '-';
+                chunk[--i] = '-';
         }
         return (F)this;
     }
@@ -127,45 +129,45 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
 
     public @This F add(Rope r) {
         int len = r.len;
-        r.copy(0, len, dst, dstPos);
+        r.copy(0, len, chunk, dstPos);
         dstPos += len;
         return (F)this;
     }
 
     public @This F add(MutableRope r) {
         int len = r.len;
-        arraycopy(r.u8(), (int)r.offset, dst, dstPos, len);
+        arraycopy(r.u8(), (int)r.offset, chunk, dstPos, len);
         dstPos += len;
         return (F)this;
     }
 
     public @This F add(Rope r, int begin, int end) {
-        r.copy(begin, end, dst, dstPos);
+        r.copy(begin, end, chunk, dstPos);
         dstPos += end-begin;
         return (F)this;
     }
 
     public @This F add(MutableRope r, int begin, int end) {
         int len = end - begin;
-        arraycopy(r.u8(), (int)r.offset+begin, dst, dstPos, len);
+        arraycopy(r.u8(), (int)r.offset+begin, chunk, dstPos, len);
         dstPos += len;
         return (F)this;
     }
 
     public @This F add(byte[] u8) {
-        arraycopy(u8, 0, dst, dstPos, u8.length);
+        arraycopy(u8, 0, chunk, dstPos, u8.length);
         dstPos += u8.length;
         return (F)this;
     }
 
     public @This F add(byte[] u8, int begin, int end) {
-        arraycopy(u8, begin, dst, dstPos, end-begin);
+        arraycopy(u8, begin, chunk, dstPos, end-begin);
         dstPos += end-begin;
         return (F)this;
     }
 
     public @This F add(MemorySegment segment, long offset, int len) {
-        MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, offset, dst, dstPos, len);
+        MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, offset, chunk, dstPos, len);
         dstPos += len;
         return (F)this;
     }
