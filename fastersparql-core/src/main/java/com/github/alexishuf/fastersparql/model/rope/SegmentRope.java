@@ -216,12 +216,17 @@ public abstract class SegmentRope extends PlainRope {
         return (int)(skipUntil(segment, utf8, offset+begin, offset+end, c0, c1)-offset);
     }
 
-    @Override public int skipUntilLast(int begin, int end, byte c0) {
+    @Override public int skipUntilLastNear(int begin, int end, byte c0) {
         rangeLen(begin, end);
-        return (int)(skipUntilLast(segment, utf8, offset+begin, offset+end, c0)-offset);
+        return (int)(skipUntilLastNear(segment, utf8, offset+begin, offset+end, c0)-offset);
     }
 
-    static long skipUntilLastSafe(MemorySegment segment, long begin, long end, byte c0) {
+    @Override public int skipUntilLastFar(int begin, int end, byte c0) {
+        rangeLen(begin, end);
+        return (int)(skipUntilLastFar(segment, utf8, offset+begin, offset+end, c0)-offset);
+    }
+
+    static long skipUntilLastFarSafe(MemorySegment segment, long begin, long end, byte c0) {
         int rLen = (int)(end-begin);
         if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
             Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
@@ -236,8 +241,15 @@ public abstract class SegmentRope extends PlainRope {
         }
         return begin+rLen;
     }
+    static long skipUntilLastNearSafe(MemorySegment segment, long begin, long end, byte c0) {
+        int rLen = (int)(end-begin);
+        for (end -= 1; end >= begin; --end) {
+            if (segment.get(JAVA_BYTE, end) == c0) return end;
+        }
+        return begin+rLen;
+    }
 
-    static long skipUntilLastSafe(MemorySegment segment, long begin, long end, byte c0, byte c1) {
+    static long skipUntilLastFarSafe(MemorySegment segment, long begin, long end, byte c0, byte c1) {
         int rLen = (int)(end-begin);
         if (LowLevelHelper.ENABLE_VEC && rLen >= LowLevelHelper.B_LEN) {
             Vector<Byte> c0Vec = LowLevelHelper.B_SP.broadcast(c0);
@@ -249,17 +261,34 @@ public abstract class SegmentRope extends PlainRope {
             }
             end += LowLevelHelper.B_LEN; // the while above always overdraws from end
         }
-        end -= 1;
-        for (byte c; end >= begin; --end) {
+        for (byte c; --end >= begin; ) {
+            if ((c=segment.get(JAVA_BYTE, end)) == c0 || c == c1) return end;
+        }
+        return begin+rLen;
+    }
+    static long skipUntilLastNearSafe(MemorySegment segment, long begin, long end, byte c0, byte c1) {
+        int rLen = (int)(end-begin);
+        for (byte c; --end >= begin; ) {
             if ((c=segment.get(JAVA_BYTE, end)) == c0 || c == c1) return end;
         }
         return begin+rLen;
     }
 
-    static long skipUntilLast(MemorySegment segment, byte @Nullable [] u8,
-                              long begin, long end, byte c0) {
+    static long skipUntilLastNear(MemorySegment segment, byte @Nullable [] u8,
+                                  long begin, long end, byte c0) {
+        if (U == null)
+            return skipUntilLastNearSafe(segment, begin, end, c0);
+        long off = segment.address()+begin + (u8 == null ? 0 : U8_BASE);
+        int len = (int)(end-begin);
+        for (int i = len-1; i >= 0; --i) {
+            if (U.getByte(u8, off+i) == c0) return begin+i;
+        }
+        return begin+len;
+    }
+    static long skipUntilLastFar(MemorySegment segment, byte @Nullable [] u8,
+                                 long begin, long end, byte c0) {
         if (LowLevelHelper.ENABLE_VEC || U == null)
-            return skipUntilLastSafe(segment, begin, end, c0);
+            return skipUntilLastFarSafe(segment, begin, end, c0);
         long off = segment.address()+begin + (u8 == null ? 0 : U8_BASE);
         int len = (int)(end-begin);
         for (int i = len-1; i >= 0; --i) {
@@ -268,10 +297,22 @@ public abstract class SegmentRope extends PlainRope {
         return begin+len;
     }
 
-    static long skipUntilLast(MemorySegment segment, byte @Nullable [] u8,
-                              long begin, long end, byte c0, byte c1) {
+    static long skipUntilLastNear(MemorySegment segment, byte @Nullable [] u8,
+                                  long begin, long end, byte c0, byte c1) {
+        if  (U == null)
+            return skipUntilLastNearSafe(segment, begin, end, c0, c1);
+        long off = segment.address()+begin + (u8 == null ? 0 : U8_BASE);
+        byte c;
+        int len = (int)(end-begin);
+        for (int i = len-1; i >= 0; --i) {
+            if ((c=U.getByte(u8, off+i)) == c0 || c == c1) return begin+i;
+        }
+        return begin+len;
+    }
+    static long skipUntilLastFar(MemorySegment segment, byte @Nullable [] u8,
+                                  long begin, long end, byte c0, byte c1) {
         if  (LowLevelHelper.ENABLE_VEC || U == null)
-            return skipUntilLastSafe(segment, begin, end, c0, c1);
+            return skipUntilLastFarSafe(segment, begin, end, c0, c1);
         long off = segment.address()+begin + (u8 == null ? 0 : U8_BASE);
         byte c;
         int len = (int)(end-begin);
@@ -281,9 +322,13 @@ public abstract class SegmentRope extends PlainRope {
         return begin+len;
     }
 
-    @Override public int skipUntilLast(int begin, int end, byte c0, byte c1) {
+    @Override public int skipUntilLastNear(int begin, int end, byte c0, byte c1) {
         rangeLen(begin, end);
-        return (int)(skipUntilLast(segment, utf8, offset+begin, offset+end, c0, c1)-offset);
+        return (int)(skipUntilLastNear(segment, utf8, offset+begin, offset+end, c0, c1)-offset);
+    }
+    @Override public int skipUntilLastFar(int begin, int end, byte c0, byte c1) {
+        rangeLen(begin, end);
+        return (int)(skipUntilLastFar(segment, utf8, offset+begin, offset+end, c0, c1)-offset);
     }
 
     boolean isEscapedPhys(long begin, long i) {

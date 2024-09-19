@@ -328,7 +328,7 @@ class RopeTest {
     }
 
     @ParameterizedTest @MethodSource("factories")
-    void testSkipUntilLast(Factory fac) {
+    void testSkipUntilLastNear(Factory fac) {
         int FL = FILLER.length();
         for (String bfr : List.of("", "#")) {
             for (String aft : List.of("", "#/")) {
@@ -337,60 +337,106 @@ class RopeTest {
                 for (Rope r : iriWrap(fac, bfr, "<http://dbpedia.org/resource/Bob>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off+28;
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'x'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'x', (byte)'/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, "/".getBytes(UTF_8)));
-                    assertEquals(expected, r.skipUntilLast(off, end, "/Bob".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "/Alice".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/', (byte)'x'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'x', (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "/".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "/Bob".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "/Alice".getBytes(UTF_8)));
                 }
                 for (Rope r : iriWrap(fac, bfr, "<http://dbpedia"+FILLER+".org/resource/Bob>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off + FL + 28;
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'a'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, "/".getBytes(UTF_8)));
-                    assertEquals(expected, r.skipUntilLast(off, end, "/Bob".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "/Alice".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/', (byte)'a'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#', (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "/".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "/Bob".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "/Alice".getBytes(UTF_8)));
                 }
                 for (Rope r : iriWrap(fac, bfr, "<http://example.org/ns#Alice>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off + 22;
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'o'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, "#".getBytes(UTF_8)));
-                    assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
-                    assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
-                    assertEquals(0, r.skipUntilLast(0, end, ("<"+bfr+"http://").getBytes(UTF_8)));
-                    assertEquals(off+1, r.skipUntilLast(off, end, "http://".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "/Alice".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "/Alicx".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "/Alicia".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#', (byte)'o'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#', (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "#".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "#Alice".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "#Alice".getBytes(UTF_8)));
+                    assertEquals(0, r.skipUntilLastNear(0, end, ("<"+bfr+"http://").getBytes(UTF_8)));
+                    assertEquals(off+1, r.skipUntilLastNear(off, end, "http://".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "/Alice".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "/Alicx".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "/Alicia".getBytes(UTF_8)));
                 }
                 for (Rope r : iriWrap(fac, bfr, "<http://example.org/"+FILLER+"ns#Alice>", aft)) {
                     int end = r.len()-aftRegress;
                     int expected = off + FL + 22;
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'o'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'/', (byte)'#'));
-                    assertEquals(expected, r.skipUntilLast(off, end, (byte)'#', (byte)'/'));
-                    assertEquals(expected, r.skipUntilLast(off, end, "#".getBytes(UTF_8)));
-                    assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
-                    assertEquals(expected, r.skipUntilLast(off, end, "#Alice".getBytes(UTF_8)));
-                    assertEquals(0, r.skipUntilLast(0, end, ("<"+bfr+"http://").getBytes(UTF_8)));
-                    assertEquals(off+1, r.skipUntilLast(off, end, "http://".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "#Alicx".getBytes(UTF_8)));
-                    assertEquals(end, r.skipUntilLast(off, end, "#Alicia".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#', (byte)'o'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, (byte)'#', (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "#".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "#Alice".getBytes(UTF_8)));
+                    assertEquals(expected, r.skipUntilLastNear(off, end, "#Alice".getBytes(UTF_8)));
+                    assertEquals(0, r.skipUntilLastNear(0, end, ("<"+bfr+"http://").getBytes(UTF_8)));
+                    assertEquals(off+1, r.skipUntilLastNear(off, end, "http://".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "#Alicx".getBytes(UTF_8)));
+                    assertEquals(end, r.skipUntilLastNear(off, end, "#Alicia".getBytes(UTF_8)));
                 }
             }
         }
         for (Rope r : fac.create("<http://www.example.org/ns#abcdefghijklmnopqrstuvxwyzABCDE000>")) {
-            assertEquals(26, r.skipUntilLast(0, r.len(), (byte)'/', (byte)'#'));
+            assertEquals(26, r.skipUntilLastNear(0, r.len(), (byte)'/', (byte)'#'));
+        }
+    }
+
+    @ParameterizedTest @MethodSource("factories")
+    void testSkipUntilLastFar(Factory fac) {
+        int FL = FILLER.length();
+        for (String bfr : List.of("", "#")) {
+            for (String aft : List.of("", "#/")) {
+                int off = bfr.length();
+                int aftRegress = aft.isEmpty() ? 0 : aft.length() + 1;
+                for (Rope r : iriWrap(fac, bfr, "<http://dbpedia.org/resource/Bob>", aft)) {
+                    int end = r.len()-aftRegress;
+                    int expected = off+28;
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/', (byte)'x'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'x', (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/', (byte)'#'));
+                }
+                for (Rope r : iriWrap(fac, bfr, "<http://dbpedia"+FILLER+".org/resource/Bob>", aft)) {
+                    int end = r.len()-aftRegress;
+                    int expected = off + FL + 28;
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/', (byte)'a'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#', (byte)'/'));
+                }
+                for (Rope r : iriWrap(fac, bfr, "<http://example.org/ns#Alice>", aft)) {
+                    int end = r.len()-aftRegress;
+                    int expected = off + 22;
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#', (byte)'o'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#', (byte)'/'));
+                }
+                for (Rope r : iriWrap(fac, bfr, "<http://example.org/"+FILLER+"ns#Alice>", aft)) {
+                    int end = r.len()-aftRegress;
+                    int expected = off + FL + 22;
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#', (byte)'o'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'/', (byte)'#'));
+                    assertEquals(expected, r.skipUntilLastFar(off, end, (byte)'#', (byte)'/'));
+                }
+            }
+        }
+        for (Rope r : fac.create("<http://www.example.org/ns#abcdefghijklmnopqrstuvxwyzABCDE000>")) {
+            assertEquals(26, r.skipUntilLastFar(0, r.len(), (byte)'/', (byte)'#'));
         }
     }
 

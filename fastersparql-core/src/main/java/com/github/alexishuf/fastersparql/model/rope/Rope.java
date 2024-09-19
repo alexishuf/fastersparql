@@ -429,25 +429,36 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
     }
 
     /** Equivalent to {@code skipUntilLast(begin, end, c0, c0)}. */
-    public int skipUntilLast(int begin, int end, byte c0) {
-        return skipUntilLast(begin, end, c0, c0);
+    public int skipUntilLastNear(int begin, int end, byte c0) {
+        return skipUntilLastNear(begin, end, c0, c0);
+    }
+
+    /** Equivalent to {@code skipUntilLast(begin, end, c0, c0)}. */
+    public int skipUntilLastFar(int begin, int end, byte c0) {
+        return skipUntilLastFar(begin, end, c0, c0);
     }
 
     /**
      * Similar to {@link Rope#skipUntil(int, int, byte, byte)} but finds the
      * <strong>LAST</strong> {@code i}.
      */
-    public abstract int skipUntilLast(int begin, int end, byte c0, byte c1);
+    public abstract int skipUntilLastNear(int begin, int end, byte c0, byte c1);
+
+    /**
+     * Similar to {@link Rope#skipUntil(int, int, byte, byte)} but finds the
+     * <strong>LAST</strong> {@code i}.
+     */
+    public abstract int skipUntilLastFar(int begin, int end, byte c0, byte c1);
 
     /**
      * Similar to {@link Rope#skipUntil(int, int, byte[])} but finds the
      * <strong>LAST</strong> {@code i}.
      */
-    public final int skipUntilLast(int begin, int end, byte[] sequence) {
+    public final int skipUntilLastNear(int begin, int end, byte[] sequence) {
         byte first = sequence[0];
         int notFound = end;
         for (int i; end-begin > sequence.length; end = i) {
-            i = skipUntilLast(begin, end, first);
+            i = skipUntilLastNear(begin, end, first);
             if      (i == end)         return notFound;
             else if (has(i, sequence)) return i;
         }
@@ -458,11 +469,11 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
      * Similar to {@link Rope#skipUntil(int, int, byte[])} but finds the
      * <strong>LAST</strong> {@code i}.
      */
-    public final int skipUntilLast(int begin, int end, Rope sequence) {
+    public final int skipUntilLastNear(int begin, int end, Rope sequence) {
         byte first = sequence.get(0);
         int notFound = end;
         for (int i, len = sequence.len(); end-begin > len; end = i) {
-            i = skipUntilLast(begin, end, first);
+            i = skipUntilLastNear(begin, end, first);
             if      (i == end)         return notFound;
             else if (has(i, sequence)) return i;
         }

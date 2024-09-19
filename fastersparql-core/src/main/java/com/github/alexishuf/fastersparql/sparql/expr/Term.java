@@ -890,29 +890,54 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     }
 
 
-    @SuppressWarnings("unused") @Override public int skipUntilLast(int begin, int end, byte c0) {
+    @SuppressWarnings("unused") @Override public int skipUntilLastNear(int begin, int end, byte c0) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
         int e = end-fstLen, i = Math.max(0, begin-fstLen);
-        if (e > 0 && (i = snd.skipUntilLast(i, e, c0)) < e) return fstLen+i;
+        if (e > 0 && (i = snd.skipUntilLastNear(i, e, c0)) < e) return fstLen+i;
         if (begin < fstLen) {
             e = Math.min(fstLen, end);
-            if ((i = fst.skipUntilLast(begin, e, c0)) < e) return i;
+            if ((i = fst.skipUntilLastNear(begin, e, c0)) < e) return i;
+        }
+        return end;
+    }
+    @SuppressWarnings("unused") @Override public int skipUntilLastFar(int begin, int end, byte c0) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        int e = end-fstLen, i = Math.max(0, begin-fstLen);
+        if (e > 0 && (i = snd.skipUntilLastFar(i, e, c0)) < e) return fstLen+i;
+        if (begin < fstLen) {
+            e = Math.min(fstLen, end);
+            if ((i = fst.skipUntilLastFar(begin, e, c0)) < e) return i;
         }
         return end;
     }
 
     @SuppressWarnings("unused")
-    @Override public int skipUntilLast(int begin, int end, byte c0, byte c1) {
+    @Override public int skipUntilLastNear(int begin, int end, byte c0, byte c1) {
         checkRange(begin, end);
         SegmentRope fst = first, snd = second;
         int fstLen = fst.len;
         int e = end-fstLen, i = Math.max(0, begin-fstLen);
-        if (e > 0 && (i = snd.skipUntilLast(i, e, c0, c1)) < e) return fstLen+i;
+        if (e > 0 && (i = snd.skipUntilLastNear(i, e, c0, c1)) < e) return fstLen+i;
         if (begin < fstLen) {
             e = Math.min(fstLen, end);
-            if ((i = fst.skipUntilLast(begin, e, c0, c1)) < e) return i;
+            if ((i = fst.skipUntilLastNear(begin, e, c0, c1)) < e) return i;
+        }
+        return end;
+    }
+    @SuppressWarnings("unused")
+    @Override public int skipUntilLastFar(int begin, int end, byte c0, byte c1) {
+        checkRange(begin, end);
+        SegmentRope fst = first, snd = second;
+        int fstLen = fst.len;
+        int e = end-fstLen, i = Math.max(0, begin-fstLen);
+        if (e > 0 && (i = snd.skipUntilLastFar(i, e, c0, c1)) < e) return fstLen+i;
+        if (begin < fstLen) {
+            e = Math.min(fstLen, end);
+            if ((i = fst.skipUntilLastFar(begin, e, c0, c1)) < e) return i;
         }
         return end;
     }

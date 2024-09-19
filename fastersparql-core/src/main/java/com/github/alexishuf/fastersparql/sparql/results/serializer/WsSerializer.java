@@ -201,7 +201,7 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
         if (!batch.localView(r, c, view))
             return false;
         final int len = view.len;
-        return view.skipUntilLast(1, len, (byte)'e', (byte)'E') < len;
+        return view.skipUntilLastNear(1, len, (byte)'e', (byte)'E') < len;
     }
 
     private void assignNames(Batch<?> batch, int r, int[] columns, int ci, SegmentRope[] names,
@@ -229,7 +229,7 @@ public class WsSerializer extends ResultsSerializer<WsSerializer> {
                 name = (FinalSegmentRope)prefixAssigner.nameFor(sh);
             } else if ((name=prefixAssigner.existingNameFor(sh)) == null) {
                 if (namesCount < PREFIX_SPAM) {
-                    int i = sh.skipUntilLast(0, sh.len-1, (byte)'/');
+                    int i = sh.skipUntilLastNear(0, sh.len-1, (byte)'/');
                     view.wrap(sh, 0, i+1);
                     var k = (FinalSegmentRope)prefixAssigner.nameFor(view.wrap(sh, 0, i+1));
                     name = PooledMutableRope.get().append(k).append(':').append(sh, i+1, sh.len);
