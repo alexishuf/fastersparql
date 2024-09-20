@@ -207,6 +207,8 @@ public class Jfr2Csv implements Callable<Void> {
         IT_REBIND,
         PLAN_BIND,
         PARSE_SPARQL,
+        SERIALIZE_RESULTS,
+        PARSE_RESULTS,
         FS_PARSE_SPARQL,
         JENA_PARSE_SPARQL,
         JENA_TXN,
@@ -222,6 +224,16 @@ public class Jfr2Csv implements Callable<Void> {
         IT_TASK_TAKE,
         IT_TASK_PUT,
         VTHREAD_SWITCH,
+        TASK_WORKER,
+        FEDX_WORKER,
+        DRAIN,
+        NIO_WAKEUP,
+        NIO_EVENT_LOOP,
+        NIO_WAKEUP_IN_WORKER,
+        SOCKET_READ,
+        SOCKET_WRITE,
+        FEDX_SOCKET_READ,
+        FEDX_SOCKET_WRITE,
         PAGE_FAULT,
         NEW,
         NEW_PAGE_FAULT,
@@ -253,8 +265,8 @@ public class Jfr2Csv implements Callable<Void> {
         PUT_TERM_COPY,
         PUT_TERM_PAGE_FAULT,
         GC_PAGE_FAULT,
-        JENA_TERM2NODE,
-        JENA_PARSE_NODE,
+        JENA_NODE2TERM,
+        JENA_MAKE_NODE,
         ALLOC_CREATE,
         ALLOC_OFFER,
         WEAK_DEDUP,
@@ -346,6 +358,12 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[PLAN_BIND.ordinal()] = new TaskPattern[] {
                     new TaskPattern("Plan\\.bound")
             };
+            PATTERNS[SERIALIZE_RESULTS.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Handler\\.serialize")
+            };
+            PATTERNS[PARSE_RESULTS.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("\\.feedShared|\\.parseQueryResult")
+            };
             PATTERNS[FS_PARSE_SPARQL.ordinal()] = new TaskPattern[] {
                     new TaskPattern("SparqlParser\\.parse$")
             };
@@ -378,6 +396,38 @@ public class Jfr2Csv implements Callable<Void> {
             };
             PATTERNS[VTHREAD_SWITCH.ordinal()] = new TaskPattern[] {
                     new TaskPattern("jvmti_vthread|Continuation\\.(on|unpin|pin|mount|unmount)|VirtualThread\\.(un)?mount")
+            };
+            PATTERNS[DRAIN.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("QueryRunner.drain")
+            };
+            PATTERNS[TASK_WORKER.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("VirtualThread\\.run|EmitterService[$.]Worker\\.run|ControlledWorker|BackgroundResultExecutor")
+            };
+            PATTERNS[FEDX_WORKER.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("ControlledWorker|BackgroundResultExecutor")
+            };
+            PATTERNS[NIO_WAKEUP.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("NioEventLoop\\.wakeup")
+            };
+            PATTERNS[NIO_EVENT_LOOP.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("NioEventLoop\\.run")
+            };
+            PATTERNS[NIO_WAKEUP_IN_WORKER.ordinal()] = new TaskPattern[]{
+                    new TaskPattern("NioEventLoop\\.wakeup",
+                            "VirtualThread\\.run|EmitterService[$.]Worker\\.run",
+                            true)
+            };
+            PATTERNS[SOCKET_READ.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Socket[^.]*\\..*[rR]ead")
+            };
+            PATTERNS[SOCKET_WRITE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Socket[^.]*\\..*[wW]rite")
+            };
+            PATTERNS[FEDX_SOCKET_READ.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Socket[^.]*\\..*[rR]ead", "ControlledWorker|BackgroundResultExecutor", true)
+            };
+            PATTERNS[FEDX_SOCKET_WRITE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Socket[^.]*\\..*[wW]rite", "ControlledWorker|BackgroundResultExecutor", true)
             };
             PATTERNS[PAGE_FAULT.ordinal()] = new TaskPattern[] {
                     new TaskPattern("exc_page_fault")
@@ -469,10 +519,10 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[PUT_TERM_PAGE_FAULT.ordinal()] = new TaskPattern[] {
                     new TaskPattern("page_fault", "\\.putTerm", true)
             };
-            PATTERNS[JENA_TERM2NODE.ordinal()] = new TaskPattern[] {
+            PATTERNS[JENA_NODE2TERM.ordinal()] = new TaskPattern[] {
                     new TaskPattern("JenaTermParser\\.parse")
             };
-            PATTERNS[JENA_PARSE_NODE.ordinal()] = new TaskPattern[] {
+            PATTERNS[JENA_MAKE_NODE.ordinal()] = new TaskPattern[] {
                     new TaskPattern("JenaNodeParser\\.makeNode")
             };
             PATTERNS[WEAK_DEDUP.ordinal()] = new TaskPattern[] {
