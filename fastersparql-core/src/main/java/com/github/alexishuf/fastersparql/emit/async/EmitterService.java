@@ -315,7 +315,7 @@ public final class EmitterService {
     }
 
     public static void yieldWorker() {
-        if (!SVC.unparkWorkers())
+        if (!service().unparkWorkers())
             Thread.yield();
     }
 
