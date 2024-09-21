@@ -86,7 +86,8 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
         var sb = new StringBuilder(itLabel.length()+16).append("Em(");
         sb.append(itLabel).append(')');
         if (type.showState())
-            sb.append("st=").append(flags.render(state()));
+            sb.append(flags.render(state()));
+        sb.append("\nrequested=").append((long)REQ.getOpaque(this));
         if (EmitterStats.ENABLED && type.showStats() && stats != null)
             sb = stats.appendToLabel(sb);
         return sb.toString();
@@ -130,10 +131,9 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
         int st = statePlain();
         if ((st&IS_INIT) != 0 && moveStateRelease(st, ACTIVE))
             st = st&FLAGS_MASK | ACTIVE;
-        if ((st&IS_LIVE) != 0 && Async.maxRelease(REQ, this, rows)) {
+        if ((st&IS_LIVE) != 0 && Async.maxRelease(REQ, this, rows))
             journal("request ", rows, ", unpark drainer on", this);
-            LockSupport.unpark(drainer);
-        }
+        LockSupport.unpark(drainer);
     }
 
     @Override public void rebind(BatchBinding binding) throws RebindException {
@@ -152,8 +152,15 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
             while ((st&(IS_CANCEL_REQ|IS_TERM)) == 0) {
                 long req = (long)REQ.getAcquire(this);
                 if (req <= 0) {
-                    LockSupport.park();
-                    st = stateAcquire();
+                    st = lock();
+                    boolean park = (st&(IS_CANCEL_REQ|IS_TERM)) == 0
+                                && !it.state().isTerminated()
+                                && (long)REQ.getAcquire(this) <= 0;
+                    unlock();
+                    if (park) {
+                        LockSupport.park();
+                        st = stateAcquire();
+                    }
                 } else {
                     int iReq = (int) Math.min(Integer.MAX_VALUE, req);
                     if (queue != null)
