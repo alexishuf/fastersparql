@@ -1422,7 +1422,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
         var localLen     = t.sndLen;
         var sh           = switch (fst) {
             case '"' -> {
-                if (t.fstLen == 0)
+                if (t.fstLen == 0 || t.sndLen < SharedRopes.MIN_INTERNED_LEN)
                     yield FinalSegmentRope.EMPTY;
                 localSeg = t.fst;
                 localOff = t.fstOff;
@@ -1449,12 +1449,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
             default -> throw new IllegalArgumentException("Not an RDF term");
         };
         if (sh.len+localLen == t.len) {
-            dst.putTermLocalByReference(col, sh, localSeg, null, localOff,
-                                    t.len-sh.len, shSuff);
+            dst.putTermLocalByReference(col, sh, localSeg, null,
+                                        localOff, localLen, shSuff);
         } else {
             // split at dictionary is not compatible with split at batch,
             // causing local part to be sourced from two segments in t
-            dst.putTerm(col, sh, t, shSuff ? 0 : sh.len, t.len-sh.len, shSuff);
+            dst.putTerm(col, FinalSegmentRope.EMPTY, t, 0, t.len, shSuff);
         }
     }
 
