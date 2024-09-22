@@ -52,7 +52,6 @@ public sealed class CABatch extends Batch<CABatch> {
     private static final int LEN_MASK = 0x7fffffff;
     private static final int SHR_IDX = 0;
     private static final int SEG_IDX = 1;
-    private static final int UTF_IDX = 2;
 
     private boolean isSuff(int termIdx) { return      (md[ termIdx<<1   ] & 0x80000000L) != 0; }
     private int    flagLen(int termIdx) { return (int)(md[ termIdx<<1   ] & 0xffffffffL); }
@@ -60,24 +59,26 @@ public sealed class CABatch extends Batch<CABatch> {
     private int     mdHash(int termIdx) { return (int)(md[ termIdx<<1   ]>>>32); }
     private long       off(int termIdx) { return       md[(termIdx<<1)+1]; }
 
-    private  FinalSegmentRope  sh(int ti3) { return (FinalSegmentRope)objs[ti3+SHR_IDX]; }
-    private  MemorySegment    seg(int ti3) { return    (MemorySegment)objs[ti3+SEG_IDX]; }
-    private  byte[]          utf8(int ti3) { return           (byte[])objs[ti3+UTF_IDX]; }
+    private  FinalSegmentRope  sh(int ti) { return (FinalSegmentRope)objs[(ti<<1)+SHR_IDX]; }
+    private  MemorySegment    seg(int ti) { return    (MemorySegment)objs[(ti<<1)+SEG_IDX]; }
+    private  byte[] utf8(int ti) {
+        var seg = seg(ti);
+        return seg == null ? null : (byte[])seg.heapBase().orElse(null);
+    }
 
     private void setHash(int termIdx, int hash) {
         int i = termIdx<<1;  //          +---> undo sign extension
         md[i] = ((long)hash<<32) | (md[i]&0xffffffffL);
     }
     private void setNull(int termIdx) {
-        int oi = termIdx*3, mi = termIdx<<1;
-        objs[oi  ] = null;
-        objs[oi+1] = null;
-        objs[oi+2] = null;
-        md  [mi  ] = 0L;
-        md  [mi+1] = 0L;
+        int i = termIdx<<1;
+        objs[i  ] = null;
+        objs[i+1] = null;
+        md  [i  ] = 0L;
+        md  [i+1] = 0L;
     }
     private void setTerm(int termIdx, @Nullable FinalSegmentRope sh,
-                         MemorySegment localSeg, byte @Nullable[] localU8,
+                         MemorySegment localSeg,
                          long offset, int len, boolean suffixShared, int hash) {
         long md0 = ((long)hash<<32) | (len&0x7fffffffL);
         if (suffixShared) {
@@ -85,25 +86,24 @@ public sealed class CABatch extends Batch<CABatch> {
             if (sh == EMPTY)
                 sh = null;
         }
-        int oi = termIdx*3, mi = termIdx<<1;
-        md  [mi  ] = md0;
-        md  [mi+1] = offset;
-        objs[oi+SHR_IDX] = sh;
-        objs[oi+SEG_IDX] = localSeg;
-        objs[oi+UTF_IDX] = localU8;
+        int i = termIdx<<1;
+        md  [i  ] = md0;
+        md  [i+1] = offset;
+        objs[i+SHR_IDX] = sh;
+        objs[i+SEG_IDX] = localSeg;
     }
     private void copyTerm(int dstTerm, CABatch o, int srcTerm) {
-        int s = srcTerm*3, d = dstTerm*3;
+        int s = srcTerm<<1, d = dstTerm<<1;
         objs[d  ] = o.objs[s  ];
         objs[d+1] = o.objs[s+1];
-        objs[d+2] = o.objs[s+2];
-        md[d=dstTerm<<1] = o.md[s=srcTerm<<1];
-        md[d+1         ] = o.md[s+1         ];
+        md  [d  ] = o.md  [s  ];
+        md  [d+1] = o.md  [s+1];
     }
 
     private void copy0(CABatch o, int srcTerm, int dstTerm, int nTerms) {
-        arraycopy(o.objs, srcTerm*3, objs, dstTerm*3,  nTerms*3);
-        arraycopy(o.md,   srcTerm<<1, md,  dstTerm<<1, nTerms<<1);
+        int n = nTerms<<1, srcIdx = srcTerm<<1, dstIdx = dstTerm<<1;
+        arraycopy(o.objs, srcIdx, objs, dstIdx, n);
+        arraycopy(o.md,   srcIdx, md,   dstIdx, n);
     }
     private void setRows(int rows) {
         this.dirtyTerms = (short)Math.max(dirtyTerms, rows*cols);
@@ -112,9 +112,9 @@ public sealed class CABatch extends Batch<CABatch> {
     private void putRows0(CABatch o, int srcRow, int nRows) {
         final short rows = this.rows, cols = this.cols;
         setRows(rows+nRows);
-        int nTerms = nRows*cols, srcTerm = srcRow*cols, dstTerm = rows*cols;
-        arraycopy(o.objs, srcTerm*3,  objs, dstTerm*3,  nTerms*3);
-        arraycopy(o.md,   srcTerm<<1, md,   dstTerm<<1, nTerms<<1);
+        int cols2 = cols<<1, n = nRows*cols2, srcIdx = srcRow*cols2, dstIdx = rows*cols2;
+        arraycopy(o.objs, srcIdx, objs, dstIdx, n);
+        arraycopy(o.md,   srcIdx, md,   dstIdx, n);
     }
 
     private int termIdx(int row) {
@@ -137,19 +137,21 @@ public sealed class CABatch extends Batch<CABatch> {
     @Override protected boolean validateNode(Validation validation) {
         if (!SELF_VALIDATE || validation == Validation.NONE)
             return true;
-        if (termsCapacity > md.length>>1)
+        if (termsCapacity != md.length>>1)
             return false;
-        if (termsCapacity > objs.length/3)
+        if (termsCapacity != objs.length>>1)
+            return false;
+        if (rowsCapacity*cols > termsCapacity)
             return false;
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                int ti = termIdx(r, c), ti3 = ti*3, len = len(ti);
+                int ti = termIdx(r, c), len = len(ti);
                 long off = off(ti);
                 if (off < 0)
                     return false; // bad offset
-                var sh = sh(ti3);
-                var seg =  seg(ti3);
-                var u8  = utf8(ti3);
+                var sh = sh(ti);
+                var seg =  seg(ti);
+                var u8  = utf8(ti);
                 if (seg == null && len != 0)
                     return false; // missing MemorySegment
                 if (u8 != null && seg == null)
@@ -183,10 +185,10 @@ public sealed class CABatch extends Batch<CABatch> {
         int terms = rowsCapacity*cols;
         if (terms > Short.MAX_VALUE)
             throw new IllegalArgumentException("More than 32768 terms");
-        this.md   = new   long[terms*2];
-        this.objs = new Object[terms*3];
+        this.md            = new   long[terms*2];
+        this.objs          = new Object[terms*2];
         this.termsCapacity = (short)terms;
-        this.rowsCapacity = (short)rowsCapacity;
+        this.rowsCapacity  = (short)rowsCapacity;
         updateLeakDetectorRefCapacity();
         BatchEvent.Created.record(this);
     }
@@ -223,7 +225,8 @@ public sealed class CABatch extends Batch<CABatch> {
     private void dropRefsAndOffer(Object currentOwner) {
         internalMarkRecycled(currentOwner);
         currentOwner = RECYCLED;
-        Arrays.fill(objs, 0, dirtyTerms*3, null);
+        Arrays.fill(objs, 0, dirtyTerms*2, null);
+        dirtyTerms = 0;
         clear();
         BatchEvent.Pooled.record(this);
         if (CA.pool.offer(this) != null)
@@ -372,14 +375,14 @@ public sealed class CABatch extends Batch<CABatch> {
     @Override public void beginPut() {
         var tail = tail();
         short cols = tail.cols, begin = (short)(tail.rows*cols);
-        int end = begin+cols;
-        if (end > tail.termsCapacity) {
+        if (begin+cols > tail.termsCapacity) {
             tail = createTail();
             begin = 0;
-            end = cols;
         }
-        Arrays.fill(tail.md,   begin<<1, end<<1, 0L);
-        Arrays.fill(tail.objs, begin*3,  end*3,  null);
+        for (int i = begin<<1, end = i+(cols<<1); i < end; i++) {
+            tail.md  [i] = 0;
+            tail.objs[i] = null;
+        }
         tail.offerRowBase = begin;
     }
 
@@ -417,7 +420,6 @@ public sealed class CABatch extends Batch<CABatch> {
             tail.setNull(dstTerm);
         } else {
             MemorySegment     lSeg;
-            byte[]             lU8;
             long              lOff;
             SegmentRope      local = t.local();
             int               lLen = local.len;
@@ -425,16 +427,14 @@ public sealed class CABatch extends Batch<CABatch> {
             if (local instanceof FinalSegmentRope) {
                 naked = null;
                 lSeg  = local.segment;
-                lU8   = local.utf8;
                 lOff  = local.offset;
             } else {
                 naked = RopeFactory.make(local.len).add(local).naked();
                 lSeg  = naked.segment();
-                lU8   = naked.utf8();
                 lOff  = naked.begin();
             }
             tail.setTerm(dstTerm, FinalSegmentRope.asFinal(t.shared()),
-                         lSeg, lU8, lOff, lLen, t.sharedSuffixed(), t.cachedHash());
+                         lSeg, lOff, lLen, t.sharedSuffixed(), t.cachedHash());
             if (naked != null)
                 naked.close();
         }
@@ -452,8 +452,8 @@ public sealed class CABatch extends Batch<CABatch> {
         var tail = tailForPutTerm(col);
         var nkd = RopeFactory.make(localLen).add(local, localU8, localOff, localLen).naked();
         tail.setTerm(tail.offerRowBase + col, shared,
-                      nkd.segment(), nkd.utf8(),
-                      nkd.begin(), nkd.len(), sharedSuffix, 0);
+                      nkd.segment(),
+                nkd.begin(), nkd.len(), sharedSuffix, 0);
         nkd.close();
     }
 
@@ -466,7 +466,7 @@ public sealed class CABatch extends Batch<CABatch> {
             var tail = tailForPutTerm(col);
             var nkd = RopeFactory.make(localLen).add(local, localOff, localLen).naked();
             tail.setTerm(tail.offerRowBase+col, shared,
-                         nkd.segment(), nkd.utf8(), nkd.begin(), nkd.len(),
+                         nkd.segment(), nkd.begin(), nkd.len(),
                          sharedSuffix, 0);
             nkd.close();
         }
@@ -476,7 +476,7 @@ public sealed class CABatch extends Batch<CABatch> {
     public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local, byte @Nullable [] localU8, long localOff, int localLen, boolean sharedSuffix) {
         var tail = tailForPutTerm(col);
         tail.setTerm(tail.offerRowBase+col, shared,
-                     local, localU8, localOff, localLen, sharedSuffix, 0);
+                     local, localOff, localLen, sharedSuffix, 0);
     }
 
     @Override public void putNullTerm(int col) {
@@ -585,13 +585,13 @@ public sealed class CABatch extends Batch<CABatch> {
     /* --- --- --- Term accessors --- --- --- */
 
     @Override public @Nullable FinalTerm get(@NonNegative int row, @NonNegative int col) {
-        final int ti = termIdx(row, col), ti3 = ti*3;
-        FinalSegmentRope sh = sh(ti3);
-        MemorySegment seg   = seg(ti3);
-        int len             = len(ti);
+        final int ti = termIdx(row, col);
+        var sh  =  sh(ti);
+        var seg = seg(ti);
+        int len = len(ti);
         if (len == 0 && (sh == null || sh.len == 0))
             return null;
-        var local = len == 0 ? EMPTY : new FinalSegmentRope(seg, utf8(ti3), off(ti), len);
+        var local = len == 0 ? EMPTY : new FinalSegmentRope(seg, off(ti), len);
         return new FinalTerm(sh, local, isSuff(ti));
     }
 
@@ -599,26 +599,25 @@ public sealed class CABatch extends Batch<CABatch> {
         return getView0(termIdx(row, col), dest);
     }
     private boolean getView0(int ti, TermView dest) {
-        final int ti3 = ti*3;
-        var sh = sh(ti3);
+        var sh = sh(ti);
         int lLen = len(ti);
         if (lLen == 0 && (sh == null || sh.len == 0))
             return false;
         if (sh == null)
             sh = EMPTY;
-        dest.wrap(sh, seg(ti3), utf8(ti3), off(ti), lLen, isSuff(ti));
+        dest.wrap(sh, seg(ti), utf8(ti), off(ti), lLen, isSuff(ti));
         return true;
     }
 
     @Override
     public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
-        final int ti = termIdx(row, col), ti3 = ti*3;
-        var sh = sh(ti3);
+        final int ti = termIdx(row, col);
+        var sh = sh(ti);
         int lLen = len(ti);
         if (lLen == 0 && (sh == null || sh.len == 0))
             return false;
         dest.wrapFirst(sh == null ? EMPTY : sh);
-        dest.wrapSecond(seg(ti3), utf8(ti3), off(ti), lLen);
+        dest.wrapSecond(seg(ti), utf8(ti), off(ti), lLen);
         if (isSuff(ti))
             dest.flipSegments();
         return true;
@@ -626,17 +625,17 @@ public sealed class CABatch extends Batch<CABatch> {
 
     @Override
     public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRopeView dest) {
-        final int ti = termIdx(row, col), ti3 = ti*3;
-        var sh = sh(ti3);
+        final int ti = termIdx(row, col);
+        var sh = sh(ti);
         int lLen = len(ti);
         if (lLen == 0 && (sh == null || sh.len == 0))
             return false;
-        dest.wrap(seg(ti3), utf8(ti3), off(ti), lLen);
+        dest.wrap(seg(ti), utf8(ti), off(ti), lLen);
         return true;
     }
 
     @Override public @NonNull FinalSegmentRope shared(@NonNegative int row, @NonNegative int col) {
-        var sh = sh(termIdx(row, col)*3);
+        var sh = sh(termIdx(row, col));
         return sh == null ? EMPTY : sh;
     }
 
@@ -646,23 +645,23 @@ public sealed class CABatch extends Batch<CABatch> {
 
     @Override public int len(@NonNegative int row, @NonNegative int col) {
         int ti = termIdx(row, col);
-        var sh = sh(ti*3);
+        var sh = sh(ti);
         return (sh == null ? 0 : sh.len) + len(ti);
     }
 
     @Override public int lexEnd(@NonNegative int row, @NonNegative int col) {
-        final int ti = termIdx(row, col), ti3 = ti*3;
+        final int ti = termIdx(row, col);
         int lLen = flagLen(ti);
         long lOff = off(ti);
         if (lLen == 0) {
             return 0;
         } else if (lLen < 0) {
             lLen &= LEN_MASK;
-            if (objs[ti3+SHR_IDX] != null)
+            if (sh(ti) != null)
                 return lLen;
         }
-        var localSeg =  seg(ti3);
-        var localU8  = utf8(ti3);
+        var localSeg =  seg(ti);
+        var localU8  = utf8(ti);
         if (localSeg == null || localSeg.get(JAVA_BYTE, lOff) != '"')
             return 0;
         try (var view = PooledSegmentRopeView.of(localSeg, localU8, lOff, lLen)) {
@@ -679,15 +678,15 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     @Override public Term.@Nullable Type termType(int row, int col) {
-        int ti = termIdx(row, col), ti3 = ti*3;
+        int ti = termIdx(row, col);
         int lLen = flagLen(ti);
         if (lLen < 0)
             return Term.Type.LIT; // suffixed
         byte first;
-        var sh = sh(ti3);
+        var sh = sh(ti);
         if (sh == null || sh.len == 0) {
             if (lLen == 0) return null; // no term
-            var lSeg = seg(ti3);
+            var lSeg = seg(ti);
             first = lSeg.get(JAVA_BYTE, off(ti));
         } else {
             first = sh.get(0);
@@ -704,10 +703,10 @@ public sealed class CABatch extends Batch<CABatch> {
     @Override
     public int writeSparql(ByteSink<?, ?> dest, int row, int column,
                            PrefixAssigner prefixAssigner) {
-        final int ti = termIdx(row, column), ti3 = ti*3;
-        var sh   =   sh(ti3);
-        var lSeg =  seg(ti3);
-        var lU8  = utf8(ti3);
+        final int ti = termIdx(row, column);
+        var sh   =   sh(ti);
+        var lSeg =  seg(ti);
+        var lU8  = utf8(ti);
         int len  = len(ti);
         if (len != 0 || (sh != null && sh.len != 0))
             return Term.toSparql(dest, prefixAssigner, sh, lSeg, lU8, off(ti), len, isSuff(ti));
@@ -715,10 +714,10 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     @Override public void writeNT(ByteSink<?, ?> dest, int row, int col) {
-        final int ti = termIdx(row, col), ti3 = ti*3;
-        var sh   =   sh(ti3);
-        var lSeg =  seg(ti3);
-        var lU8  = utf8(ti3);
+        final int ti = termIdx(row, col);
+        var sh   =   sh(ti);
+        var lSeg =  seg(ti);
+        var lU8  = utf8(ti);
         int  len = len(ti);
         long off = off(ti);
         if (isSuff(ti)) {
@@ -754,12 +753,11 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     private int computeHashUnsafe(int ti) {
-        int ti3 = ti*3;
-        var sh   = sh(ti3);
+        var sh   = sh(ti);
         if (Term.isNumericDatatype(sh))
             return hashTerm(ti);
-        var lSeg = seg(ti3);
-        var lU8  = utf8(ti3);
+        var lSeg = seg(ti);
+        var lU8  = utf8(ti);
         int  fstLen, sndLen = flagLen(ti);
         long fstOff, sndOff = (lSeg == null ? 0 : lSeg.address()) + off(ti);
 
@@ -779,11 +777,10 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     private int computeHashSafe(int ti) {
-        int ti3 = ti*3;
-        var sh   = sh(ti3);
+        var sh   = sh(ti);
         if (Term.isNumericDatatype(sh))
             return hashTerm(ti);
-        var lSeg = seg(ti3);
+        var lSeg = seg(ti);
         int  fstLen, sndLen = flagLen(ti);
         long fstOff, sndOff = off(ti);
 
