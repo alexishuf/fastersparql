@@ -239,33 +239,29 @@ class MergeBItTest extends AbstractMergeBItTest {
                     gen.asBIt(i -> i.minBatch(2).maxBatch(2), ints(0, 2)),
                     gen.asBIt(i -> i.minBatch(3).maxBatch(3), ints(5, 0)),
                     gen.asBIt(i -> i.minBatch(2).maxBatch(2), ints(10, 2)));
-            List<TermBatch> batches = new ArrayList<>();
+            actual.clear();
+            actualSet.clear();
+            boolean split = false;
+            int nBatches = 0;
             try (var guard = new ItGuard<>(this, new MergeBIt<>(sources, TERM, X))) {
                 guard.it.minBatch(2).minWait(delay, TimeUnit.MILLISECONDS);
-                for (TermBatch b; (b = guard.nextBatch()) != null; )
-                    batches.add(b);
-
-                // check results are valid
-                actual.clear();
-                actualSet.clear();
-                boolean split = false;
-                for (TermBatch batch : batches) {
-                    split |= batch.totalRows() < 2;
-                    for (var node = batch; node != null; node = node.next) {
+                for (TermBatch b; (b = guard.nextBatch()) != null; ) {
+                    ++nBatches;
+                    split |= b.totalRows() < 2;
+                    for (var node = b; node != null; node = node.next) {
                         for (int r = 0; r < node.rows; r++)
                             actual.add(IntsBatch.parse(node.get(r, 0)));
                     }
                 }
+
+                // check results are valid
                 actualSet.addAll(actual);
                 assertEquals(expected.size(), actual.size());
                 assertEquals(expectedSet, actualSet);
 
                 // check for batch splitting
                 if (split)
-                    fail("Some batches were split. batches="+batches);
-            } finally {
-                for (TermBatch b : batches)
-                    b.recycle(this);
+                    fail("Some batches were split. batches="+nBatches);
             }
         }
     }
@@ -388,7 +384,7 @@ class MergeBItTest extends AbstractMergeBItTest {
                         for (var node = batch; node != null; node = node.next) {
                             for (int r = 0; r < node.rows; r++) {
                                 var local = Objects.requireNonNull(node.get(r, 0)).local();
-                                consumed.add(local.get(1) - '@');
+                                consumed.add(local.get(1) - '0');
                             }
                         }
                     }
