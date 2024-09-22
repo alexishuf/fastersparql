@@ -208,7 +208,7 @@ public sealed class CABatch extends Batch<CABatch> {
             node.tail = node;
             if (node.termsCapacity != PREFERRED_BATCH_TERMS)
                 node.safeMarkGarbage(nodeOwner);
-            else if (node.dirtyTerms < 8)
+            else if (node.dirtyTerms < 32)
                 node.dropRefsAndOffer(nodeOwner);
             else
                 CABatchCleaner.INSTANCE.sched(node, nodeOwner);
