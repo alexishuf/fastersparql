@@ -54,12 +54,12 @@ public class IteratorBIt<B extends Batch<B>, T> extends UnitaryBIt<B> {
         T next = it.next();
         return switch (next) {
             case Term[] a -> dest.putRow(a);
-            case Orphan<?> o -> {
-                dest.putConverting((Batch<?>)o.takeOwnership(this));
-                yield dest;
-            }
             case Batch<?> b -> {
                 dest.putConverting(b);
+                yield dest;
+            }
+            case Orphan<?> o -> {
+                dest.putConverting((Batch<?>)o.takeOwnership(this));
                 yield dest;
             }
             case Collection<?> coll -> dest.putRow(coll);
