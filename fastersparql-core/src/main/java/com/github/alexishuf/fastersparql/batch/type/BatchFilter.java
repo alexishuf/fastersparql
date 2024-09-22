@@ -142,14 +142,16 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
     protected B filterEmpty(@Nullable B in) {
         if (in == null) return null;
         short survivors = 0;
-        for (int r = 0, rows = in.rows; r < rows; r++) {
-            switch (rowFilter.drop(in, r)) {
-                case KEEP      -> ++survivors;
-                case TERMINATE -> rows = -1;
+        for (var node = in; node != null; node = node.next) {
+            for (int r = 0, rows = node.rows; r < rows; r++) {
+                switch (rowFilter.drop(node, r)) {
+                    case KEEP      -> ++survivors;
+                    case TERMINATE -> rows = -1;
+                }
             }
         }
+        in.clear(outColumns);
         in.rows = survivors;
-        in.cols = outColumns;
         return in;
     }
 }
