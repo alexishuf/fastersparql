@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -69,8 +71,21 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
                 detachChunk();
             return rope;
         } else {
+            dstPos = begin;
             return len == 0 ? FinalSegmentRope.EMPTY : SINGLE_CHAR_ROPES[chunk[begin]];
         }
+    }
+
+    protected MemorySegment  segment0() { return chunkSegment; }
+    protected byte[]            utf80() { return        chunk; }
+    protected int              begin0() { return        begin; }
+    protected int                len0() { return dstPos-begin; }
+
+    protected void done0() {
+        if (dstPos < FULL_CHUNK)
+            begin = dstPos;
+        else
+            detachChunk();
     }
 
     private static final FinalSegmentRope[] SINGLE_CHAR_ROPES;
@@ -168,6 +183,17 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
 
     public @This F add(MemorySegment segment, long offset, int len) {
         MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, offset, chunk, dstPos, len);
+        dstPos += len;
+        return (F)this;
+    }
+
+    public @This F add(MemorySegment segment, byte[] u8, long offset, int len) {
+        if (U == null)
+            return add(segment, offset, len);
+        if (offset < 0 || offset+len > segment.byteSize())
+            throw new IllegalArgumentException("[offset, offset+len) is out of bounds");
+        long phys = segment.address() + (u8 == null ? 0 : U8_BASE) + offset;
+        U.copyMemory(u8, phys, chunk, dstPos+U8_BASE, len);
         dstPos += len;
         return (F)this;
     }

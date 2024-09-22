@@ -12,6 +12,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static java.util.Arrays.asList;
 import static java.util.stream.IntStream.range;
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,7 +26,7 @@ class RowBucketTest {
     private static final Term i4 = Term.typed("4", SharedRopes.DT_integer);
 
     static Stream<Arguments> test() {
-        return Stream.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED).map(Arguments::arguments);
+        return Stream.of(TERM, COMPRESSED, CA).map(Arguments::arguments);
     }
 
     @ParameterizedTest @MethodSource

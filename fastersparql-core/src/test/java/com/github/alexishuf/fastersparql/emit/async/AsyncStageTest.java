@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
@@ -223,9 +224,9 @@ class AsyncStageTest {
         List.of(1, 2, 8, 64, 512, 2048).forEach(r -> dims.add(new Dim(r, 1)));
         List.of(2, threads, threads*2).forEach(p -> dims.add(new Dim(1, p)));
         dims.add(new Dim(2048, 2));
-        for (var bt : List.of(TERM, COMPRESSED))
+        for (var bt : List.of(TERM, COMPRESSED, CA))
             dims.add(new Dim(bt.preferredTermsPerBatch()*2, threads));
-        for (var bt : List.of(TERM, COMPRESSED)) {
+        for (var bt : List.of(TERM, COMPRESSED, CA)) {
             for (Dim dim : dims) {
                 for (var fail : Arrays.asList(null, dummyException))
                     for (Boolean slow : List.of(false, true)) {

@@ -14,6 +14,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.termList;
@@ -44,11 +45,15 @@ class ValuesTest {
             drainer.drainOrdered(plan.execute(TERM), rows, null);
             // iterate again, but converting the batch type
             drainer.drainOrdered(plan.execute(COMPRESSED), rows, null);
+            // iterate again, but converting the batch type
+            drainer.drainOrdered(plan.execute(CA), rows, null);
             // test Emitter
             var em1 = plan.emit(TERM, Vars.EMPTY);
             drainer.drainOrdered(em1, rows, null);
             var em2 = plan.emit(COMPRESSED, Vars.EMPTY);
             drainer.drainOrdered(em2, rows, null);
+            var em3 = plan.emit(CA, Vars.EMPTY);
+            drainer.drainOrdered(em3, rows, null);
             if (rows.isEmpty()) return;
 
             // iterate again but write garbage to batch

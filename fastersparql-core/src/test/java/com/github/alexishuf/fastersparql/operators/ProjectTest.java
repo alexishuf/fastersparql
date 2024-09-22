@@ -1,7 +1,6 @@
 package com.github.alexishuf.fastersparql.operators;
 
 import com.github.alexishuf.fastersparql.FS;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.Results;
@@ -12,6 +11,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
@@ -59,8 +60,10 @@ public class ProjectTest {
             ThreadJournal.dumpAndReset(System.err, 80);
             throw t;
         }
-        var em = FS.project(in.asPlan(), expected.vars()).emit(CompressedBatchType.COMPRESSED, Vars.EMPTY);
-        expected.check(em);
+        var em1 = FS.project(in.asPlan(), expected.vars()).emit(COMPRESSED, Vars.EMPTY);
+        expected.check(em1);
+        var em2 = FS.project(in.asPlan(), expected.vars()).emit(CA, Vars.EMPTY);
+        expected.check(em2);
     }
 
 }

@@ -5,8 +5,7 @@ import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.batch.type.CABatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
@@ -29,6 +28,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -55,7 +56,7 @@ class QueryNameTest {
     static Stream<Arguments> testParseResults() {
         List<Arguments> list = new ArrayList<>();
         for (QueryName name : QueryName.values()) {
-            for (var type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED))
+            for (var type : List.of(TERM, COMPRESSED, CABatchType.CA))
                 list.add(arguments(name, type));
         }
         return list.stream();
@@ -82,7 +83,7 @@ class QueryNameTest {
                             "C2", "C8", "C7"})
     public void testHasResults(String nameString) {
         var name = QueryName.valueOf(nameString);
-        for (var type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
+        for (var type : List.of(TERM, COMPRESSED, CABatchType.CA)) {
             //noinspection unchecked,rawtypes
             Batch<?> expected = name.expected((BatchType) type);
             assertNotNull(expected);
@@ -201,7 +202,7 @@ class QueryNameTest {
                 "\"Prime Minister\"@en"
         );
 
-        var b = QueryName.C8.expected(CompressedBatchType.COMPRESSED);
+        var b = QueryName.C8.expected(COMPRESSED);
         assertNotNull(b);
         var bTail = b.tail();
         assertEquals(r0.size(), b.cols);

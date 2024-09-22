@@ -32,6 +32,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.util.TestTaskSet.platformRepeatAndWait;
@@ -279,12 +280,14 @@ class StoreSparqlClientTest {
         try (var client = d.createClient()) {
             results.check(client, TERM);
             results.check(client, COMPRESSED);
+            results.check(client, CA);
             if (innerConcurrency) {
                 try {
                     platformRepeatAndWait(CLS_NAME + ".testWithDummyBinding", REPS,
                             () -> {
                                 d.results.check(client, TERM);
                                 d.results.check(client, COMPRESSED);
+                                d.results.check(client, CA);
                             });
                 } catch (Throwable t) {fail(t);}
             }
@@ -326,6 +329,7 @@ class StoreSparqlClientTest {
         try (var client = d.createClient()) {
             r.check(client);
             r.check(client, COMPRESSED);
+            r.check(client, CA);
             r.check(client, STORE, STORE.converter(client.dictId()));
             if (innerConcurrency) {
                 try {
@@ -333,6 +337,7 @@ class StoreSparqlClientTest {
                             () -> {
                                 d.results.check(client);
                                 d.results.check(client, COMPRESSED);
+                                d.results.check(client, CA);
                                 d.results.check(client, STORE, STORE.converter(client.dictId()));
                             });
                 } catch (Throwable t) {fail(t);}

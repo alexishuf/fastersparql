@@ -1788,6 +1788,8 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return term == null ? FNV_BASIS : term.hashCode();
     }
 
+    public int cachedHash() { return hash; }
+
     @Override public int hashCode() {
         int hash = this.hash;
         if (hash == 0)  {

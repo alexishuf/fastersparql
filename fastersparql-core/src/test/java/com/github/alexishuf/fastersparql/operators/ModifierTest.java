@@ -1,7 +1,5 @@
 package com.github.alexishuf.fastersparql.operators;
 
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
@@ -24,6 +22,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.sparql.DistinctType.*;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static java.lang.Long.MAX_VALUE;
@@ -67,19 +68,24 @@ public class ModifierTest {
         void run() {
             if (!expected.isEmpty())
                 assertEquals(expected.columns(), plan.publicVars().size());
-            expected.check(plan.execute(TermBatchType.TERM));
-            expected.check(plan.execute(TermBatchType.TERM));
-            expected.check(plan.execute(CompressedBatchType.COMPRESSED));
-            var em0 = plan.emit(TermBatchType.TERM, Vars.EMPTY);
+            expected.check(plan.execute(TERM));
+            expected.check(plan.execute(TERM));
+            expected.check(plan.execute(COMPRESSED));
+            expected.check(plan.execute(CA));
+            var em0 = plan.emit(TERM, Vars.EMPTY);
             expected.check(em0);
-            var em1 = plan.emit(TermBatchType.TERM, Vars.EMPTY);
+            var em1 = plan.emit(TERM, Vars.EMPTY);
             expected.check(em1);
-            var em2 = plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY);
+            var em2 = plan.emit(COMPRESSED, Vars.EMPTY);
             expected.check(em2);
-            var em3 = plan.emit(TermBatchType.TERM, Vars.EMPTY);
+            var em3 = plan.emit(CA, Vars.EMPTY);
             expected.check(em3);
-            var em4 = plan.emit(CompressedBatchType.COMPRESSED, Vars.EMPTY);
+            var em4 = plan.emit(TERM, Vars.EMPTY);
             expected.check(em4);
+            var em5 = plan.emit(COMPRESSED, Vars.EMPTY);
+            expected.check(em5);
+            var em6 = plan.emit(CA, Vars.EMPTY);
+            expected.check(em6);
         }
     }
 

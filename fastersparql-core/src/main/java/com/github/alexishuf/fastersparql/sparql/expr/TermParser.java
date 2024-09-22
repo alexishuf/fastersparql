@@ -49,7 +49,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
     boolean typed, eager, sharedSuffixed;
     private Result result;
     public int localBegin, localEnd;
-    private final PrivateRopeFactory ropeFactory = new PrivateRopeFactory();
+    private final PrivateRopeFactory ropeFactory = PrivateRopeFactory.create();
     private FinalSegmentRope shared;
     private final PrefixMap prefixMap = PrefixMap.create().takeOwnership(this).resetToBuiltin();
 

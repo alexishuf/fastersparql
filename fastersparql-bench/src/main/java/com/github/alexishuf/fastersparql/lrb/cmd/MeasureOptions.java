@@ -1,10 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb.cmd;
 
 import com.github.alexishuf.fastersparql.FlowModel;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.JenaBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType;
 import com.github.alexishuf.fastersparql.lrb.query.QueryGroup;
 import com.github.alexishuf.fastersparql.lrb.query.QueryName;
@@ -48,12 +45,14 @@ public class MeasureOptions {
         TERM,
         TERM_NI,
         COMPRESSED,
+        CA,
         NATIVE;
 
         public BatchType<?> asType(SourceKind src) {
             return switch (this) {
                 case TERM, TERM_NI -> TermBatchType.TERM;
                 case COMPRESSED -> CompressedBatchType.COMPRESSED;
+                case CA -> CABatchType.CA;
                 case NATIVE -> {
                     if (src.isServer())  yield CompressedBatchType.COMPRESSED;
                     if (src.isHdt())     yield HdtBatchType.HDT;

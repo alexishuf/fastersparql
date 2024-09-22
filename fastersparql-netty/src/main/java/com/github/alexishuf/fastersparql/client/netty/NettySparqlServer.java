@@ -1108,7 +1108,7 @@ public class NettySparqlServer implements SparqlServer {
         protected TextWebSocketFrame endFrame = new TextWebSocketFrame(wrappedBuffer(END));
         protected final MutableRope bindReqRope;
         protected final TextWebSocketFrame bindReqFrame;
-        protected final PrivateRopeFactory ropeFactory = new PrivateRopeFactory(64);
+        protected final PrivateRopeFactory ropeFactory = PrivateRopeFactory.create(64);
         protected @Nullable WsServerParser<CompressedBatch> bindingsParser;
         protected final SegmentRopeView tmpView = new SegmentRopeView();
         protected long lastSeqSent;

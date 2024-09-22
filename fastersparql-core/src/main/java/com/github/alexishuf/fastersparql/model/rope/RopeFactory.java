@@ -5,17 +5,18 @@ import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import org.checkerframework.checker.mustcall.qual.MustCall;
 import org.checkerframework.checker.mustcall.qual.Owning;
 
+import java.lang.foreign.MemorySegment;
 import java.util.function.Supplier;
 
 import static java.lang.Character.MAX_SURROGATE;
 import static java.lang.Character.MIN_SURROGATE;
 
 @MustCall("take")
-public final class RopeFactory extends BaseRopeFactory<RopeFactory> {
+public abstract sealed class RopeFactory extends BaseRopeFactory<RopeFactory> {
     private static final int BYTES = 16 + 6*4 + 20+CHUNK_SIZE;
 
     private static final Supplier<RopeFactory> FAC = new Supplier<>() {
-        @Override public RopeFactory get() {return new RopeFactory();}
+        @Override public RopeFactory get() {return new Naked();}
         @Override public String toString() {return "RopeFactory.FAC";}
     };
     private static final Alloc<RopeFactory> ALLOC = new Alloc<>(RopeFactory.class,
@@ -24,9 +25,23 @@ public final class RopeFactory extends BaseRopeFactory<RopeFactory> {
         Primer.INSTANCE.sched(ALLOC::prime);
     }
 
-    private boolean live;
+    protected boolean live;
 
     private RopeFactory() {super(CHUNK_SIZE);}
+
+    public static final class Naked extends RopeFactory implements NakedRopeFactory {
+        private Naked() {}
+        @Override public void close() {
+            done0();
+            live = false;
+            ALLOC.offer(this);
+        }
+        @Override public MemorySegment  segment() {return segment0();}
+        @Override public byte[]            utf8() {return utf80(); }
+        @Override public int              begin() {return begin0();}
+        @Override public int                len() {return len0();}
+    }
+
 
     /**
      * Get a {@link RopeFactory} with enough capacity for {@code bytes}.
@@ -111,7 +126,15 @@ public final class RopeFactory extends BaseRopeFactory<RopeFactory> {
             ALLOC.offer(this);
             return rope;
         } else {
-            throw new IllegalStateException("duplicate/concurrent close()");
+            throw new IllegalStateException("duplicate/concurrent take()/naked()");
+        }
+    }
+
+    public NakedRopeFactory naked() {
+        if (live) {
+            return (Naked)this;
+        } else {
+            throw new IllegalStateException("duplicate/concurrent take()/naked()");
         }
     }
 }

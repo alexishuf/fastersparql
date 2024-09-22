@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.CABatchType;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
 import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -235,7 +236,10 @@ public class ExprParserTest {
         return rows.stream().map(Arguments::arguments);
     }
 
-    private static final List<BatchType<?>> BATCH_TYPES = List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED);
+    private static final List<BatchType<?>> BATCH_TYPES = List.of(
+            TermBatchType.TERM,
+            CompressedBatchType.COMPRESSED,
+            CABatchType.CA);
 
     @ParameterizedTest @MethodSource
     void test(TestData data) {

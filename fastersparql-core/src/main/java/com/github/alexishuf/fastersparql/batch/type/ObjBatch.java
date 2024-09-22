@@ -123,7 +123,7 @@ public abstract class ObjBatch<B extends ObjBatch<B, T>, T> extends Batch<B> {
 
     /* --- --- --- batch accessors --- --- --- */
 
-    @Override public int       rowsCapacity() { return Math.min(Short.MAX_VALUE, arr.length/Math.max(1, cols)); }
+    @Override public int       rowsCapacity() { return (short)Math.min(Short.MAX_VALUE, arr.length/Math.max(1, cols)); }
     @Override public int      termsCapacity() { return Math.min(Short.MAX_VALUE, arr.length); }
     @Override public int totalBytesCapacity() { return arr.length*4; }
 

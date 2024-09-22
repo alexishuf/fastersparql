@@ -2,8 +2,6 @@ package com.github.alexishuf.fastersparql.sparql.results.serializer;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
@@ -19,6 +17,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.*;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.*;
 import static com.github.alexishuf.fastersparql.util.Results.results;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -137,7 +138,7 @@ class ResultsSerializerTest {
                         ]}}""")
         ));
         List<Arguments> args = new ArrayList<>();
-        for (BatchType<? extends Batch<? extends Batch<?>>> type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
+        for (var type : List.of(TERM, COMPRESSED, CA)) {
             for (var d : data) args.add(arguments(type, d.results, d.fmt, d.ex));
         }
         return args.stream();

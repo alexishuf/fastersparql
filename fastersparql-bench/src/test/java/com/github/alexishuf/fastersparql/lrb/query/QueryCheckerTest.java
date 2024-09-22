@@ -3,8 +3,7 @@ package com.github.alexishuf.fastersparql.lrb.query;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
+import com.github.alexishuf.fastersparql.batch.type.CABatchType;
 import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -18,6 +17,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.lrb.query.QueryName.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
@@ -34,8 +35,8 @@ class QueryCheckerTest {
     static Stream<Arguments> test() {
         List<Arguments> list = new ArrayList<>();
         for (QueryName qry : QueryName.values()) {
-            if (qry.expected(TermBatchType.TERM) == null) continue;
-            for (var type : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
+            if (qry.expected(TERM) == null) continue;
+            for (var type : List.of(TERM, COMPRESSED, CABatchType.CA)) {
                 for (Variant variant : Variant.values())
                     list.add(arguments(qry, type, variant));
             }

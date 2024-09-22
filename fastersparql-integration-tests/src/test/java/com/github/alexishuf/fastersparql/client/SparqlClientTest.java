@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FSProperties.*;
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.model.SparqlEndpoint.parse;
@@ -53,7 +54,7 @@ public class SparqlClientTest {
     private static final int THREADS_PER_CLIENT = Runtime.getRuntime().availableProcessors();
 
     private static final List<BatchType<? extends Batch<?>>> BATCH_TYPES
-            = List.of(TERM, COMPRESSED);
+            = List.of(TERM, COMPRESSED, CA);
 
     private static Stream<Arguments> resultsData() {
         return Stream.of(

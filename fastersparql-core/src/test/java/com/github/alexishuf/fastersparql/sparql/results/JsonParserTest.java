@@ -2,7 +2,8 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
@@ -27,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.util.Results.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -237,11 +239,11 @@ public class JsonParserTest extends ResultsParserTest {
     private static final Term S8_MELT__1 = Term.valueOf("\"126-127 oC [PhysProp]\"");
 
     @SuppressWarnings("SequencedCollectionMethodCanBeUsed")
-    private void checkS8(SPSCBIt<CompressedBatch> queue) {
+    private <B extends Batch<B>> void checkS8(SPSCBIt<B> queue) {
         List<Term> results = new ArrayList<>();
-        try (var g = new Guard.BatchGuard<CompressedBatch>(this)) {
-            for (CompressedBatch batch; (batch=g.nextBatch(queue)) != null; ) {
-                for (CompressedBatch n = batch; n != null; n = n.next) {
+        try (var g = new Guard.BatchGuard<B>(this)) {
+            for (B batch; (batch=g.nextBatch(queue)) != null; ) {
+                for (B n = batch; n != null; n = n.next) {
                     for (int r = 0, rows = n.rows; r < rows; r++) {
                         results.add(n.get(r, 0));
                         results.add(n.get(r, 1));
@@ -276,8 +278,9 @@ public class JsonParserTest extends ResultsParserTest {
         assertTrue(feederService.awaitTermination(1, TimeUnit.SECONDS));
     }
 
-    private Void doRegressionEarlyTerminationOnS8(boolean lateConsumer) throws Exception {
-        var queue = new SPSCBIt<>(COMPRESSED, Vars.of("drug", "melt"), Integer.MAX_VALUE);
+    private <B extends Batch<B>> Void
+    doRegressionEarlyTerminationOnS8(BatchType<B> bt, boolean lateConsumer) throws Exception {
+        var queue = new SPSCBIt<>(bt, Vars.of("drug", "melt"), Integer.MAX_VALUE);
         var parser = JsonParser.createFor(SparqlResultFormat.JSON, queue);
         var asyncFed = lateConsumer ? null : feederService.submit(() -> feedS8(parser));
         if (asyncFed == null)
@@ -293,8 +296,10 @@ public class JsonParserTest extends ResultsParserTest {
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void regressionEarlyTerminationOnS8(boolean lateConsumer) throws Exception{
-        for (int i = 0; i < 20; i++)
-            doRegressionEarlyTerminationOnS8(lateConsumer);
+        for (int i = 0; i < 20; i++) {
+            doRegressionEarlyTerminationOnS8(COMPRESSED, lateConsumer);
+            doRegressionEarlyTerminationOnS8(CA, lateConsumer);
+        }
 
     }
 
@@ -304,7 +309,8 @@ public class JsonParserTest extends ResultsParserTest {
                     * (lateConsumer ? 2 : 1);
         try (var tasks = TestTaskSet.platformTaskSet(getClass().getSimpleName())) {
             for (int i = 0; i < 10; i++) {
-                tasks.repeat(threads, () -> doRegressionEarlyTerminationOnS8(false));
+                tasks.repeat(threads, () -> doRegressionEarlyTerminationOnS8(COMPRESSED, false));
+                tasks.repeat(threads, () -> doRegressionEarlyTerminationOnS8(CA, false));
                 tasks.awaitAndReset();
             }
         }

@@ -3,7 +3,10 @@ package com.github.alexishuf.fastersparql.sparql.parser;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.model.Vars;
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.PrivateRopeFactory;
+import com.github.alexishuf.fastersparql.model.rope.Rope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Join;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
@@ -55,7 +58,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
     private DistinctType distinct;
     private long limit;
     private @Nullable Vars projection;
-    private final PrivateRopeFactory ropeFactory = new PrivateRopeFactory(64);
+    private final PrivateRopeFactory ropeFactory = PrivateRopeFactory.create(64);
 
     private SparqlParser() {}
 

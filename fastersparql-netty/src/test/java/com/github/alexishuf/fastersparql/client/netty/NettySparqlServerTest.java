@@ -3,8 +3,6 @@ package com.github.alexishuf.fastersparql.client.netty;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.client.ResultsSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
@@ -31,6 +29,9 @@ import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.FlowModel.EMIT;
 import static com.github.alexishuf.fastersparql.FlowModel.ITERATE;
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.client.model.SparqlMethod.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.JSON;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
@@ -138,7 +139,7 @@ class NettySparqlServerTest {
         for (var proto  : data) {
             var r = proto.results;
             var ic = proto.innerClient;
-            for (var bType : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
+            for (var bType : List.of(TERM, COMPRESSED, CA)) {
                 for (SparqlMethod meth : methods) {
                     if (meth == WS) continue;
                     for (var fmt : List.of(TSV, JSON))

@@ -2,8 +2,6 @@ package com.github.alexishuf.fastersparql.sparql.binding;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
-import com.github.alexishuf.fastersparql.batch.type.TermBatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -20,6 +18,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
+import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
@@ -85,14 +86,15 @@ class BindingTest {
                                            new Term[]{one, two, three}),
                           asList(one, two, three))
         ));
-        addCases(TermBatchType.TERM, argsList);
-        addCases(CompressedBatchType.COMPRESSED, argsList);
+        addCases(TERM, argsList);
+        addCases(COMPRESSED, argsList);
+        addCases(CA, argsList);
         return argsList.stream();
     }
 
     @Test
     void testInvalidAttach() {
-        for (var bt : List.of(TermBatchType.TERM, CompressedBatchType.COMPRESSED)) {
+        for (var bt : List.of(TERM, COMPRESSED, CA)) {
             Batch<?> b1 = bt.create(1).takeOwnership(this);
             Batch<?> b2 = bt.create(2).takeOwnership(this);
             Batch<?> c1 = bt.create(1).takeOwnership(this);

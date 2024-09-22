@@ -39,6 +39,7 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
+import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
@@ -53,6 +54,7 @@ class BatchTest {
     private static final List<BatchType<?>> TYPES = List.of(
             TERM,
             COMPRESSED,
+            CA,
             StoreBatchType.STORE
     );
     private static LocalityCompositeDict storeDict;
@@ -154,6 +156,7 @@ class BatchTest {
             // big batches
             new Size(23, 7),
             new Size(256, 1),
+            new Size(257, 1),
             new Size(256, 8),
             new Size(128, 12)
     );
@@ -1260,7 +1263,7 @@ class BatchTest {
             uo0.putTerm(0, sz.terms[0][0]);
             uo0.commitPut();
             uo0.putRow(n, 0);
-            if (type == COMPRESSED) assertTrue(uo0.validate());
+            if (type == COMPRESSED || type == CA) assertTrue(uo0.validate());
 
             B uo1 = g.create(2, type, 2);
             uo1.beginPut();
@@ -1269,18 +1272,18 @@ class BatchTest {
             uo1.commitPut();
             uo1.beginPut();
             uo1.commitPut();
-            if (type == COMPRESSED) assertTrue(uo1.validate());
+            if (type == COMPRESSED || type == CA) assertTrue(uo1.validate());
 
             B o0 = g.create(3, type, 2);
             o0.putRow(sz.terms[0]);
             o0.putRow(n, 0);
-            if (type == COMPRESSED) assertTrue(o0.validate());
+            if (type == COMPRESSED || type == CA) assertTrue(o0.validate());
 
             B o1 = g.create(4, type, 2);
             o1.putRow(sz.terms[0]);
             o1.beginPut();
             o1.commitPut();
-            if (type == COMPRESSED) assertTrue(o1.validate());
+            if (type == COMPRESSED || type == CA) assertTrue(o1.validate());
 
             B expected = g.create(5, type, 2);
             expected.putRow(sz.terms[0]);
@@ -1327,7 +1330,13 @@ class BatchTest {
 //        }
 //    }
 
-    @Test void  regressionHashS6() {
+
+    static Stream<Arguments> regressionHashS6() {
+        return Stream.of(COMPRESSED, CA).map(Arguments::arguments);
+    }
+
+    @ParameterizedTest @MethodSource
+    <B extends Batch<B>> void regressionHashS6(BatchType<B> type) {
         String name = "\"Michael Bartels\"";
         Term place = Term.valueOf("<http://sws.geonames.org/2911297/>");
         try (var g = new MultiGuard()) {
