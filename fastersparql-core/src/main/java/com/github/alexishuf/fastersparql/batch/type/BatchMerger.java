@@ -130,18 +130,6 @@ public abstract class BatchMerger<B extends Batch<B>, P extends BatchMerger<B, P
     public abstract Orphan<B> project(Orphan<B> dest, B in);
 
     /**
-     * Appends a projection of the {@code row}-th row in {@code in} to {@code dst}.
-     *
-     * @param dst the destination batch that will receive a new row. If {@code null}, a
-     *            new batch will be created via {@link #batchType()}. If non-null, it
-     *            will not be {@link Batch#clear()}ed and must have
-     *            {@link Batch#cols}{@code ==}{@link #vars()}{@code .size()}.
-     * @param in the source batch containing a row to be projected
-     * @param row the row in {@code in} to be projected.
-     */
-    public abstract Orphan<B> projectRow(@Nullable Orphan<B> dst, B in, int row);
-
-    /**
      * Add {@code right.rows} to {@code dest} (or to a new {@link Batch} if {@code null})
      * where column {@code c} of row {@code r} is sourced from either a column in
      * {@code left}'s {@code leftRow} or from a column in the {@code r}-th row of {@code right}.
@@ -154,10 +142,4 @@ public abstract class BatchMerger<B extends Batch<B>, P extends BatchMerger<B, P
      * @return {@code dest}, if not null, else a new {@link Batch}.
      */
     public abstract Orphan<B> merge(@Nullable Orphan<B> dest, B left, int leftRow, @Nullable B right);
-
-    /**
-     * Equivalent to {@link #merge(Orphan, Batch, int, Batch)} where right would be a
-     * batch containing only the {@code rightRow}-th row of the {@code right} given in this call.
-     */
-    public abstract Orphan<B> mergeRow(@Nullable Orphan<B> dest, B left, int leftRow, B right, int rightRow);
 }

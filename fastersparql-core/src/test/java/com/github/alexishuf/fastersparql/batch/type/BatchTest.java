@@ -620,58 +620,6 @@ class BatchTest {
         });
     }
 
-    <B extends Batch<B>> void testMergeRow0(BatchType<B> type, int cols) {
-        try (var g = new MultiGuard()) {
-            String ctx = "type=" + type + ", cols=" + cols;
-            Vars leftVars = Vars.of("l0", "l1", "l2");
-            B left      = g.fill(0, new Size(2, 3), type);
-            B rightRoot = g.fill(1, new Size(4, cols),   type);
-            int rightRow = 2;
-            B right = rightRoot;
-            for (; right != null && rightRow >= right.rows; right = right.next)
-                rightRow -= right.rows;
-            assertNotNull(right);
-
-
-            var rightVars = mkVars(cols);
-            Vars outVars = Vars.of("l0", "l2").union(rightVars);
-            var merger = g.merger(type.merger(outVars, leftVars, rightVars));
-
-            B dst = g.create(2, type, 2+cols);
-            while ((dst.rows + 1) * dst.cols <= dst.termsCapacity()) {
-                dst.beginPut();
-                dst.putTerm(0, left, 0, 0);
-                dst.putTerm(1, left, 0, 2);
-                for (int c = 0; c < cols; c++)
-                    dst.putTerm(2 + c, rightRoot, 0, c);
-                dst.commitPut();
-            }
-
-            B expected = g.set(3, dst.dup()), actual = g.set(4, (B)null);
-            expected.beginPut();
-            expected.putTerm(0, left, 1, 0);
-            expected.putTerm(1, left, 1, 2);
-            for (int c = 0; c < cols; c++)
-                expected.putTerm(2 + c, right, rightRow, c);
-            expected.commitPut();
-
-            try {
-                actual = g.set(4, merger.mergeRow(g.take(2, type), left, 1, right, rightRow));
-            } catch (Throwable t) {
-                fail(t.getClass().getSimpleName() + "ctx=" + ctx, t);
-            }
-            assertSame(dst, actual, ctx);
-            assertBatchesEquals(expected, actual, ctx);
-        }
-    }
-
-    @Test void testMergeRow() {
-        for (BatchType<?> type : TYPES) {
-            for (int cols : List.of(0, 1, 2, 3, 128))
-                testMergeRow0(type, cols);
-        }
-    }
-
     @Test void testCopy() {
         forEachSize(new ForEachSizeTest() {
             @Override public <B extends Batch<B>>

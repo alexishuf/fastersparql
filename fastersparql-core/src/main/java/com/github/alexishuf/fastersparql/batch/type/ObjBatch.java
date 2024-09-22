@@ -526,56 +526,6 @@ public abstract class ObjBatch<B extends ObjBatch<B, T>, T> extends Batch<B> {
                     afterOnBatch(project(fillingBatch(), batch), rcvRows);
             }
         }
-
-        @Override public Orphan<B> projectRow(@Nullable Orphan<B> dstOffer,
-                                                      B in, int row) {
-            var cols = columns;
-            if (cols == null)
-                throw new UnsupportedOperationException("not a projecting merger");
-            in.requireAlive();
-            if (row >= in.rows)
-                throw new IndexOutOfBoundsException(row);
-            B dst = setupDst(dstOffer, false), tail = dst.tail();
-            int d = tail.rows*tail.cols;
-            T[] da = tail.arr, ia = in.arr;
-            if (d+tail.cols > da.length) {
-                da = (tail = createTail(dst)).arr;
-                d = 0;
-            }
-            ++tail.rows;
-
-            for (int c = 0, src, i = row*in.cols; c < cols.length; c++)
-                da[d+c] = (src=cols[c]) < 0 ? null : ia[i+src];
-            assert tail.validate();
-            return dst.releaseOwnership(this);
-        }
-
-        @Override
-        public Orphan<B>
-        mergeRow(@Nullable Orphan<B> dstOffer, B left, int leftRow,
-                 B right, int rightRow) {
-            left.requireAlive();
-            right.requireAlive();
-            if (leftRow >= left.rows)
-                throw new IndexOutOfBoundsException(leftRow);
-            if (rightRow >= right.rows)
-                throw new IndexOutOfBoundsException(rightRow);
-            B dst = setupDst(dstOffer, false), tail = dst.tail;
-            if (sources.length > 0) {
-                T[] dArr = tail.arr, lArr = left.arr, rArr = right.arr;
-                int d = (short) (tail.rows * tail.cols);
-                short l = (short) (leftRow * left.cols), r = (short) (rightRow * right.cols);
-                if (d + tail.cols > dArr.length) {
-                    dArr = (tail = createTail(dst)).arr;
-                    d = 0;
-                }
-                for (int c = 0, s; c < sources.length; c++)
-                    dArr[d++] = (s = sources[c]) > 0 ? lArr[l+s-1] : (s == 0 ? null : rArr[r-s-1]);
-            }
-            tail.rows++;
-            assert tail.validate();
-            return dst.releaseOwnership(this);
-        }
     }
 
     public static abstract sealed class Filter<T, B extends ObjBatch<B, T>>

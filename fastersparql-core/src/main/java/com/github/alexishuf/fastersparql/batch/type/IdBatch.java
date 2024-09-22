@@ -569,55 +569,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
                     afterOnBatch(project(fillingBatch(), batch), rcvRows);
             }
         }
-
-        @Override public final Orphan<B> projectRow(@Nullable Orphan<B> dstOffer, B in, int row) {
-            var cols = columns;
-            if (cols == null)
-                throw new UnsupportedOperationException("not a projecting merger");
-            in.requireAlive();
-            if (row >= in.rows)
-                throw new IndexOutOfBoundsException(row);
-            B dst = setupDst(dstOffer, false), tail = dst.tail;
-            int d = tail.rows*tail.cols;
-            if (d+tail.cols > tail.termsCapacity) {
-                tail = createTail(dst);
-                d = 0;
-            }
-            ++tail.rows;
-
-            long[] dIds = tail.arr;
-            for (int c = 0, src, i = row*in.cols; c < cols.length; c++)
-                dIds   [d+c] = (src=cols[c]) < 0 ? 0L : in.arr[i+src];
-            assert tail.validate();
-            return dst.releaseOwnership(this);
-        }
-
-        @Override public Orphan<B> mergeRow(@Nullable Orphan<B> dstOffer,
-                                            B left, int leftRow, B right, int rightRow) {
-            left.requireAlive();
-            right.requireAlive();
-            if ( leftRow >=  left.rows) throw new IndexOutOfBoundsException( leftRow);
-            if (rightRow >= right.rows) throw new IndexOutOfBoundsException(rightRow);
-            B dst = setupDst(dstOffer, false), tail = dst.tail;
-            if (tail.cols > 0) {
-                int d = tail.rows * tail.cols;
-                short l = (short)(leftRow * left.cols), r = (short)(rightRow * right.cols);
-                long[] dIds = tail.arr;
-                if (d + tail.cols > dIds.length) {
-                    dIds = (tail = createTail(dst)).arr;
-                    d = 0;
-                }
-                short s;
-                for (int c = 0; c < sources.length; c++, d++) {
-                    if      ((s = sources[c]) > 0) dIds[d] =  left.arr[l+s-1];
-                    else if ( s < 0)               dIds[d] = right.arr[r-s-1];
-                    else                           dIds[d] = 0L;
-                }
-            }
-            tail.rows++;
-            assert tail.validate();
-            return dst.releaseOwnership(this);
-        }
     }
 
     public static abstract sealed class Filter<B extends IdBatch<B>>
