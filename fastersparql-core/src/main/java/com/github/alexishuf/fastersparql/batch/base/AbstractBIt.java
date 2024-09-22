@@ -141,6 +141,8 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
         }
         lock();
         try {
+            if (error == null && cause != null)
+                error = cause;
             var prev = (State)STATE.compareAndExchangeRelease(this, State.ACTIVE, tgt);
             if (prev == tgt) {
                 return false;
@@ -151,7 +153,6 @@ public abstract class AbstractBIt<B extends Batch<B>> extends ReentrantLock impl
                 log.trace(ON_TERM_TPL_PREV, this, cause, Objects.toString(error));
                 return false;
             }
-            error = cause;
             try {
                 if (metrics != null)
                     metrics.completeAndDeliver(cause, tgt == State.CANCELLED);

@@ -123,16 +123,19 @@ public class MergeBIt<B extends Batch<B>> extends SPSCBIt<B> {
         } catch (Throwable t) {
             cause = t;
         } finally {
-            boolean last = (int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1;
-            if (cause != null || (last && notTerminated())) {
-                if (cause == null) {
+            if (cause != null) {
+                complete(cause);
+                ACTIVE_SOURCES.getAndAddRelease(this, -1);
+            } else {
+                boolean last = (int)ACTIVE_SOURCES.getAndAdd(this, -1) == 1;
+                if (last && notTerminated()) {
                     lock();
                     try {
                         if (cancelRequested)
                             cause = BItCancelledException.get(this);
                     } finally { unlock(); }
+                    complete(cause);
                 }
-                complete(cause);
             }
             Owned.safeRecycle(processor, this);
         }
