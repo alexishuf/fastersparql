@@ -85,7 +85,7 @@ class ResultsSerializerTest {
                 new D(wide, JSON, """
                         {"head":{"vars":["x","y","z"]},
                         "results":{"bindings":[
-                        {"x":{"type":"iri", "value":"http://www.example.org/ns#Bob"},
+                        {"x":{"type":"uri", "value":"http://www.example.org/ns#Bob"},
                          "y":{"type":"literal", "value":"bob", "xml:lang":"en"},
                          "z":{"type":"literal", "value":"23", "datatype":"http://www.w3.org/2001/XMLSchema#integer"}}
                         ]}}"""),
@@ -109,7 +109,7 @@ class ResultsSerializerTest {
                 new D(tall, JSON, """
                         {"head":{"vars":["x"]},
                         "results":{"bindings":[
-                        {"x":{"type":"iri", "value":"http://www.example.org/ns#Bob"}},
+                        {"x":{"type":"uri", "value":"http://www.example.org/ns#Bob"}},
                         {"x":{"type":"literal", "value":"bob", "xml:lang":"en"}},
                         {"x":{"type":"literal", "value":"23", "datatype":"http://www.w3.org/2001/XMLSchema#integer"}},
                         {"x":{"type":"bnode", "value":"b1"}}
@@ -130,7 +130,7 @@ class ResultsSerializerTest {
                 new D(square, JSON, """
                         {"head":{"vars":["x","y"]},
                         "results":{"bindings":[
-                        {"x":{"type":"iri", "value":"http://www.example.org/ns#Bob"},
+                        {"x":{"type":"uri", "value":"http://www.example.org/ns#Bob"},
                          "y":{"type":"literal", "value":"bob"}},
                         {"x":{"type":"bnode", "value":"b2"},
                          "y":{"type":"literal", "value":"-1.23", "datatype":"http://www.w3.org/2001/XMLSchema#decimal"}}
