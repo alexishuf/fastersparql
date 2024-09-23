@@ -22,6 +22,7 @@ import java.util.Objects;
 import static com.github.alexishuf.fastersparql.FSProperties.*;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.Validation.EXPENSIVE;
 import static com.github.alexishuf.fastersparql.batch.type.Batch.Validation.NONE;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.HANGMAN;
 
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
@@ -788,6 +789,8 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      */
     public abstract boolean getView(@NonNegative int row, @NonNegative int col, TermView dest);
 
+    public abstract TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info);
+
     /** Analogous to {@link #getView(int, int, TermView)} but {@code row} is relative to the whole
      * linked list that starts at {@code this}. */
     public final boolean linkedGetView(@NonNegative int row, @NonNegative int col, TermView dest) {
@@ -864,7 +867,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     /** Null-safe equivalent to {@code get(row, col).shared()}. */
     public @NonNull FinalSegmentRope shared(@NonNegative int row, @NonNegative int col) {
         var term = get(row, col);
-        return term == null ? FinalSegmentRope.EMPTY : term.finalShared();
+        return term == null ? EMPTY : term.finalShared();
     }
 
     /**
@@ -1424,7 +1427,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             shared.copy(0, shLen, copy, 0);
         MemorySegment.copy(local, ValueLayout.JAVA_BYTE, localOff, copy, shLen, localLen);
         var rope = new FinalSegmentRope(copy);
-        return new FinalTerm(FinalSegmentRope.EMPTY, rope, false);
+        return new FinalTerm(EMPTY, rope, false);
     }
 
     private Term makeTerm(SegmentRope shared, PlainRope local, int localOff,
@@ -1449,7 +1452,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             shared.copy(0, shLen, copy, 0);
         local.copy(localOff, localOff+localLen, copy, shLen);
         var rope = new FinalSegmentRope(copy);
-        return new FinalTerm(FinalSegmentRope.EMPTY, rope, false);
+        return new FinalTerm(EMPTY, rope, false);
     }
 
     /**
@@ -1578,7 +1581,17 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     /**
      * Equivalent to {@link #copy(Batch)} but accepts {@link Batch} implementations other than this.
      */
-    public abstract void putConverting(Batch<?> other);
+    public void putConverting(Batch<?> other) {
+        if (other.type() == type()) { //noinspection unchecked
+            copy((B)other);
+        } else {
+            TermInfo info = new TermInfo();
+            for (; other != null; other = other.next) {
+                for (short r = 0, oRows = other.rows; r < oRows; r++)
+                    putRowConverting(other, r, cols, info);
+            }
+        }
+    }
 
     /**
      * Equivalent to {@link #putRow(Batch, int)}, but accepts a batch of another type.
@@ -1589,5 +1602,49 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      * @throws IllegalArgumentException  if {@code other.cols != cols}
      * @throws IndexOutOfBoundsException if {@code row < 0 || row >= other.rows}
      */
-    public abstract void putRowConverting(Batch<?> other, int row);
+    public void putRowConverting(Batch<?> other, int row) {
+        putRowConverting(other, (short)Math.min(0xffff, row), cols, new TermInfo());
+    }
+
+    protected final void putRowConverting(Batch<?> other, short row, short cols, TermInfo info) {
+        beginPut();
+        for (short c = 0; c < cols; c++) {
+            switch (other.get(row, c, info)) {
+                case EMPTY              -> {}
+                case TERM               -> putTerm(c, info.term);
+                case SHARED_AND_SEGMENT -> {
+                    if (info.stable) {
+                        putTermLocalByReference(c, info.shared, info.localSeg, info.localU8,
+                                info.localOff, info.localLen, info.suffixShared);
+                    } else {
+                        putTerm(c, info.shared, info.localSeg, info.localU8, info.localOff,
+                                info.localLen, info.suffixShared);
+                    }
+                }
+                case UNINTERNABLE -> putUninternable(c, info);
+            }
+        }
+        commitPut();
+    }
+
+    protected void putUninternable(int destCol, TermInfo t) {
+        FinalSegmentRope local;
+        if (t.sharedLen == 0) {
+            local = new FinalSegmentRope(t.localSeg, t.localU8, t.localOff, t.localLen);
+        } else if (t.localLen == 0) {
+            local = new FinalSegmentRope(t.sharedSeg, t.sharedU8, t.sharedOff, t.sharedLen);
+        } else {
+            RopeFactory fac = RopeFactory.make(t.sharedLen + t.localLen);
+            int first = t.suffixShared ? 0 : 1;
+            for (int i = 0; i < 2; i++) {
+                if (((first+i)&1) == 0)
+                    fac.add(t.localSeg,  t.localU8,  t.localOff,  t.localLen);
+                else
+                    fac.add(t.sharedSeg, t.sharedU8, t.sharedOff, t.sharedLen);
+            }
+            local = fac.take();
+        }
+        putTerm(destCol, new FinalTerm(EMPTY, local, t.suffixShared));
+    }
+
 }

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
@@ -9,13 +10,15 @@ import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
-import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
+import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatch;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import com.github.alexishuf.fastersparql.store.index.dict.*;
+import com.github.alexishuf.fastersparql.store.index.triples.TriplesSorter;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Guard.BatchGuard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -57,8 +60,7 @@ class BatchTest {
             CA,
             StoreBatchType.STORE
     );
-    private static LocalityCompositeDict storeDict;
-    private static int storeDictId;
+    private static StoreSparqlClient storeSparqlClient;
 
     static final class Size {
         private static final int ALIGNMENT = ByteVector.SPECIES_PREFERRED.length();
@@ -170,16 +172,34 @@ class BatchTest {
             visitStrings(second);
             second.write();
         }
-        storeDict = (LocalityCompositeDict)Dict.load(tmp.resolve("strings"));
-        StoreBatch.TEST_DICT = storeDictId = IdTranslator.register(storeDict);
+        try (var sorter = new TriplesSorter(tmp);
+             var dict = (LocalityCompositeDict)Dict.load(tmp.resolve("strings"));
+             var lookupG = new Guard<LocalityCompositeDict.Lookup>(BatchTest.class)) {
+            var lookup = lookupG.set(dict.lookup());
+            long p = lookup.find(DUMMY_PRE_NT);
+            long o = lookup.find(DUMMY_OBJ_NT);
+            visitStrings(string -> {
+                try {
+                    sorter.addTriple(lookup.find(string), p, o);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            sorter.write(tmp);
+        }
+        SparqlEndpoint endpoint = SparqlEndpoint.parse("file://"+tmp);
+        storeSparqlClient = new StoreSparqlClient(endpoint);
+        StoreBatch.TEST_DICT = storeSparqlClient.dictId();
     }
 
     @AfterAll static void afterAll() {
-        IdTranslator.deregister(storeDictId, storeDict);
-        StoreBatch.TEST_DICT = storeDictId = 0;
-        storeDict = null;
+        storeSparqlClient.close();
+        StoreBatch.TEST_DICT = 0;
     }
 
+
+    private static final FinalSegmentRope DUMMY_PRE_NT = asFinal("<http://www.example.org/ns#predicate>");
+    private static final FinalSegmentRope DUMMY_OBJ_NT = asFinal("<http://www.example.org/ns#object>");
     private static void visitStrings(NTVisitor visitor) {
         for (Size s : SIZES) {
             for (int r = 0; r < s.rows; r++) {
@@ -190,6 +210,8 @@ class BatchTest {
                 }
             }
         }
+        visitor.visit(asFinal(DUMMY_PRE_NT));
+        visitor.visit(asFinal(DUMMY_OBJ_NT));
         visitor.visit(asFinal("\"23\"^^<http://www.w3.org/2001/XMLSchema#integer>"));
         visitor.visit(asFinal("\"bob\"@en"));
         visitor.visit(asFinal("\"bob\"@en-US"));

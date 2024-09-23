@@ -3,6 +3,8 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
+import com.github.alexishuf.fastersparql.batch.type.TermInfo;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
@@ -18,6 +20,7 @@ import java.util.Arrays;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.longsAtLeast;
 import static java.lang.System.arraycopy;
 import static java.lang.Thread.currentThread;
@@ -121,6 +124,40 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
         FinalTerm term = cachedTerm(addr);
         if (term == null) cacheTerm(addr, term = IdAccess.toTerm(id));
         return term;
+    }
+
+    @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
+        requireAlive();
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+
+        // check for null
+        int addr = row * cols + col;
+        long id = arr[addr];
+        if (id == 0)
+            return info.setEmpty();
+
+        // try returning a cached value
+        CharSequence cached = cachedTerm(addr);
+        if (cached == null)
+            cached = IdAccess.pollCached(id);
+        if (cached instanceof FinalTerm t)
+            return info.setTerm(t);
+        var nt = cached instanceof FinalSegmentRope f ? f : IdAccess.toNT(id);
+        if (nt == null || nt.len == 0)
+            return info.setEmpty();
+        boolean shSuf = false;
+        var sh = switch (nt.get(0)) {
+            case '<' -> SHARED_ROPES.internPrefixOf(nt, 0, nt.len);
+            case '"' -> {
+                shSuf = true;
+                yield SHARED_ROPES.internDatatypeOf(nt, 0, nt.len);
+            }
+            default -> FinalSegmentRope.EMPTY;
+        };
+        return info.setSharedAndSegment(true, sh, nt.segment, nt.utf8,
+                                        nt.offset+(shSuf ? 0 : sh.len),
+                                        nt.len-sh.len, shSuf);
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {

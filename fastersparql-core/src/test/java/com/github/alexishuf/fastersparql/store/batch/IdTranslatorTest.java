@@ -1,10 +1,14 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.index.dict.CompositeDictBuilder;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
+import com.github.alexishuf.fastersparql.store.index.triples.TriplesSorter;
+import com.github.alexishuf.fastersparql.util.owned.Guard;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.RepeatedTest;
@@ -23,6 +27,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class IdTranslatorTest {
 
     private static final List<FinalSegmentRope> TERMS = Stream.of(
+            "<http://example.org/ontology/predicate>",
+            "<http://example.org/ontology/object>",
             "<http://example.org/1>",
             "<http://example.org/2>",
             "<http://example.org/3>",
@@ -46,21 +52,31 @@ class IdTranslatorTest {
                 secondPass.visit(t);
             secondPass.write();
         }
-        testDict = tempDir.resolve("strings");
+        try (var dict = (LocalityCompositeDict)Dict.load(tempDir.resolve("strings"));
+             var sorter = new TriplesSorter(tempDir);
+             var lookupG = new Guard<LocalityCompositeDict.Lookup>(IdTranslatorTest.class)) {
+            var lookup = lookupG.set(dict.lookup());
+            long p = lookup.find(TERMS.getFirst());
+            long o = lookup.find(TERMS.get(1));
+            for (FinalSegmentRope term : TERMS)
+                sorter.addTriple(lookup.find(term), p, o);
+            sorter.write(tempDir);
+        }
+        testDict = tempDir;
     }
 
     @AfterAll static void afterAll() throws IOException {
-        try (var stream = Files.newDirectoryStream(testDict.getParent())) {
+        try (var stream = Files.newDirectoryStream(testDict)) {
             for (Path p : stream)
                 Files.deleteIfExists(p);
         }
-        Files.deleteIfExists(testDict.getParent());
+        Files.deleteIfExists(testDict);
     }
 
     @Test public void test() throws IOException {
-        LocalityCompositeDict dict = (LocalityCompositeDict) Dict.load(testDict);
-        int dictId = IdTranslator.register(dict);
-        try {
+        int dictId;
+        try (var client = new StoreSparqlClient(SparqlEndpoint.parse("file://"+testDict))) {
+            LocalityCompositeDict dict = IdTranslator.dict(dictId = client.dictId());
             for (int i = 0; i < 8; ++i) {
                 var lookup = dict.lookup().takeOwnership(this);
                 try {
@@ -79,9 +95,8 @@ class IdTranslatorTest {
                     lookup.recycle(this);
                 }
             }
-        } finally {
-            IdTranslator.deregister(dictId, dict);
         }
+        assertNull(IdTranslator.dict(dictId));
     }
 
     @RepeatedTest(10)

@@ -105,6 +105,10 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
         return obj(row, col);
     }
 
+    @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
+        return info.setTerm(obj(row, col));
+    }
+
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {
         Term t = obj(row, col);
         if (t == null) return false;

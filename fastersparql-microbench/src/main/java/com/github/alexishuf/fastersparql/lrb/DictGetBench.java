@@ -1,10 +1,12 @@
 package com.github.alexishuf.fastersparql.lrb;
 
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.hdt.batch.IdAccess;
 import com.github.alexishuf.fastersparql.model.rope.PooledSegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
+import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.batch.IdTranslator;
 import com.github.alexishuf.fastersparql.store.index.Hdt2StoreIndexConverter;
 import com.github.alexishuf.fastersparql.store.index.dict.*;
@@ -46,10 +48,10 @@ public class DictGetBench {
     @Param({"false"}) private boolean testHdt;
 
     private Path sourceDir, currentDir;
+    private StoreSparqlClient storeSparqlClient;
     private Dict dict;
     private Dict.AbstractLookup<?> lookup;
     private LocalityCompositeDict.Lookup compLookup;
-    private int dictId;
     private Path hdtSource;
     private HDT hdt;
     private Dictionary hdtDict;
@@ -133,11 +135,10 @@ public class DictGetBench {
             Files.copy(shared, sharedCopy);
         Files.copy(strings, stringsCopy);
         IOUtils.fsync(10_000);
-        dict = Dict.load(currentDir.resolve("strings"));
+        storeSparqlClient = new StoreSparqlClient(SparqlEndpoint.parse("file://"+currentDir));
+        dict = IdTranslator.dict(storeSparqlClient.dictId());
         lookup = dict.polymorphicLookup().takeOwnership(this);
         compLookup = lookup instanceof LocalityCompositeDict.Lookup l ? l : null;
-        if (dict instanceof LocalityCompositeDict lcd)
-            dictId = IdTranslator.register(lcd);
 
         if (testHdt) {
             Path hdtCopy = currentDir.resolve("NYT.hdt");
@@ -149,14 +150,14 @@ public class DictGetBench {
     }
 
     @TearDown(Level.Invocation) public void invocationTearDown() throws IOException {
-        if (dictId != 0) {
-            IdTranslator.deregister(dictId, dict);
-            dictId = 0;
-        }
+        storeSparqlClient.close();
+        storeSparqlClient = null;
+        dict = null;
         if (hdtDictId != 0)
             IdAccess.release(hdtDictId);
         hdtDictId = 0;
         lookup = lookup.recycle(this);
+        compLookup = null;
         dict.close();
         if (hdt != null) {
             hdt.close();

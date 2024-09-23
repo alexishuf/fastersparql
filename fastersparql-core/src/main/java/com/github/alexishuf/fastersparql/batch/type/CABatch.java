@@ -348,38 +348,7 @@ public sealed class CABatch extends Batch<CABatch> {
         }
     }
 
-    @Override public void putConverting(Batch<?> other) {
-        if (other instanceof CABatch ca) {
-            copy(ca);
-        } else {
-            try (var lv = PooledSegmentRopeView.ofEmpty()) {
-                for (; other != null; other = other.next) {
-                    for (short r = 0, oRows = other.rows; r < oRows; r++)
-                        putRowConverting0(other, r, lv);
-                }
-            }
-        }
-    }
-
     /* --- --- --- row mutators --- --- --- */
-
-    private void putRowConverting0(Batch<?> other, int r, PooledSegmentRopeView lv) {
-        beginPut();
-        for (short c = 0; c < cols; c++) {
-            if (other.localView(r, c, lv)) {
-                var sh = other.shared(r, c);
-                boolean suffixed = (sh.len == 0 ? lv : sh).get(0) == '"';
-                putTerm(c, sh, lv.segment, lv.utf8, lv.offset, lv.len, suffixed);
-            }
-        }
-        commitPut();
-    }
-
-    @Override public void putRowConverting(Batch<?> other, int row) {
-        try (var lv = PooledSegmentRopeView.ofEmpty()) {
-            putRowConverting0(other, row, lv);
-        }
-    }
 
     @Override public void beginPut() {
         var tail = tail();
@@ -493,6 +462,22 @@ public sealed class CABatch extends Batch<CABatch> {
         tail.setNull(offerRowBase+col);
     }
 
+    @Override protected void putUninternable(int destCol, TermInfo info) {
+        var tail = tailForPutTerm(destCol);
+        var fac = ropeFac.alloc(info.sharedLen + info.localLen);
+        int first = info.suffixShared ? 0 : 1;
+        for (int i = 0; i < 2; i++) {
+            if (((first+i)&1) == 0)
+                fac.add(info.localSeg,  info.localU8,  info.localOff,  info.localLen);
+            else
+                fac.add(info.sharedSeg, info.sharedU8, info.sharedOff, info.sharedLen);
+        }
+        try (var n = fac.naked()) {
+            tail.setTerm(tail.offerRowBase+destCol, EMPTY,
+                         n.segment(), n.begin(), n.len(), info.suffixShared, 0);
+        }
+    }
+
     @Override public void putRow(CABatch other, int row) {
         if (other.cols != cols)
             throw new IllegalArgumentException("cols mismatch");
@@ -602,6 +587,13 @@ public sealed class CABatch extends Batch<CABatch> {
             return null;
         var local = len == 0 ? EMPTY : new FinalSegmentRope(seg, off(ti), len);
         return new FinalTerm(sh, local, isSuff(ti));
+    }
+
+    @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col,
+                                       TermInfo info) {
+        int i = termIdx(row, col);
+        return info.setSharedAndSegment(true, sh(i), seg(i), utf8(i),
+                                        off(i), len(i), isSuff(i));
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {

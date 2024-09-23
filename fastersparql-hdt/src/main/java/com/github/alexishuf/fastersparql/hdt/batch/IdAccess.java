@@ -99,7 +99,7 @@ public class IdAccess {
         }
     }
 
-    private static CharSequence pollCached(long sourcedId) {
+    public static CharSequence pollCached(long sourcedId) {
         if (sourcedId == NOT_FOUND || sourcedId == 0L)
             return null; // do not look up special values (0 -> empty, NOT_FOUND -> locked)
         int slot = ((int)(sourcedId>>32) ^ (int)sourcedId) & CACHE_MASK;
@@ -265,9 +265,9 @@ public class IdAccess {
         return t;
     }
 
-    public static SegmentRope toNT(long sourcedId) {
+    public static FinalSegmentRope toNT(long sourcedId) {
         var str = pollCached(sourcedId);
-        if (str instanceof SegmentRope r)
+        if (str instanceof FinalSegmentRope r)
             return r;
         if (str instanceof Term t)
             return FinalSegmentRope.asFinal(t);
@@ -276,7 +276,7 @@ public class IdAccess {
             return null;
         byte[] u8 = peekU8(str);
         int len = str.length();
-        SegmentRope rope = switch (str.charAt(0)) {
+        FinalSegmentRope rope = switch (str.charAt(0)) {
             case '"' -> {
                 try (var esc = PooledMutableRope.getWithCapacity(len)) {
                     esc.append('"');

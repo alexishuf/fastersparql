@@ -50,6 +50,19 @@ public class JenaBatch extends ObjBatch<JenaBatch, Node> {
         } finally { p.recycle(this); }
     }
 
+    @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
+        Node node = obj(row, col);
+        if (node == null)
+            return info.setEmpty();
+        var p = JenaTermParser.create().takeOwnership(this);
+        try {
+            p.parse(node);
+            return info.setSharedAndSegment(false, p.shared(),
+                    p.localSegment(), p.localUtf8(),
+                    p.localOff(), p.localLen(), p.suffixShared());
+        } finally { p.recycle(this); }
+    }
+
     @Override
     public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
         Node node = obj(row, col);

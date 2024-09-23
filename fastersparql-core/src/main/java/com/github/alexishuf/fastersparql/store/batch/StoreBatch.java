@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.batch.type.IdHashCache;
+import com.github.alexishuf.fastersparql.batch.type.TermInfo;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.*;
@@ -17,6 +18,7 @@ import org.checkerframework.checker.nullness.qual.PolyNull;
 
 import java.lang.foreign.MemorySegment;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
@@ -177,6 +179,48 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         return term;
     }
 
+    @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
+        requireAlive();
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols)
+            throw new IndexOutOfBoundsException();
+
+        // check for null
+        int addr = row * cols + col;
+        long id = arr[addr];
+        if (id == 0)
+            return info.setEmpty();
+
+        // try returning a cached value
+        FinalTerm cached = cachedTerm(addr);
+        if (cached != null)
+            return info.setTerm(cached);
+
+        var lookup = dict(dictId(id)).lookup().takeOwnership(this);
+        try {
+            var tmp = lookup.get(unsource(id));
+            boolean lit = tmp.get(0) == '"', localSnd = true;
+            FinalSegmentRope sh;
+            if (lit) {
+                localSnd = tmp.fstLen == 0;
+                sh = lookup.lastGetLitSuffixElse(EMPTY);
+            } else {
+                sh = SHARED_ROPES.internPrefix(tmp, 0, tmp.fstLen);
+            }
+            int lLen = localSnd ? tmp.sndLen : tmp.fstLen;
+            if (lLen + sh.len != tmp.len)
+                return info.setUninternable(true, tmp, localSnd);
+            MemorySegment lSeg;
+            byte[] lU8;
+            long lOff;
+            if (localSnd) {lSeg = tmp.snd; lU8  = tmp.sndU8; lOff = tmp.sndOff; }
+            else          {lSeg = tmp.fst; lU8  = tmp.fstU8; lOff = tmp.fstOff; }
+            return info.setSharedAndSegment(true, sh, lSeg, lU8, lOff, lLen, lit);
+        } finally {
+            lookup.recycle(this);
+        }
+    }
+
     @PolyNull private static FinalTerm tsr2term(@PolyNull TwoSegmentRope tsr) {
         if (tsr == null) return null;
         return Term.wrap(new FinalSegmentRope(tsr.fst, tsr.fstOff, tsr.fstLen),
@@ -215,13 +259,13 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             if (!isLit) {
                 sh = new FinalSegmentRope(tmp.fst, tmp.fstU8, tmp.fstOff, fLen);
             } else if (fLen > 0) {
-                if (sLen == 0) sh = FinalSegmentRope.EMPTY;
+                if (sLen == 0) sh = EMPTY;
                 else if (sLen < MIN_INTERNED_LEN)
                     sh = new FinalSegmentRope(tmp.snd, tmp.sndU8, tmp.sndOff, sLen);
                 else
                     sh = SHARED_ROPES.internDatatype(tmp, fLen, tmp.len);
             } else {
-                sh = FinalSegmentRope.EMPTY;
+                sh = EMPTY;
             }
             dest.wrap(sh, local, isLit);
         } finally {
@@ -268,7 +312,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
     @Override public @NonNull FinalSegmentRope shared(@NonNegative int row, @NonNegative int col) {
         long id = id(row, col);
         if (id == NOT_FOUND)
-            return FinalSegmentRope.EMPTY;
+            return EMPTY;
         var lookup = dict(dictId(id)).lookup().takeOwnership(this);
         try {
             long unsourcedId = unsource(id);
@@ -378,7 +422,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         if (id == NOT_FOUND)
             return 0;
         PooledSegmentRopeView shView = null;
-        SegmentRope sh = FinalSegmentRope.EMPTY;
+        SegmentRope sh = EMPTY;
         MemorySegment local;
         byte[] localU8;
         long localOff;

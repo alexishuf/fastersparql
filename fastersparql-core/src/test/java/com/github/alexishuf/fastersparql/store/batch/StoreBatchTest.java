@@ -4,14 +4,17 @@ import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
 import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.RowFilter;
+import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.store.StoreSparqlClient;
 import com.github.alexishuf.fastersparql.store.index.dict.CompositeDictBuilder;
 import com.github.alexishuf.fastersparql.store.index.dict.Dict;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
+import com.github.alexishuf.fastersparql.store.index.triples.TriplesSorter;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
@@ -45,7 +48,7 @@ class StoreBatchTest {
     private static final int MAX_DIM = 32;
     private static Path dictPath;
     private static int dictId;
-    private static LocalityCompositeDict dict;
+    private static StoreSparqlClient client;
     private static long[] sourcedIds;
 
     @BeforeAll static void beforeAll() throws IOException {
@@ -54,8 +57,11 @@ class StoreBatchTest {
         List<FinalSegmentRope> terms = new ArrayList<>(MAX_DIM*MAX_DIM);
         String prefix = "<http://example.org/";
         for (int r = 0, reqBytes = prefix.length() + 12; r < MAX_DIM; r++) {
-            for (int c = 0; c < MAX_DIM; c++)
-                terms.add(RopeFactory.make(reqBytes).add(prefix).add((long)r*c).add('>').take());
+            for (int c = 0; c < MAX_DIM; c++) {
+                terms.add(RopeFactory.make(reqBytes)
+                        .add(prefix).add(r).add('-').add(c).add('>')
+                        .take());
+            }
         }
         try (var b = new CompositeDictBuilder(tempDir, tempDir, LAST, true)) {
             terms.forEach(b::visit);
@@ -63,26 +69,34 @@ class StoreBatchTest {
             terms.forEach(secondPass::visit);
             secondPass.write();
         }
-        dictPath = tempDir.resolve("strings");
-        dict = (LocalityCompositeDict) Dict.load(dictPath);
-        dictId = IdTranslator.register(dict);
+        try (var sorter = new TriplesSorter(tempDir);
+             var dict = (LocalityCompositeDict) Dict.load(tempDir.resolve("strings"));
+             var lookupG = new Guard<LocalityCompositeDict.Lookup>(StoreBatchTest.client)) {
+            var lookup = lookupG.set(dict.lookup());
+            long p = lookup.find(terms.getFirst());
+            long o = lookup.find(terms.get(1));
+            for (FinalSegmentRope term : terms) sorter.addTriple(lookup.find(term), p, o);
+            sorter.write(tempDir);
+        }
+        dictPath = tempDir;
+        client = new StoreSparqlClient(SparqlEndpoint.parse("file://"+dictPath));
+        dictId = client.dictId();
         sourcedIds = new long[MAX_DIM*MAX_DIM];
         try (var lookupG = new Guard<LocalityCompositeDict.Lookup>(StoreBatchTest.class)) {
-            var lookup = lookupG.set(dict.lookup());
+            var lookup = lookupG.set(IdTranslator.dict(dictId).lookup());
             int n = 0;
-            for (var term : terms)
+            for (FinalSegmentRope term : terms)
                 sourcedIds[n++] = source(lookup.find(term), dictId);
         }
     }
 
     @AfterAll static void afterAll() throws IOException {
-        IdTranslator.deregister(dictId, dict);
-        Path dir = dictPath.getParent();
-        try (var paths = Files.newDirectoryStream(dir)) {
+        client.close();
+        try (var paths = Files.newDirectoryStream(dictPath)) {
             for (Path p : paths)
                 Files.deleteIfExists(p);
         }
-        Files.deleteIfExists(dir);
+        Files.deleteIfExists(dictPath);
     }
 
     static Stream<Arguments> testFill() {

@@ -18,8 +18,8 @@ import java.lang.foreign.MemorySegment;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
-import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.*;
@@ -417,11 +417,25 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         FinalSegmentRope sh = shared[row*cols + col];
         if (sh == null) {
             if (len == 0) return null;
-            sh = FinalSegmentRope.EMPTY;
+            sh = EMPTY;
         }
         int off = slices[i2 + SL_OFF];
         var localCopy = RopeFactory.make(len).add(locals, off, off+len).take();
         return new FinalTerm(sh, localCopy, suffix);
+    }
+
+    @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
+        short i2 = slBase(row, col), len = slices[i2+SL_LEN];
+        boolean suffix = len < 0;
+        len &= LEN_MASK;
+        FinalSegmentRope sh = shared[row*cols + col];
+        if (sh == null) {
+            if (len == 0)
+                return info.setEmpty();
+            sh = EMPTY;
+        }
+        return info.setSharedAndSegment(false, sh, localsSeg, locals,
+                                        slices[i2+SL_OFF], len, suffix);
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {
@@ -431,7 +445,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         FinalSegmentRope sh = shared[row*cols + col];
         if (sh == null) {
             if (len == 0) return false;
-            sh = FinalSegmentRope.EMPTY;
+            sh = EMPTY;
         }
         dest.wrap(sh, localsSeg, locals, slices[i2+SL_OFF], len, suffix);
         return true;
@@ -445,7 +459,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         FinalSegmentRope sh = shared[row*cols+col];
         if (sh == null) {
             if (len == 0) return false;
-            sh = FinalSegmentRope.EMPTY;
+            sh = EMPTY;
         }
         dest.wrapFirst(sh);
         dest.wrapSecond(localsSeg, locals, slices[i2+SL_OFF], len);
@@ -467,7 +481,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         if (row < 0 || row >= rows || col < 0 || col >= cols)
             throw new IndexOutOfBoundsException(mkOutOfBoundsMsg(row, col));
         FinalSegmentRope sh = shared[row*cols + col];
-        return sh == null ? FinalSegmentRope.EMPTY : sh;
+        return sh == null ? EMPTY : sh;
     }
 
     @Override public boolean sharedSuffixed(@NonNegative int row, @NonNegative int col) {
@@ -605,7 +619,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public void write(ByteSink<?, ?> dest, int row, int col, int begin, int end) {
         short base = slBase(row, col);
-        MemorySegment fst = localsSeg, snd = FinalSegmentRope.EMPTY.segment;
+        MemorySegment fst = localsSeg, snd = EMPTY.segment;
         byte[] fstU8 = locals, sndU8 = fstU8;
         long fstOff = slices[base+SL_OFF], sndOff = 0;
         int fstLen  = slices[base+SL_LEN], sndLen = 0;
@@ -683,7 +697,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         short slb = slBase(row, col), len = this.slices[slb+SL_LEN];
         FinalSegmentRope sh = shared[row * cols + col];
         if (sh == null)
-            sh = FinalSegmentRope.EMPTY;
+            sh = EMPTY;
         if (other == null != (sh.len == 0 && (len&LEN_MASK) == 0))
             return false;
         else if (other == null)
@@ -698,7 +712,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         short slb = slBase(row, col), len = this.slices[slb + SL_LEN];
         FinalSegmentRope sh = shared[row * cols + col];
         if (sh == null)
-            sh = FinalSegmentRope.EMPTY;
+            sh = EMPTY;
         if (other == null != (sh.len == 0 && (len&LEN_MASK) == 0))
             return false;
         else if (other == null)
@@ -714,8 +728,8 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
             return false; // number and non-number
-        if (lSh == null) lSh = FinalSegmentRope.EMPTY;
-        if (rSh == null) rSh = FinalSegmentRope.EMPTY;
+        if (lSh == null) lSh = EMPTY;
+        if (rSh == null) rSh = EMPTY;
         if ((lfLen&SH_SUFF_MASK) != (rfLen&SH_SUFF_MASK) && (lSh.len&rSh.len) !=0)
             return false; // literal and non-literal
         if (((lfLen|rfLen)&SH_SUFF_MASK) != 0) {
@@ -744,8 +758,8 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
             return false;
-        if (lSh == null) lSh = FinalSegmentRope.EMPTY;
-        if (rSh == null) rSh = FinalSegmentRope.EMPTY;
+        if (lSh == null) lSh = EMPTY;
+        if (rSh == null) rSh = EMPTY;
         if ((lfLen&SH_SUFF_MASK) != (rfLen&SH_SUFF_MASK) && (lSh.len&rSh.len) !=0)
             return false; // literal and non-literal
         if (((lfLen|rfLen)&SH_SUFF_MASK) != 0) {
@@ -975,7 +989,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     @Override public void putTerm(int col, Term t) {
         FinalSegmentRope shared;
         SegmentRope local;
-        if (t == null) { shared =      FinalSegmentRope.EMPTY; local =     FinalSegmentRope.EMPTY; }
+        if (t == null) { shared =      EMPTY; local =     EMPTY; }
         else           { shared = t.finalShared(); local = t.local(); }
         int fLen = local.len | (t != null && t.sharedSuffixed() ? SH_SUFF_MASK : 0);
         int dest = allocTermMaybeChangeTail(col, shared, fLen);
@@ -1035,6 +1049,19 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
+    }
+
+    protected void putUninternable(int destCol, TermInfo t) {
+        int fLen = (t.sharedLen + t.localLen)
+                 | (t.suffixShared ? SH_SUFF_MASK : 0);
+        int dest = allocTermMaybeChangeTail(destCol, EMPTY, fLen);
+        int first = t.suffixShared ? 0 : 1;
+        for (int i = 0, n; i < 2; i++, dest += n) {
+            if (((first+i)&1) == 0)
+                MemorySegment.copy(t.localSeg, t.localOff, localsSeg, dest, n=t.localLen);
+            else
+                MemorySegment.copy(t.sharedSeg, t.sharedOff, localsSeg, dest, n=t.sharedLen);
+        }
     }
 
     @Override public void commitPut() {
@@ -1261,57 +1288,6 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     static { assert Integer.bitCount(SL_OFF) == 0 : "update lastOff/rowOff"; }
-    @Override public void putConverting(Batch<?> other) {
-        short cols = this.cols;
-        if (other instanceof CompressedBatch cb) {
-            copy(cb); return;
-        } else if (cols != other.cols)
-            throw new IllegalArgumentException();
-        other.requireAlive();
-
-        try (var t = PooledTwoSegmentRope.ofEmpty()) {
-            for (; other != null; other = other.next) {
-                for (short r = 0, oRows = other.rows; r < oRows; r++)
-                    putRowConverting(t, other, r, cols);
-            }
-        }
-    }
-
-    @Override public void putRowConverting(Batch<?> other, int row) {
-        short cols = this.cols;
-        if (other instanceof CompressedBatch cb) {
-            putRow(cb, row); return;
-        } else if (cols != other.cols) {
-            throw new IllegalArgumentException("cols mismatch");
-        } else if (row >= other.rows) {
-            throw new IndexOutOfBoundsException("row >= other.rows");
-        }
-        other.requireAlive();
-
-        try (var t = PooledTwoSegmentRope.ofEmpty()) {
-            putRowConverting(t, other, (short)row, cols);
-        }
-    }
-
-    private void putRowConverting(TwoSegmentRope t, Batch<?> other, short row, short cols) {
-        beginPut();
-        for (int c = 0; c < cols; c++) {
-            if (other.getRopeView(row, c, t)) {
-                byte fst = t.get(0);
-                FinalSegmentRope sh = switch (fst) {
-                    case '"' -> SHARED_ROPES.internDatatypeOf(t, 0, t.len);
-                    case '<' -> SHARED_ROPES.  internPrefixOf(t, 0, t.len);
-                    case '_' -> FinalSegmentRope.EMPTY;
-                    default -> throw new IllegalArgumentException("Not an RDF term: "+ t);
-                };
-                int localLen = t.len-sh.len, localOff = fst == '<' ? sh.len : 0;
-                int dest = allocTermMaybeChangeTail(c, sh,
-                        localLen|(fst == '"'? SH_SUFF_MASK : 0));
-                t.copy(localOff, localOff+localLen, this.tail.locals, dest);
-            }
-        }
-        this.tail.commitPut0();
-    }
 
     /* --- --- --- operation objects --- --- --- */
 
