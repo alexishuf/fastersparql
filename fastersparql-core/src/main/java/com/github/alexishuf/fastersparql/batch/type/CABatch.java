@@ -48,6 +48,14 @@ public sealed class CABatch extends Batch<CABatch> {
 
     /*  --- --- --- helpers --- --- ---  */
 
+    private static final CABatch NULL;
+    static {
+        NULL = CABatch.createNotPooled(1, 16).takeOwnership(CABatch.class);
+        Arrays.fill(NULL.md,   0L);
+        Arrays.fill(NULL.objs, null);
+        NULL.rows = 1;
+    }
+
     private static final int SUF_MASK = 0x80000000;
     private static final int LEN_MASK = 0x7fffffff;
     private static final int SHR_IDX = 0;
@@ -874,10 +882,10 @@ public sealed class CABatch extends Batch<CABatch> {
                 tail.rows += (short)(nr=min(nr, rows));
                 for (int e = d+nr*sources.length; d < e; d += sources.length) {
                     for (int c = 0, s; c < sources.length; c++) {
-                        if ((s=sources[c]) > 0)
-                            tail.copyTerm(d+c, left, l+s-1);
-                        else
-                            tail.setNull(d+c);
+                        CABatch src;
+                        if ((s=sources[c]) > 0) { src = left; s = l+s-1; }
+                        else                    { src = NULL; s =     0; }
+                        tail.copyTerm(d+c, src, s);
                     }
                 }
             }
@@ -906,10 +914,13 @@ public sealed class CABatch extends Batch<CABatch> {
                     short d = (short)(tail.rows*tail.cols);
                     tail.rows += nr;
                     for (short r = (short)(rr*rc), re = (short)((rr+nr)*rc); r < re; r+=rc) {
-                        for (int c = 0, s; c < sources.length; c++, ++d) {
-                            if      ((s = sources[c]) == 0) tail.setNull(d);
-                            else if (s > 0)                 tail.copyTerm(d, left,  l+s-1);
-                            else                            tail.copyTerm(d, right, r-s-1);
+                        for (int c = 0, s; c < sources.length; c++) {
+                            CABatch src;
+                            s = sources[c];
+                            if      (s == 0) { src = NULL ; }
+                            else if (s >  0) { src = left ; s = l+s-1; }
+                            else             { src = right; s = r-s-1; }
+                            tail.copyTerm(d++, src, s);
                         }
                     }
                 }
@@ -948,10 +959,10 @@ public sealed class CABatch extends Batch<CABatch> {
                     }
                     for (short i=(short)(ir*ic), ie=(short)((ir+nr)*ic); i < ie; i+=ic) {
                         for (int c = 0, s; c < cols.length; c++, ++d) {
-                            if ((s=cols[c]) < 0)
-                                tail.setNull(d);
-                            else
-                                tail.copyTerm(d, in, i+s);
+                            CABatch src;
+                            if ((s=cols[c]) < 0) { src = NULL; s  = 0; }
+                            else                 { src =   in; s += i; }
+                            tail.copyTerm(d, src, s);
                         }
                     }
                 }
