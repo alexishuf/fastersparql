@@ -1337,20 +1337,28 @@ class BatchTest {
 
     @ParameterizedTest @MethodSource
     <B extends Batch<B>> void regressionHashS6(BatchType<B> type) {
+        if (type instanceof IdBatchType<?>)
+            return;
         String name = "\"Michael Bartels\"";
         Term place = Term.valueOf("<http://sws.geonames.org/2911297/>");
         try (var g = new MultiGuard()) {
-            var ex = g.create(0, COMPRESSED, 2);
+            MemorySegment name0Seg = MemorySegment.ofArray(name.getBytes(UTF_8));
+            MemorySegment name2Seg = MemorySegment.ofArray((".."+name).getBytes(UTF_8));
+            MemorySegment uriLocalSeg = MemorySegment.ofArray(("2911297/>").getBytes(UTF_8));
+            byte[] name0U    = (byte[])name0Seg   .heapBase().orElse(null);
+            byte[] name2U    = (byte[])name2Seg   .heapBase().orElse(null);
+            byte[] uriLocalU = (byte[])uriLocalSeg.heapBase().orElse(null);
+            var ex = g.create(0, type, 2);
             ex.beginPut();
-            ex.putTerm(0, FinalSegmentRope.EMPTY, name.getBytes(UTF_8), 0, name.length(), false);
+            ex.putTerm(0, FinalSegmentRope.EMPTY, name0Seg, name0U, 0, name.length(), false);
             ex.putTerm(1, place);
             ex.commitPut();
 
-            var ac = g.create(1, COMPRESSED, 2);
+            var ac = g.create(1, type, 2);
             ac.beginPut();
-            ac.putTerm(0, FinalSegmentRope.EMPTY, (".."+name).getBytes(UTF_8), 2, name.length(), true);
+            ac.putTerm(0, FinalSegmentRope.EMPTY, name2Seg, name2U, 2, name.length(), true);
             ac.putTerm(1, asFinal("<http://sws.geonames.org/"),
-                        "2911297/>".getBytes(UTF_8), 0, 9, false);
+                        uriLocalSeg, uriLocalU, 0L, 9, false);
             ac.commitPut();
 
             for (int c = 0; c < 2; c++) {
