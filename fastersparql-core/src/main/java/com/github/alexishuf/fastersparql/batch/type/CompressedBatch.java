@@ -709,38 +709,56 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 ol.len|(other.sharedSuffixed() ? SH_SUFF_MASK : 0));
     }
 
-    public boolean termEquals(@Nullable FinalSegmentRope lSh, byte[] lU8, long lOff, int lLen,
-                              @Nullable FinalSegmentRope rSh, byte[] rU8, long rOff, int rLen) {
+    public boolean termEquals(@Nullable FinalSegmentRope lSh, byte[] lU8, long lOff, int lfLen,
+                              @Nullable FinalSegmentRope rSh, byte[] rU8, long rOff, int rfLen) {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
-            return false;
-        lLen&=LEN_MASK;
-        rLen&=LEN_MASK;
+            return false; // number and non-number
         if (lSh == null) lSh = FinalSegmentRope.EMPTY;
         if (rSh == null) rSh = FinalSegmentRope.EMPTY;
-        if (numeric)
-            return compareNumbers(lU8, lOff+1, lLen-1, rU8, rOff+1, rLen-1) == 0;
-        return compare2_2(lSh.utf8, lSh.segment.address()+lSh.offset, lSh.len,
-                          lU8, lOff, lLen,
-                          rSh.utf8, rSh.segment.address()+rSh.offset, rSh.len,
-                          rU8, rOff, rLen) == 0;
+        if ((lfLen&SH_SUFF_MASK) != (rfLen&SH_SUFF_MASK) && (lSh.len&rSh.len) !=0)
+            return false; // literal and non-literal
+        if (((lfLen|rfLen)&SH_SUFF_MASK) != 0) {
+            lfLen &= LEN_MASK;
+            rfLen &= LEN_MASK;
+            if (numeric)
+                return compareNumbers(lU8, lOff+1, lfLen-1, rU8, rOff+1, rfLen-1) == 0;
+            return compare2_2(
+                    lU8, lOff, lfLen,
+                    lSh.utf8, lSh.segment.address()+lSh.offset, lSh.len,
+                    rU8, rOff, rfLen,
+                    rSh.utf8, rSh.segment.address()+rSh.offset, rSh.len) == 0;
+        } else {
+            return compare2_2(
+                    lSh.utf8, lSh.segment.address() + lSh.offset, lSh.len,
+                    lU8, lOff, lfLen,
+                    rSh.utf8, rSh.segment.address() + rSh.offset, rSh.len,
+                    rU8, rOff, rfLen) == 0;
+        }
     }
 
     public boolean safeTermEquals(@Nullable FinalSegmentRope lSh, MemorySegment lSeg,
-                                  long lOff, int lLen,
+                                  long lOff, int lfLen,
                                   @Nullable FinalSegmentRope rSh, MemorySegment rSeg,
-                                  long rOff, int rLen) {
+                                  long rOff, int rfLen) {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
             return false;
-        lLen&=LEN_MASK;
-        rLen&=LEN_MASK;
         if (lSh == null) lSh = FinalSegmentRope.EMPTY;
         if (rSh == null) rSh = FinalSegmentRope.EMPTY;
-        if (numeric)
-            return compareNumbers(lSeg, lOff, lLen-1, rSeg, rOff, rLen-1) == 0;
-        return compare2_2(lSh.segment, lSh.offset, lSh.len, lSeg, lOff, lLen,
-                          rSh.segment, rSh.offset, rSh.len, rSeg, rOff, rLen) == 0;
+        if ((lfLen&SH_SUFF_MASK) != (rfLen&SH_SUFF_MASK) && (lSh.len&rSh.len) !=0)
+            return false; // literal and non-literal
+        if (((lfLen|rfLen)&SH_SUFF_MASK) != 0) {
+            lfLen&=LEN_MASK;
+            rfLen&=LEN_MASK;
+            if (numeric)
+                return compareNumbers(lSeg, lOff, lfLen-1, rSeg, rOff, rfLen-1) == 0;
+            return compare2_2(lSeg, lOff, lfLen, lSh.segment, lSh.offset, lSh.len,
+                              rSeg, rOff, rfLen, rSh.segment, rSh.offset, rSh.len) == 0;
+        } else {
+            return compare2_2(lSh.segment, lSh.offset, lSh.len, lSeg, lOff, lfLen,
+                              rSh.segment, rSh.offset, rSh.len, rSeg, rOff, rfLen) == 0;
+        }
     }
 
     @Override
