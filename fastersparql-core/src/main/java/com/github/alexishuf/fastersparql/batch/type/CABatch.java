@@ -44,6 +44,7 @@ public sealed class CABatch extends Batch<CABatch> {
     private short offerRowBase;
     private short rowsCapacity;
     private final short termsCapacity;
+    private final PrivateRopeFactory ropeFac = PrivateRopeFactory.createLazyAlloc();
 
 
     /*  --- --- --- helpers --- --- ---  */
@@ -437,7 +438,7 @@ public sealed class CABatch extends Batch<CABatch> {
                 lSeg  = local.segment;
                 lOff  = local.offset;
             } else {
-                naked = RopeFactory.make(local.len).add(local).naked();
+                naked =  ropeFac.alloc(local.len).add(local).naked();
                 lSeg  = naked.segment();
                 lOff  = naked.begin();
             }
@@ -458,7 +459,7 @@ public sealed class CABatch extends Batch<CABatch> {
                         byte @Nullable [] localU8, long localOff, int localLen,
                         boolean sharedSuffix) {
         var tail = tailForPutTerm(col);
-        var nkd = RopeFactory.make(localLen).add(local, localU8, localOff, localLen).naked();
+        var nkd = ropeFac.alloc(localLen).add(local, localU8, localOff, localLen).naked();
         tail.setTerm(tail.offerRowBase + col, shared,
                       nkd.segment(),
                 nkd.begin(), nkd.len(), sharedSuffix, 0);
@@ -472,7 +473,7 @@ public sealed class CABatch extends Batch<CABatch> {
             putTermLocalByReference(col, shared, f.segment, f.utf8, f.offset, f.len, sharedSuffix);
         } else {
             var tail = tailForPutTerm(col);
-            var nkd = RopeFactory.make(localLen).add(local, localOff, localLen).naked();
+            var nkd = ropeFac.alloc(localLen).add(local, localOff, localLen).naked();
             tail.setTerm(tail.offerRowBase+col, shared,
                          nkd.segment(), nkd.begin(), nkd.len(),
                          sharedSuffix, 0);

@@ -15,9 +15,10 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 @SuppressWarnings("unchecked")
 sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
         permits PrivateRopeFactory, RopeFactory {
-    protected static final int CHUNK_SIZE = 128-24;
-    private   static final int FULL_CHUNK = CHUNK_SIZE;
-    private   static final byte[] EMPTY_CHUNK = new byte[0];
+    protected static final int CHUNK_SIZE = 128;
+    protected static final int FULL_CHUNK = CHUNK_SIZE-24;
+    private static final byte[]        EMPTY_CHUNK = new byte[0];
+    private static final MemorySegment EMPTY_SEG   = MemorySegment.ofArray(EMPTY_CHUNK);
     private static final boolean WASTE = FSProperties.batchNoInternIri();
     static {
         if (WASTE) {
@@ -29,30 +30,46 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
 
     private MemorySegment chunkSegment;
     private byte[] chunk;
-    private int begin, dstPos;
+    private int dstPos;
+    private short begin, oldChunkBegin;
+    private MemorySegment oldChunkSegment;
+    private byte[] oldChunk;
 
-    protected BaseRopeFactory(int initialChunkSize) {
-        chunkSegment = MemorySegment.ofArray(chunk = new byte[initialChunkSize]);
+    protected BaseRopeFactory(boolean alloc) {
+        if (alloc) {
+            chunkSegment = MemorySegment.ofArray(chunk = new byte[CHUNK_SIZE]);
+        } else {
+            chunk        = EMPTY_CHUNK;
+            chunkSegment = EMPTY_SEG;
+        }
+        oldChunkBegin   = 0;
+        oldChunk        = EMPTY_CHUNK;
+        oldChunkSegment = EMPTY_SEG;
     }
+
 
     protected final void reserve(int bytes) {
         if (WASTE) {
             reserveWaste(bytes);
         } else {
-            if (this.begin + bytes < chunk.length) {
-                this.dstPos = this.begin;
-            } else {
-                this.chunk        = new byte[Math.max(bytes, CHUNK_SIZE)];
-                this.chunkSegment = MemorySegment.ofArray(chunk);
-                this.begin = 0;
-                this.dstPos = 0;
+            if (this.begin + bytes > chunk.length) {
+                if (chunk.length < FULL_CHUNK) {
+                    oldChunkSegment = chunkSegment;
+                    oldChunk        = chunk;
+                    oldChunkBegin   = begin;
+                }
+                chunk        = new byte[Math.max(bytes, CHUNK_SIZE)];
+                chunkSegment = MemorySegment.ofArray(chunk);
+                begin        = 0;
+                dstPos       = 0;
             }
         }
     }
     private void detachChunk() {
-        this.chunk  = EMPTY_CHUNK;
-        this.begin  = 0;
-        this.dstPos = 0;
+        this.chunk         = oldChunk;
+        this.chunkSegment  = oldChunkSegment;
+        this.begin         = oldChunkBegin;
+        this.dstPos        = oldChunkBegin;
     }
 
     private void reserveWaste(int bytes) {
@@ -66,7 +83,7 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
         if (len > 1) {
             var rope = new FinalSegmentRope(chunkSegment, chunk, begin, len);
             if (end < FULL_CHUNK)
-                this.begin = end;
+                this.begin = (short)end;
             else
                 detachChunk();
             return rope;
@@ -82,8 +99,9 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
     protected int                len0() { return dstPos-begin; }
 
     protected void done0() {
-        if (dstPos < FULL_CHUNK)
-            begin = dstPos;
+        final int end = dstPos;
+        if (end < FULL_CHUNK)
+            begin = (short)end;
         else
             detachChunk();
     }

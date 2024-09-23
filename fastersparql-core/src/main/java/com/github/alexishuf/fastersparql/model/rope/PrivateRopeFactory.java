@@ -4,7 +4,9 @@ import java.lang.foreign.MemorySegment;
 
 public abstract sealed class PrivateRopeFactory extends BaseRopeFactory<PrivateRopeFactory> {
     public static final class Naked extends PrivateRopeFactory implements NakedRopeFactory {
-        private Naked(int initialChunkSize) {super(initialChunkSize);}
+        public Naked(boolean alloc) {
+            super(alloc);
+        }
         @Override public MemorySegment  segment() {return segment0();}
         @Override public byte[]            utf8() {return    utf80();}
         @Override public int              begin() {return   begin0();}
@@ -12,10 +14,16 @@ public abstract sealed class PrivateRopeFactory extends BaseRopeFactory<PrivateR
         @Override public void             close() {          done0();}
     }
 
-    public static PrivateRopeFactory create() {return new Naked(CHUNK_SIZE);}
-    public static PrivateRopeFactory create(int initialChunkSize) {return new Naked(initialChunkSize);}
+    public static PrivateRopeFactory create() {
+        return new Naked(true);
+    }
+    public static PrivateRopeFactory createLazyAlloc() {
+        return new Naked(false);
+    }
 
-    private PrivateRopeFactory(int initialChunkSize) {super(initialChunkSize);}
+    protected PrivateRopeFactory(boolean alloc) {
+        super(alloc);
+    }
 
     public PrivateRopeFactory alloc(int bytes) {
         reserve(bytes);

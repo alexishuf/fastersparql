@@ -58,7 +58,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
     private DistinctType distinct;
     private long limit;
     private @Nullable Vars projection;
-    private final PrivateRopeFactory ropeFactory = PrivateRopeFactory.create(64);
+    private final PrivateRopeFactory ropeFactory = PrivateRopeFactory.create();
 
     private SparqlParser() {}
 

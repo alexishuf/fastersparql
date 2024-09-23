@@ -13,7 +13,7 @@ import static java.lang.Character.MIN_SURROGATE;
 
 @MustCall("take")
 public abstract sealed class RopeFactory extends BaseRopeFactory<RopeFactory> {
-    private static final int BYTES = 16 + 6*4 + 20+CHUNK_SIZE;
+    private static final int BYTES = 16 + 4*2 + 4*4 + 20+ CHUNK_SIZE;
 
     private static final Supplier<RopeFactory> FAC = new Supplier<>() {
         @Override public RopeFactory get() {return new Naked();}
@@ -27,7 +27,7 @@ public abstract sealed class RopeFactory extends BaseRopeFactory<RopeFactory> {
 
     protected boolean live;
 
-    private RopeFactory() {super(CHUNK_SIZE);}
+    private RopeFactory() {super(true);}
 
     public static final class Naked extends RopeFactory implements NakedRopeFactory {
         private Naked() {}
