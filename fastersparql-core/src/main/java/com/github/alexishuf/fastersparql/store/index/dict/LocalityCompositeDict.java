@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.io.IOException;
@@ -23,6 +24,8 @@ import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_1;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compare1_2;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide.SUFFIX;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
@@ -46,7 +49,9 @@ public class LocalityCompositeDict extends Dict {
     private final byte tlDictId;
     private final Splitter.Mode splitMode;
     private final LocalityStandaloneDict sharedDict;
-    private final long[] litSuffixes;
+    private final int[] litSuffIds;
+    private final FinalSegmentRope[] litSuffRopes;
+    private final long emptySharedId;
 
     /**
      * Creates read-only view into the dictionary stored at the given location.
@@ -74,6 +79,7 @@ public class LocalityCompositeDict extends Dict {
             throw new UnsupportedOperationException("Not a locality-optimized Dict");
         if (shared.emptyId == NOT_FOUND)
             throw new IllegalArgumentException("Shared dict does not contain the empty string");
+        this.emptySharedId = shared.emptyId;
         this.sharedDict = shared;
         this.tlDictId = (byte)nextThreadLocalBucket.getAndIncrement();
         this.sharedOverflow = (flags & (byte)(SHARED_OVF_MASK  >>> FLAGS_BIT)) != 0;
@@ -85,25 +91,44 @@ public class LocalityCompositeDict extends Dict {
         this.splitMode = prolong ? Splitter.Mode.PROLONG
                 : penultimate ? Splitter.Mode.PENULTIMATE : Splitter.Mode.LAST;
         quickValidateOffsets(OFF_MASK);
-        this.litSuffixes = scanLitSuffixes();
+        this.litSuffIds = scanLitSuffixes();
+        this.litSuffRopes = makeLitSuffixesRopes();
     }
 
-    private long[] scanLitSuffixes() {
-        long[] litSuffixes = ArrayAlloc.longsAtLeast(16);
+    private FinalSegmentRope[] makeLitSuffixesRopes() {
+        var ropes = new FinalSegmentRope[litSuffIds.length];
+        try (var lGuard = new Guard<LocalityStandaloneDict.Lookup>(this)) {
+            var fac = PrivateRopeFactory.create();
+            var l = lGuard.set(sharedDict.lookup());
+            for (int i = 0; i < litSuffIds.length; i++) {
+                var tmp = l.get(litSuffIds[i]);
+                var safe = FinalSegmentRope.EMPTY;
+                if (tmp.len >= MIN_INTERNED_LEN)
+                    safe = SHARED_ROPES.internDatatype(tmp, 0, tmp.len);
+                ropes[i] = safe.len > 0 ? safe : fac.alloc(tmp.len).add(tmp).take();
+            }
+        }
+        return ropes;
+    }
+
+    private int[] scanLitSuffixes() {
+        int[] litSuffIds = ArrayAlloc.intsAtLeast(16);
         try (var lGuard = new Guard<LocalityStandaloneDict.Lookup>(this)) {
             var l = lGuard.set(sharedDict.lookup().takeOwnership(this));
-            int nLangSuffixes = 0;
+            int litSuffCount = 0;
+            if (sharedDict.nStrings > Integer.MAX_VALUE)
+                throw new UnsupportedOperationException("Shared dict is too big!");
             for (long id = 1; id < sharedDict.nStrings; id++) {
                 SegmentRope r = l.get(id);
                 if (r != null && r.len > 0 && r.get(0) == '"') {
-                    if (nLangSuffixes == litSuffixes.length)
-                        litSuffixes = ArrayAlloc.grow(litSuffixes, nLangSuffixes<<1);
-                    litSuffixes[nLangSuffixes++] = id;
+                    if (litSuffCount == litSuffIds.length)
+                        litSuffIds = ArrayAlloc.grow(litSuffIds, litSuffCount<<1);
+                    litSuffIds[litSuffCount++] = (int)id;
                 }
             }
-            return Arrays.copyOf(litSuffixes, nLangSuffixes);
+            return Arrays.copyOf(litSuffIds, litSuffCount);
         } finally {
-            ArrayAlloc.LONG.offer(litSuffixes, litSuffixes.length);
+            ArrayAlloc.recycleInts(litSuffIds);
         }
     }
 
@@ -150,7 +175,7 @@ public class LocalityCompositeDict extends Dict {
         return l.releaseOwnership(RECYCLED);
     }
 
-    public Orphan<LocalityLexIt> lexIt() { return new LocalityLexIt.Concrete(lookup(), litSuffixes); }
+    public Orphan<LocalityLexIt> lexIt() { return new LocalityLexIt.Concrete(lookup(), litSuffIds); }
 
     private static final int TL_DICTS_PER_THREAD = 64;
     private static final int TL_DICTS_PER_THREAD_MASK = TL_DICTS_PER_THREAD-1;
@@ -187,6 +212,7 @@ public class LocalityCompositeDict extends Dict {
         private LocalityCompositeDict dict;
         private final SegmentRopeView tmp = new SegmentRopeView();
         private final TwoSegmentRope out = new TwoSegmentRope();
+        private int lastGetSharedId;
         private final TwoSegmentRope termTmp = new TwoSegmentRope();
         private LocalityStandaloneDict.Lookup shared;
         private final Splitter split = Splitter.create(Splitter.Mode.LAST).takeOwnership(this);
@@ -240,13 +266,13 @@ public class LocalityCompositeDict extends Dict {
             var d = this.dict;
             var side = split.split(string);
             int flShId = (side == SUFFIX ? SH_ID_SUFF : 0) | (int)switch (side) {
-                case NONE -> d.sharedDict.emptyId;
+                case NONE -> d.emptySharedId;
                 case PREFIX,SUFFIX -> shared.find(split.shared());
             };
             if (d.embedSharedId) {
                 long id = find(flShId, split.local());
                 if (d.sharedOverflow && id == NOT_FOUND)
-                    return find((int)d.sharedDict.emptyId, string);
+                    return find((int)d.emptySharedId, string);
                 return id;
             } else {
                 return findB64(string, flShId&~SH_ID_SUFF);
@@ -345,7 +371,7 @@ public class LocalityCompositeDict extends Dict {
             MemorySegment b64 = split.b64(flShId).segment();
             long id = findB64(b64, split.local());
             if (d.sharedOverflow && id == NOT_FOUND) {
-                split.b64(d.sharedDict.emptyId);
+                split.b64(d.emptySharedId);
                 id = findB64(b64, string);
             }
             return id;
@@ -400,6 +426,14 @@ public class LocalityCompositeDict extends Dict {
                                  : d.readValue(off+4) == SharedSide.SUFFIX_CHAR;
         }
 
+        public @PolyNull FinalSegmentRope
+        lastGetLitSuffixElse(@PolyNull FinalSegmentRope fallback) {
+            if (lastGetSharedId == dict.emptySharedId)
+                return FinalSegmentRope.EMPTY;
+            int idx = Arrays.binarySearch(dict.litSuffIds, lastGetSharedId);
+            return  idx >= 0 ? dict.litSuffRopes[idx] : fallback;
+        }
+
         @Override public TwoSegmentRope get(long id) {
             var d = this.dict;
             if (id < MIN_ID || id > d.nStrings) return null;
@@ -409,13 +443,13 @@ public class LocalityCompositeDict extends Dict {
             boolean flip;
             if (d.embedSharedId) {
                 flip = (off & SUFFIX_MASK) != 0;
-                sharedRope = shared.get((off & SH_ID_MASK) >>> SH_ID_BIT);
+                sharedRope = shared.get(lastGetSharedId=(int)((off&SH_ID_MASK) >>> SH_ID_BIT));
                 off &= OFF_MASK;
                 len = (int) ((d.readOffUnsafe(id) & OFF_MASK) - off);
             } else {
                 len = (int)(d.readOffUnsafe(id) - off);
                 flip = d.seg.get(JAVA_BYTE, off+4) == SharedSide.SUFFIX_CHAR;
-                sharedRope = shared.get(Splitter.decode(d.seg, off));
+                sharedRope = shared.get(lastGetSharedId=Splitter.decode(d.seg, off));
             }
             if (sharedRope == null)
                 throw new BadSharedId(id, d, off, len);
@@ -433,10 +467,10 @@ public class LocalityCompositeDict extends Dict {
         private static final int PLAIN = -1;
         private final Lookup lookup;
         private final MutableRope string;
-        private final long[] suffixes;
+        private final int[] suffixes;
         private int lexEnd, suffix;
 
-        private LocalityLexIt(Orphan<Lookup> lookup, long[] suffixes) {
+        private LocalityLexIt(Orphan<Lookup> lookup, int[] suffixes) {
             this.lookup = lookup.takeOwnership(this);
             this.suffixes = suffixes;
             this.string = new MutableRope(24);
@@ -444,7 +478,7 @@ public class LocalityCompositeDict extends Dict {
         }
 
         private static final class Concrete extends LocalityLexIt implements Orphan<LocalityLexIt> {
-            private Concrete(Orphan<Lookup> lookup, long[] suffixes) {super(lookup, suffixes);}
+            private Concrete(Orphan<Lookup> lookup, int[] suffixes) {super(lookup, suffixes);}
             @Override public LocalityLexIt takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
@@ -496,7 +530,7 @@ public class LocalityCompositeDict extends Dict {
 
         @Override public boolean advance() {
             requireAlive();
-            long[] suffixes = this.suffixes;
+            int[] suffixes = this.suffixes;
             byte[] u8 = string.u8();
             int suffix = this.suffix;
             id = NOT_FOUND;
