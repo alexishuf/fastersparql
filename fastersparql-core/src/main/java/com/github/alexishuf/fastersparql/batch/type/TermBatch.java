@@ -112,7 +112,7 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {
         Term t = obj(row, col);
         if (t == null) return false;
-        dest.wrap(t.shared(), t.local(), t.sharedSuffixed());
+        dest.wrap(t);
         return true;
     }
 

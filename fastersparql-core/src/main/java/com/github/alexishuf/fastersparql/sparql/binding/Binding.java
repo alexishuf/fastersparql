@@ -63,7 +63,7 @@ public abstract class Binding {
         Term t = get(i);
         if (t == null)
             return false;
-        view.wrap(t.shared(), t.local(), t.sharedSuffixed());
+        view.wrap(t);
         return true;
     }
 

@@ -246,7 +246,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         // try using a cached value
         Term cachedTerm = cachedTerm(addr);
         if (cachedTerm != null) {
-            dest.wrap(cachedTerm.shared(), cachedTerm.local(), cachedTerm.sharedSuffixed());
+            dest.wrap(cachedTerm);
             return true;
         }
 

@@ -13,6 +13,10 @@ public sealed class TermView extends Term permits PooledTermView0 {
 
     public TermView() { this.local = (SegmentRopeView)first(); }
 
+    public @This TermView wrap(Term other) {
+        return wrap(other.shared(), other.local(), other.sharedSuffixed());
+    }
+
     public @This TermView wrap(SegmentRope shared, SegmentRope local, boolean suffixShared) {
         updateShared(shared, this.local.wrap(local), suffixShared);
         assert validate();
