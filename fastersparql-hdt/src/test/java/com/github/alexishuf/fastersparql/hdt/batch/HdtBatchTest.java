@@ -198,15 +198,15 @@ class HdtBatchTest {
             var r = g.set(1, HdtBatch.of(3, 1, knows, charlie, Bob));
             HdtBatch ac = g.set(2, merger.merge(null, l, 0, r));
             assertEquals(g.set(3, HdtBatch.of(3, 4,
-                    Alice, 0, knows,   Bob,
-                    Alice, 0, charlie, Bob,
+                    Alice, 0, Bob, knows,
+                    Alice, 0, Bob, charlie,
                     Alice, 0, Bob,     Bob)), ac);
             ac.clear();
             ac = g.set(2, merger.merge(g.take(2), l, 1, r));
             assertEquals(g.set(3, HdtBatch.of(3, 4,
                     charlie, 0, knows,   knows,
-                    charlie, 0, charlie, knows,
-                    charlie, 0, Bob,     knows)), ac);
+                    charlie, 0, knows, charlie,
+                    charlie, 0, knows,     Bob)), ac);
         }
     }
 

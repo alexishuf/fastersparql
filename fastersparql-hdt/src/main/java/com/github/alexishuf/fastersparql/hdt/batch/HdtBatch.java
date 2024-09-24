@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.rdfhdt.hdt.dictionary.Dictionary;
@@ -21,7 +22,6 @@ import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
-import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.longsAtLeast;
 import static java.lang.System.arraycopy;
 import static java.lang.Thread.currentThread;
 
@@ -38,12 +38,12 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
         int terms = rows*cols;
         if (terms > Short.MAX_VALUE)
             throw new IllegalArgumentException("rows*cols > Short.MAX_VALUE");
-        long[] dstIds = longsAtLeast(rows*cols);
-        arraycopy(ids, 0, dstIds, 0, rows*cols);
-        var b = new Concrete(dstIds, (short)cols);
+        var b = HDT.create(cols).takeOwnership(HDT_BATCH_OF);
+        arraycopy(ids, 0, b.arr, 0, rows*cols);
         b.rows = (short)rows;
-        return b;
+        return b.releaseOwnership(HDT_BATCH_OF);
     }
+    private static final StaticMethodOwner HDT_BATCH_OF = new StaticMethodOwner("HdtBatch.of");
 
     protected static final class Concrete extends HdtBatch implements Orphan<HdtBatch> {
         @SuppressWarnings("unused") // add 64 bytes of padding against false sharing
