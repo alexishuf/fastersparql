@@ -96,12 +96,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(StoreSparqlClient.class);
     private static final StoreBatchType TYPE = StoreBatchType.STORE;
-    private static final boolean PREFER_NATIVE = FSProperties.storePreferIds();
     private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
             (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
     private static final LIFOPool<FinalSegmentRope[]> PREFIXES_POOL = new LIFOPool<>(
             FinalSegmentRope[].class, "StoreSparqlClient.PREFIXES_POOL", 16,
             16/*obj*/ + 2*4/*Rope*/ + 8+2*4/*SegmentRope*/ + 2*4 /*SegmentRopeView*/);
+    private static boolean warnedNonNative = false;
 
     private final LocalityCompositeDict dict;
     private final int dictId;
@@ -158,7 +158,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
         this.spo = spo;
         this.pso = pso;
         this.ops = ops;
-        this.federator = new StoreSingletonFederator(this);
+        boolean preferNative = FSProperties.sameSourceIds();
+        if (!preferNative && !warnedNonNative) {
+            warnedNonNative = true;
+            log.warn("Use of ids in same-source joins was forbidden via {}",
+                     FSProperties.SAME_SOURCE_IDS);
+        }
+        this.federator = new StoreSingletonFederator(this, preferNative);
         this.hugeDict = dict.strings() > 40_000_000;
         log.debug("Loaded{} {}...", validate ? "/validated" : "", dir);
     }
@@ -168,10 +174,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         if (validate)
             t.validate();
         return t;
-    }
-
-    private static BatchType<?> maybeNative(BatchType<?> requested, Plan plan) {
-        return PREFER_NATIVE && !plan.hasValues() ? TYPE : requested;
     }
 
     private static void appendToSimpleLabel(StringBuilder sb, SparqlEndpoint endpoint,
@@ -216,8 +218,8 @@ public class StoreSparqlClient extends AbstractSparqlClient
         private final int avgS, avgP, avgO, avgSP, avgSO, avgPO;
         private final float invAvgSP, invAvgSO, invAvgPO;
 
-        public StoreSingletonFederator(StoreSparqlClient parent) {
-            super(parent, StoreSparqlClient.PREFER_NATIVE ? StoreSparqlClient.TYPE : null);
+        public StoreSingletonFederator(StoreSparqlClient parent, boolean preferNative) {
+            super(parent, preferNative ? StoreSparqlClient.TYPE : null);
             this.spo    = parent.spo;
             this.pso    = parent.pso;
             this.ops    = parent.ops;
@@ -562,7 +564,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             if (m != null) // apply any modification required (projection may be done already)
                 em = m.processed((Orphan<? extends Emitter<B,?>>)em);
         } else {
-            em = federator.emit(maybeNative(bt, plan), plan, rebindHint);
+            em = federator.emit(bt, plan, rebindHint);
         }
         return bt.equals(Emitter.peekBatchTypeWild(em))
                 ? (Orphan<? extends Emitter<B, ?>>) em

@@ -237,6 +237,8 @@ public class QueryBench {
     }
 
     @Setup(Level.Trial) public void trialSetup(BenchmarkParams params) throws IOException {
+        if (srcKind.isNoNative())
+            System.setProperty(FSProperties.SAME_SOURCE_IDS, "false");
         if (batchKind == BatchKind.TERM_NI)
             System.setProperty(FSProperties.BATCH_NO_INTERN_IRI, "true");
         if (srcKind.isFsServer())

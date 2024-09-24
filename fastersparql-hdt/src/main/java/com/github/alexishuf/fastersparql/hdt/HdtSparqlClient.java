@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.hdt;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.EmptyBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
@@ -52,6 +53,7 @@ import org.rdfhdt.hdt.triples.Triples;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static com.github.alexishuf.fastersparql.FSProperties.sameSourceIds;
 import static com.github.alexishuf.fastersparql.hdt.FSHdtProperties.estimatorPeek;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.*;
@@ -61,6 +63,7 @@ import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
 
 public class HdtSparqlClient extends AbstractSparqlClient implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(HdtSparqlClient.class);
+    private static boolean warnedNonNative = false;
 
     private final HDT hdt;
     final int dictId;
@@ -85,7 +88,13 @@ public class HdtSparqlClient extends AbstractSparqlClient implements Cardinality
         }
         dictId = IdAccess.register(hdt.getDictionary());
         estimator = new HdtCardinalityEstimator(hdt, estimatorPeek(), ep.toString());
-        federator = new SingletonFederator(this, HDT, estimator);
+        boolean preferNative = FSProperties.sameSourceIds();
+        if (!preferNative && !warnedNonNative) {
+            warnedNonNative = true;
+            log.warn("Use of IDs in same-source joins disabled via {}",
+                     FSProperties.SAME_SOURCE_IDS);
+        }
+        federator = new SingletonFederator(this, sameSourceIds() ? HDT : null, estimator);
         emptyIt = hdt.getTriples().search(new TripleID(-1, -1, -1));
     }
 

@@ -14,6 +14,7 @@ import static com.github.alexishuf.fastersparql.client.model.SparqlEndpoint.pars
 
 public enum SourceKind {
     HDT_FILE,
+    HDT_FILE_NN,
     HDT_TSV_IT,
     HDT_JSON_IT,
     HDT_WS_IT,
@@ -21,6 +22,7 @@ public enum SourceKind {
     HDT_JSON_EMIT,
     HDT_WS_EMIT,
     FS_STORE,
+    FS_STORE_NN,
     FS_TSV_IT,
     FS_JSON_IT,
     FS_WS_IT,
@@ -49,6 +51,7 @@ public enum SourceKind {
     FEDX_FUSEKI_TDB2_JSON,
     FEDX_VIRTUOSO_JSON;
 
+    private static final long IS_NN;
     private static final long IS_HDT;
     private static final long IS_FS;
     private static final long IS_TDB2;
@@ -64,7 +67,7 @@ public enum SourceKind {
     private static final long IS_SERVER;
 
     static {
-        long hdt = 0, fs = 0, tdb = 0, fedx = 0, comu = 0;
+        long nn = 0, hdt = 0, fs = 0, tdb = 0, fedx = 0, comu = 0;
         long emit = 0, it = 0, tsv = 0, json = 0, ws = 0, proc = 0;
         for (SourceKind kind : values()) {
             String name = kind.name();
@@ -74,6 +77,7 @@ public enum SourceKind {
             if (name.startsWith("VIRTUOSO_"))   proc |= 1L << ordinal;
             if (name.startsWith("FUSEKI_TDB2")) proc |= 1L << ordinal;
             if (name.startsWith("FEDX"))        fedx |= 1L << ordinal;
+            if (name.contains("_NN"))           nn   |= 1L << ordinal;
             if (name.contains("HDT_"))          hdt  |= 1L << ordinal;
             if (name.startsWith("FS_"))         fs   |= 1L << ordinal;
             if (name.contains("TDB2"))          tdb  |= 1L << ordinal;
@@ -85,6 +89,7 @@ public enum SourceKind {
         }
         IS_PROCESS     = proc;
         IS_FEDX        = fedx;
+        IS_NN          = nn;
         IS_HDT         = hdt;
         IS_FS          = fs;
         IS_TDB2        = tdb;
@@ -98,6 +103,7 @@ public enum SourceKind {
         IS_SERVER      = emit|it|proc;
     }
 
+    public boolean isNoNative() { return (IS_NN       &(1L<<ordinal())) != 0; }
     public boolean      isHdt() { return (IS_HDT      &(1L<<ordinal())) != 0; }
     public boolean  isFsStore() { return (IS_FS       &(1L<<ordinal())) != 0; }
     public boolean isComunica() { return (IS_COMUNICA &(1L<<ordinal())) != 0; }

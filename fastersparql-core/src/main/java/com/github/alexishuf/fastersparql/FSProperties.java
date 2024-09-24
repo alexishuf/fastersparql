@@ -78,7 +78,7 @@ public class FSProperties {
     public static final String EMIT_STATS                = "fastersparql.emit.stats";
     public static final String EMIT_STATS_LOG            = "fastersparql.emit.stats.log";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
-    public static final String STORE_PREFER_IDS          = "fastersparql.store.prefer-ids";
+    public static final String SAME_SOURCE_IDS           = "fastersparql.same-source-ids";
     public static final String NETTY_EVLOOP_THREADS      = "io.netty.eventLoopThreads";
 
     /* --- --- --- default values --- --- --- */
@@ -105,7 +105,7 @@ public class FSProperties {
     public static final boolean DEF_OP_OPPORTUNISTIC_DEDUP    = true;
     public static final boolean DEF_EMIT_STATS_LOG            = false;
     public static final boolean DEF_STORE_CLIENT_VALIDATE     = false;
-    public static final boolean DEF_STORE_PREFER_IDS          = true;
+    public static final boolean DEF_SAME_SOURCE_IDS           = true;
     public static final boolean DEF_OWNED_MARK                = FSProperties.class.desiredAssertionStatus();
     public static final boolean DEF_OWNED_TRACE               = FSProperties.class.desiredAssertionStatus();
     public static final boolean DEF_OWNED_STACK_TRACE         = false;
@@ -142,7 +142,7 @@ public class FSProperties {
     private static Boolean CACHE_EMIT_STATS             = null;
     private static Boolean CACHE_EMIT_STATS_LOG         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
-    private static Boolean CACHE_STORE_PREFER_IDS       = null;
+    private static Boolean CACHE_SAME_SOURCE_IDS        = null;
     private static Boolean CACHE_OWNED_MARK             = null;
     private static Boolean CACHE_OWNED_TRACE            = null;
     private static Boolean CACHE_OWNED_STACK_TRACE      = null;
@@ -277,7 +277,7 @@ public class FSProperties {
         CACHE_OP_JOIN_REORDER_HASH      = null;
         CACHE_OP_JOIN_REORDER_WCO       = null;
         CACHE_STORE_CLIENT_VALIDATE     = null;
-        CACHE_STORE_PREFER_IDS          = null;
+        CACHE_SAME_SOURCE_IDS           = null;
     }
 
     /* --- --- --- accessors --- --- --- */
@@ -1015,15 +1015,15 @@ public class FSProperties {
      * Whether a BGP wholly assigned to a single {@link StoreSparqlClient} should be executed
      * using the native {@link StoreBatch} even if another batch type was requested.
      *
-     * <p>The default is {@link #DEF_STORE_PREFER_IDS} and this can be overridden using the
-     * {@link #STORE_PREFER_IDS} property. However, changes to the property will only have an
+     * <p>The default is {@link #DEF_SAME_SOURCE_IDS } and this can be overridden using the
+     * {@link #SAME_SOURCE_IDS } property. However, changes to the property will only have an
      * effect if the change occurs before the {@code static final} fields whose initialization
      * calls this method are initialized</p>
      */
-    public static boolean storePreferIds() {
-        Boolean v = CACHE_STORE_PREFER_IDS;
+    public static boolean sameSourceIds() {
+        Boolean v = CACHE_SAME_SOURCE_IDS ;
         if (v == null)
-            CACHE_STORE_PREFER_IDS = v = readBoolean(STORE_PREFER_IDS, DEF_STORE_PREFER_IDS);
+            CACHE_SAME_SOURCE_IDS  = v = readBoolean(SAME_SOURCE_IDS , DEF_SAME_SOURCE_IDS );
         return v;
     }
 
