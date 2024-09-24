@@ -4,6 +4,8 @@ import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
 import com.github.alexishuf.fastersparql.batch.type.TermInfo;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
@@ -125,22 +127,105 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
     }
 
     @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
-        return info.setTerm(get(row, col));
+        requireAlive();
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+
+        // check for null
+        int addr = row * cols + col;
+        long id = arr[addr];
+        if (id == 0)
+            return null;
+
+        // try returning a cached value
+        FinalTerm term = cachedTerm(addr);
+        if (term != null)
+            return info.setTerm(term);
+        return IdAccess.toTermInfo(id, info);
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {
-        Term t = get(row, col);
-        if (t == null) return false;
-        dest.wrap(t.shared(), t.local(), t.sharedSuffixed());
+        requireAlive();
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+
+        // check for null
+        int addr = row * cols + col;
+        long id = arr[addr];
+        if (id == 0)
+            return false;
+
+        FinalTerm cached = cachedTerm(addr);
+        if (cached != null) {
+            dest.wrap(cached);
+        } else {
+            TermInfo t = new TermInfo();
+            switch (IdAccess.toTermInfo(id, t)) {
+                case TERM -> dest.wrap(t.term());
+                case UNINTERNABLE -> dest.wrap(FinalSegmentRope.EMPTY, t.copyAsSegmentRope(), t.suffixShared);
+                case SHARED_AND_SEGMENT,IRI -> {
+                    var local = new FinalSegmentRope(t.localSeg, t.localU8,
+                                                     t.localOff, t.localLen);
+                    dest.wrap(t.shared, local, t.suffixShared);
+                }
+                default -> { return false; }
+            }
+        }
         return true;
     }
 
     @Override
     public boolean getRopeView(@NonNegative int row, @NonNegative int col, TwoSegmentRope dest) {
-        Term t = get(row, col);
-        if (t == null) return false;
-        dest.wrapFirst(t.first());
-        dest.wrapSecond(t.second());
+        requireAlive();
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+
+        // check for null
+        int addr = row * cols + col;
+        long id = arr[addr];
+        if (id == 0)
+            return false;
+
+        FinalTerm cached = cachedTerm(addr);
+        if (cached != null) {
+            dest.wrapFirst(cached.first());
+            dest.wrapSecond(cached.second());
+        } else {
+            FinalSegmentRope nt = IdAccess.toNT(id);
+            if (nt == null)
+                return false;
+            dest.wrapFirst(nt);
+            dest.wrapSecond(FinalSegmentRope.EMPTY);
+        }
+        return true;
+    }
+
+    @Override
+    public boolean localView(@NonNegative int row, @NonNegative int col, SegmentRopeView dest) {
+        requireAlive();
+        //noinspection ConstantValue
+        if (row < 0 || col < 0 || row >= rows || col >= cols) throw new IndexOutOfBoundsException();
+
+        // check for null
+        int addr = row * cols + col;
+        long id = arr[addr];
+        if (id == 0)
+            return false;
+
+        FinalTerm cached = cachedTerm(addr);
+        if (cached != null) {
+            dest.wrap(cached.local());
+        } else {
+            var info = new TermInfo();
+            switch (IdAccess.toTermInfo(id, info)) {
+                case TERM               -> dest.wrap(info.term().local());
+                case UNINTERNABLE       -> info.copyAsSegmentRope();
+                case SHARED_AND_SEGMENT,IRI ->
+                    dest.wrap(info.localSeg, info.localU8,
+                              info.localOff, info.localLen);
+                default -> { return false; }
+            }
+        }
         return true;
     }
 

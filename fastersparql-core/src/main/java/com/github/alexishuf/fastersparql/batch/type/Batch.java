@@ -1609,10 +1609,17 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     protected final void putRowConverting(Batch<?> other, short row, short cols, TermInfo info) {
         beginPut();
         for (short c = 0; c < cols; c++) {
-            switch (other.get(row, c, info)) {
-                case EMPTY              -> {}
-                case TERM               -> putTerm(c, info.term);
-                case SHARED_AND_SEGMENT -> {
+            var type = other.get(row, c, info);
+            switch (type) {
+                case EMPTY:
+                    break;
+                case TERM:
+                    putTerm(c, info.term);
+                    break;
+                case IRI:
+                    internIriPrefixDuringConversion(info);
+                    // fallthrough
+                case SHARED_AND_SEGMENT:
                     if (info.stable) {
                         putTermLocalByReference(c, info.shared, info.localSeg, info.localU8,
                                 info.localOff, info.localLen, info.suffixShared);
@@ -1620,12 +1627,16 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
                         putTerm(c, info.shared, info.localSeg, info.localU8, info.localOff,
                                 info.localLen, info.suffixShared);
                     }
-                }
-                case UNINTERNABLE -> putUninternable(c, info);
+                    break;
+                case UNINTERNABLE:
+                    putUninternable(c, info);
+                    break;
             }
         }
         commitPut();
     }
+
+    protected void internIriPrefixDuringConversion(TermInfo t) {}
 
     protected void putUninternable(int destCol, TermInfo t) {
         FinalSegmentRope local;

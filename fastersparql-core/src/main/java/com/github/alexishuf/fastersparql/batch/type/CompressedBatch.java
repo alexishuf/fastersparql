@@ -20,6 +20,7 @@ import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.C
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.*;
@@ -1049,6 +1050,23 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
+    }
+
+    @Override protected void internIriPrefixDuringConversion(TermInfo t) {
+        SegmentRope iri = t.localRope;
+        PooledSegmentRopeView pooled;
+        if (iri != null)
+            pooled = null;
+        else // cold
+            iri = pooled = PooledSegmentRopeView.of(t.localSeg, t.localU8, t.localOff, t.localLen);
+        var sh = SHARED_ROPES.internPrefixOf(iri, 0, iri.len);
+        if (pooled != null)
+            pooled.close(); // cold
+        if (sh.len == 0)
+            return; // failed to intern
+        t.setSharedAndSegment(t.stable, sh, t.localSeg, t.localU8,
+                             t.localOff+sh.len,
+                             t.localLen-sh.len, false);
     }
 
     protected void putUninternable(int destCol, TermInfo t) {

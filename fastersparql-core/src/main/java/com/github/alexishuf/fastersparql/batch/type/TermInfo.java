@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.RopeFactory;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
@@ -37,6 +38,7 @@ public final class TermInfo {
         EMPTY,
         TERM,
         SHARED_AND_SEGMENT,
+        IRI,
         UNINTERNABLE,
     }
 
@@ -126,7 +128,7 @@ public final class TermInfo {
             stable       = false;
             shared       = EMPTY;
         }
-        return Type.TERM;
+        return type;
     }
 
     public Type setSharedAndSegment(boolean stable, FinalSegmentRope shared,
@@ -156,7 +158,24 @@ public final class TermInfo {
         this.sharedU8     = s.utf8;
         this.sharedOff    = s.offset;
         this.sharedLen    = s.len;
-        return Type.SHARED_AND_SEGMENT;
+        return type;
+    }
+
+    public Type setIri(FinalSegmentRope iri) {
+        this.type      = iri.len == 0 ? Type.EMPTY : Type.IRI;
+        this.term      = null;
+        this.shared    = EMPTY;
+        this.localRope = iri;
+        this.localSeg  = iri.segment;
+        this.localU8   = iri.utf8;
+        this.localOff  = iri.offset;
+        this.localLen  = iri.len;
+        this.stable    = true;
+        this.sharedSeg = EMPTY_SEGMENT;
+        this.sharedU8  = EMPTY_UTF8;
+        this.sharedOff = 0L;
+        this.sharedLen = 0;
+        return type;
     }
 
     public Type setUninternable(boolean stable, TwoSegmentRope tsr, boolean localIsSnd) {
@@ -188,6 +207,19 @@ public final class TermInfo {
             this.localOff     = tsr.fstOff;
             this.localLen     = tsr.fstLen;
         }
-        return Type.UNINTERNABLE;
+        return type;
+    }
+
+    public FinalSegmentRope copyAsSegmentRope() {
+        int bytes = sharedLen + localLen;
+        if (bytes == 0) return EMPTY;
+        RopeFactory fac = RopeFactory.make(bytes);
+        for (int i = suffixShared ? 1 : 0, i2 = i+2; i < i2; i++) {
+            if ((i&1)==0)
+                fac.add(localSeg, localU8, localOff, localLen);
+            else
+                fac.add(sharedSeg, sharedU8, sharedOff, sharedLen);
+        }
+        return fac.take();
     }
 }

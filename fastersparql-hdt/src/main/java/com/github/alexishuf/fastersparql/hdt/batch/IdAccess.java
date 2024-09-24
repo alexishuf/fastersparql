@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.TermInfo;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -19,6 +20,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.requiredBytes;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
@@ -266,7 +268,20 @@ public class IdAccess {
             return FinalTerm.asFinal(t);
         FinalSegmentRope shared = EMPTY, local;
         if (str instanceof FinalSegmentRope f) {
-            local = f;
+            if (f.len == 0) {
+                local = null;
+            } else {
+                byte first = f.get(0);
+                if (first == '"') {
+                    shared = SHARED_ROPES.internDatatypeOf(f, 0, f.len);
+                    local = shared == EMPTY ? f : asFinal(f, 0, f.len - shared.len);
+                } else if (INTERN_PREFIX && f.len > MIN_INTERNED_LEN) {
+                    shared = SHARED_ROPES.internPrefixOf(f, 0, f.len);
+                    local = shared == EMPTY ? f : asFinal(f, shared.len, f.len);
+                } else {
+                    local = f;
+                }
+            }
         } else {
             str = str == null ? toString(sourcedId) : str;
             if (str == null) {
@@ -325,6 +340,71 @@ public class IdAccess {
         return t;
     }
 
+    public static TermInfo.Type toTermInfo(long sourcedId, TermInfo info) {
+        var str = pollCached(sourcedId);
+        if (str instanceof Term t)
+            return info.setTerm(t);
+        if (str instanceof FinalSegmentRope f) {
+            if (f.len == 0)
+                return info.setEmpty();
+            byte first = f.get(0);
+            if (first == '"') {
+                var dt = SHARED_ROPES.internDatatypeOf(f, 0, f.len);
+                return info.setSharedAndSegment(true, dt, f.segment, f.utf8,
+                        f.offset, f.len-dt.len, true);
+            } else if (INTERN_PREFIX && first == '<' && f.len > MIN_INTERNED_LEN) {
+                return info.setIri(f);
+            }
+            return info.setSharedAndSegment(true, EMPTY, f.segment, f.utf8,
+                                            f.offset, f.len, false);
+        }
+        str = str == null ? toString(sourcedId) : str;
+        if (str == null)
+            return info.setEmpty();
+        byte[] u8 = peekU8(str);
+        int len = str.length();
+        FinalSegmentRope shared = EMPTY;
+        boolean suffixShared = false;
+        FinalSegmentRope nt = switch (str.charAt(0)) {
+            case '"' -> {
+                int reqBytes = u8 == null ? escapedStringRequiredBytes(str)
+                        : escapedStringRequiredBytes(u8, len);
+                var fac = RopeFactory.make(reqBytes);
+                int facBegin = fac.beginBytesAdd();
+                byte[] dst = fac.bytes();
+                long endLexAndDstPos = u8 == null
+                        ? escapeString(dst, facBegin, str)
+                        : escapeString(dst, facBegin, u8, len);
+                var r       = fac.endBytesAdd((int)endLexAndDstPos).take();
+                int endLex  = (int)(endLexAndDstPos>>>32);
+                if (r.len-endLex > MIN_INTERNED_LEN)
+                    shared = SHARED_ROPES.internDatatype(r, endLex, r.len);
+                suffixShared = true;
+                yield r;
+            }
+            case '_' -> {
+                var fac = RopeFactory.make(u8 == null ? requiredBytes(str) : len);
+                if (u8 ==  null) fac.add(str);
+                else             fac.add(u8, 0, len);
+                yield fac.take();
+            }
+            default -> {
+                int bytes = 2 + (u8 == null ? requiredBytes(str) : len);
+                var fac = RopeFactory.make(bytes).add('<');
+                if (u8 == null) fac.add(str);
+                else            fac.add(u8, 0, len);
+                var r = fac.add('>').take();
+                if (INTERN_PREFIX && bytes > MIN_INTERNED_LEN)
+                    shared = SHARED_ROPES.internPrefixOf(r, 0, r.len);
+                yield r;
+            }
+        };
+        offerCache(sourcedId, nt);
+        return info.setSharedAndSegment(true, shared, nt.segment, nt.utf8,
+                nt.offset+(suffixShared ? 0 : shared.len),
+                nt.len-shared.len, suffixShared);
+    }
+
     private static final boolean INTERN_PREFIX = !FSProperties.batchNoInternIri();
 
     public static FinalSegmentRope toNT(long sourcedId) {
@@ -332,7 +412,7 @@ public class IdAccess {
         if (str instanceof FinalSegmentRope r)
             return r;
         if (str instanceof Term t)
-            return FinalSegmentRope.asFinal(t);
+            return asFinal(t);
         str = toString(sourcedId);
         if (str == null)
             return null;
@@ -349,8 +429,8 @@ public class IdAccess {
                                     : (int)escapeString(dst, dstPos, u8, len);
                 yield fac.endBytesAdd(dstPos).take();
             }
-            case '_' -> u8 == null ? FinalSegmentRope.asFinal(str.toString())
-                    : FinalSegmentRope.asFinal(u8, 0, len);
+            case '_' -> u8 == null ? asFinal(str.toString())
+                    : asFinal(u8, 0, len);
             default -> {
                 RopeFactory fac = RopeFactory.make(requiredBytes(str) + 2).add('<');
                 if (u8 == null) fac.add(str);
