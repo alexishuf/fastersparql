@@ -93,6 +93,10 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
         }
     }
 
+    protected final PooledSegmentRopeView pooledView0(int begin, int len) {
+        return PooledSegmentRopeView.of(chunkSegment, chunk, this.begin+begin, len);
+    }
+
     protected MemorySegment  segment0() { return chunkSegment; }
     protected byte[]            utf80() { return        chunk; }
     protected int              begin0() { return        begin; }
@@ -116,6 +120,25 @@ sealed abstract class BaseRopeFactory<F extends BaseRopeFactory<F>>
         for (int i = 0; i < ropes.length; i++)
             ropes[i] = new FinalSegmentRope(charsSegment, chars, i, 1);
         SINGLE_CHAR_ROPES = ropes;
+    }
+
+    public byte[] bytes() { return chunk; }
+
+    public int beginBytesAdd() { return dstPos; }
+
+    public @This F endBytesAdd(int dstPos) {
+        this.dstPos = dstPos;
+        return (F)this;
+    }
+
+    public void erase(int begin, int len) {
+        int physBegin = this.begin+begin, physEnd = physBegin+len;
+        if (begin < 0 || physBegin > dstPos) {
+            var msg = begin < 0 ? "begin < 0" : "begin+len > bytes in  string";
+            throw new IndexOutOfBoundsException(msg);
+        }
+        arraycopy(chunk, physEnd, chunk, physBegin, dstPos-physEnd);
+        dstPos -= len;
     }
 
     public @This F add(CharSequence cs) {

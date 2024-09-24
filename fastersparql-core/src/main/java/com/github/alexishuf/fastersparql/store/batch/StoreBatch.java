@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.store.batch;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
@@ -204,6 +205,8 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             if (lit) {
                 localSnd = tmp.fstLen == 0;
                 sh = lookup.lastGetLitSuffixElse(EMPTY);
+            } else if (WASTE) {
+                sh = EMPTY;
             } else {
                 sh = SHARED_ROPES.internPrefix(tmp, 0, tmp.fstLen);
             }
@@ -220,6 +223,8 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             lookup.recycle(this);
         }
     }
+
+    private static final boolean WASTE = FSProperties.batchNoInternIri();
 
     @PolyNull private static FinalTerm tsr2term(@PolyNull TwoSegmentRope tsr) {
         if (tsr == null) return null;

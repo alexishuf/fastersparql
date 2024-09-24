@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -17,6 +18,11 @@ import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.requiredBytes;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static java.lang.System.arraycopy;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.rdfhdt.hdt.enums.TripleComponentRole.*;
@@ -231,6 +237,7 @@ public class IdAccess {
                 +", on dict["+dictId(sourcedId)+"]="+toString(sourcedId);
     }
 
+    private static final int[] SIMPLE_ESCAPE = Rope.alphabet("\"\\\r\n\t");
     private static final int[] LIT_INVALID = Rope.alphabet("\"\\" +
             "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007" +
             "\u0008\t\n\u000B\u000C\r\u000E\u000F" +
@@ -257,13 +264,68 @@ public class IdAccess {
         var str = pollCached(sourcedId);
         if (str instanceof Term t)
             return FinalTerm.asFinal(t);
-        SegmentRope nt = toNT(sourcedId);
-        if (nt == null) return null;
-        FinalTerm t = Term.valueOf(nt, 0, nt.len);
-        if (t != null)
-            offerCache(sourcedId, t);
+        FinalSegmentRope shared = EMPTY, local;
+        if (str instanceof FinalSegmentRope f) {
+            local = f;
+        } else {
+            str = str == null ? toString(sourcedId) : str;
+            if (str == null) {
+                local = null;
+            } else {
+                byte[] u8 = peekU8(str);
+                int len = str.length();
+                local = switch (str.charAt(0)) {
+                    case '"' -> {
+                        int reqBytes = u8 == null ? escapedStringRequiredBytes(str)
+                                : escapedStringRequiredBytes(u8, len);
+                        var fac = RopeFactory.make(reqBytes);
+                        int facBegin = fac.beginBytesAdd();
+                        byte[] dst = fac.bytes();
+                        long endLexAndDstPos = u8 == null
+                                ? escapeString(dst, facBegin, str)
+                                : escapeString(dst, facBegin, u8, len);
+                        int endLex = (int)(endLexAndDstPos>>>32);
+                        int suffLen = (int)endLexAndDstPos - facBegin - endLex;
+                        fac.endBytesAdd((int)endLexAndDstPos);
+                        if (suffLen > MIN_INTERNED_LEN) {
+                            var view = fac.pooledView(endLex, suffLen);
+                            shared = SHARED_ROPES.internDatatype(view, 0, view.len);
+                            view.close();
+                            if (shared.len > 0)
+                                fac.endBytesAdd(facBegin+endLex);
+                        }
+                        yield fac.take();
+                    }
+                    case '_' -> {
+                        var fac = RopeFactory.make(u8 == null ? requiredBytes(str) : len);
+                        yield (u8 == null ? fac.add(str) : fac.add(u8, 0, len)).take();
+                    }
+                    default -> {
+                        int bytes = 2 + (u8 == null ? requiredBytes(str) : len);
+                        var fac = RopeFactory.make(bytes).add('<');
+                        if (u8 == null) fac.add(str);
+                        else            fac.add(u8, 0, len);
+                        fac.add('>');
+                        if (INTERN_PREFIX && bytes > MIN_INTERNED_LEN) {
+                            var view = fac.pooledView(0, bytes);
+                            shared = SHARED_ROPES.internPrefixOf(view, 0, view.len);
+                            view.close();
+                            if (shared.len > 0)
+                                fac.erase(0, shared.len);
+                        }
+                        yield fac.take();
+                    }
+                };
+            }
+        }
+        if (local == null)
+            return null;
+        FinalTerm t = new FinalTerm(shared, local, local.get(0) == '"');
+        offerCache(sourcedId, t);
         return t;
     }
+
+    private static final boolean INTERN_PREFIX = !FSProperties.batchNoInternIri();
 
     public static FinalSegmentRope toNT(long sourcedId) {
         var str = pollCached(sourcedId);
@@ -278,37 +340,19 @@ public class IdAccess {
         int len = str.length();
         FinalSegmentRope rope = switch (str.charAt(0)) {
             case '"' -> {
-                try (var esc = PooledMutableRope.getWithCapacity(len)) {
-                    esc.append('"');
-                    if (u8 == null) {
-                        coldEscapeString(esc, str);
-                    } else {
-                        int endLex = len - 1;
-                        while (endLex > 0 && u8[endLex] != '"') --endLex;
-                        for (int consumed = 1, i = 1; consumed < endLex; consumed = i) {
-                            byte c = 0;
-                            while (i < endLex && ((c = u8[i]) < 0 || (LIT_INVALID[c >> 5] & (1 << c)) == 0))
-                                ++i;
-                            esc.append(u8, consumed, i);
-                            if (i >= endLex) break;
-                            esc.append('\\');
-                            switch (c) {
-                                case '\\', '"' -> esc.append(c);
-                                case '\t' -> esc.append('t');
-                                case '\r' -> esc.append('r');
-                                case '\n' -> esc.append('n');
-                                default -> esc.append(UNICODE_WS, c * 5, 5);
-                            }
-                        }
-                        esc.append(u8, endLex, len);
-                    }
-                    yield FinalSegmentRope.asFinal(esc);
-                }
+                int reqBytes = u8 == null ? escapedStringRequiredBytes(str)
+                                          : escapedStringRequiredBytes(u8, len);
+                RopeFactory fac = RopeFactory.make(reqBytes).add('"');
+                int dstPos = fac.beginBytesAdd();
+                byte[] dst = fac.bytes();
+                dstPos = u8 == null ? (int)escapeString(dst, dstPos, str)
+                                    : (int)escapeString(dst, dstPos, u8, len);
+                yield fac.endBytesAdd(dstPos).take();
             }
             case '_' -> u8 == null ? FinalSegmentRope.asFinal(str.toString())
-                                   : FinalSegmentRope.asFinal(u8, 0, len);
+                    : FinalSegmentRope.asFinal(u8, 0, len);
             default -> {
-                RopeFactory fac = RopeFactory.make(RopeFactory.requiredBytes(str) + 2).add('<');
+                RopeFactory fac = RopeFactory.make(requiredBytes(str) + 2).add('<');
                 if (u8 == null) fac.add(str);
                 else            fac.add(u8, 0, len);
                 yield fac.add('>').take();
@@ -318,8 +362,9 @@ public class IdAccess {
         return rope;
     }
 
-    private static void coldEscapeString(MutableRope esc, CharSequence in) {
+    private static int escapedStringRequiredBytes(CharSequence in) {
         while (in instanceof DelayedString d) in = d.getInternal();
+        int n = 0;
         int endLex = in.length()-1;
         while (endLex > 0 && in.charAt(endLex) != '"') --endLex;
         for (int consumed = 1, i = 1; consumed < endLex; consumed = ++i) {
@@ -327,18 +372,80 @@ public class IdAccess {
             char c = 0;
             while (i < endLex && ((c=in.charAt(i)) > 128 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
                 ++i;
-            esc.append(in, consumed, i); // copy sequence of valid chars
             if (i >= endLex) break;
-            esc.append('\\'); // add escape for c
+            n += ( (SIMPLE_ESCAPE[c>>5]&(1<<c)) != 0 ? 1 : 5);
+        }
+        return n + RopeFactory.requiredBytes(in);
+    }
+    private static int escapedStringRequiredBytes(byte[] in, int len) {
+        int n = 1;
+        int endLex = len-1;
+        while (endLex > 0 && in[endLex] != '"') --endLex;
+        for (int consumed = 1, i = 1; consumed < endLex; consumed = ++i) {
+            // find first invalid char c at index i
+            byte c = 0;
+            while (i < endLex && ((c=in[i]) < 0 || (LIT_INVALID[c>>5]&(1<<c)) == 0))
+                ++i;
+            if (i >= endLex) break;
+            n += i-consumed + 1 + ( (SIMPLE_ESCAPE[c>>5]&(1<<c)) != 0 ? 1 : 5);
+        }
+        return n + (len - endLex);
+    }
+
+    private static long escapeString(byte[] out, int outPos, CharSequence in) {
+        while (in instanceof DelayedString d) in = d.getInternal();
+        int endLex = in.length()-1, outBegin = outPos;
+        while (endLex > 0 && in.charAt(endLex) != '"') --endLex;
+        out[outPos++] = '"';
+        for (int consumed = 1, i = 1; consumed < endLex; consumed = ++i) {
+            // find first invalid char c at index i
+            char c = 0;
+            while (i < endLex && ((c=in.charAt(i)) > 128 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
+                ++i;
+            outPos = RopeEncoder.charSequence2utf8(in, consumed, i, out, outPos);
+            if (i >= endLex) break;
+            out[outPos++] = '\\'; // add escape for c
             switch (c) {
-                case '\\', '"' -> esc.append(c);
-                case '\t'      -> esc.append('t');
-                case '\r'      -> esc.append('r');
-                case '\n'      -> esc.append('n');
-                default        -> esc.append(UNICODE_WS, c*5, 5);
+                case '\\', '"' -> out[outPos++] = (byte)c;
+                case '\t'      -> out[outPos++] = 't';
+                case '\r'      -> out[outPos++] = 'r';
+                case '\n'      -> out[outPos++] = 'n';
+                default        -> {
+                    for (int k = c*5, kEnd = k+5; k < kEnd; k++)
+                        out[outPos++] = UNICODE_WS[k];
+                }
             }
         }
-        esc.append(in, endLex, in.length()); // copy everything starting at ending '"'
+        return ((long)(outPos-outBegin) << 32)
+                | RopeEncoder.charSequence2utf8(in, endLex, in.length(), out, outPos);
+    }
+    private static long escapeString(byte[] out, int outPos, byte[] in, int len) {
+        int endLex = len-1, outBegin = outPos;
+        while (endLex > 0 && in[endLex] != '"') --endLex;
+        out[outPos++] = '"';
+        for (int consumed = 1, i = 1, n; consumed < endLex; consumed = ++i) {
+            // find first invalid char c at index i
+            byte c = 0;
+            while (i < endLex && ((c=in[i]) < 0 || (LIT_INVALID[c>>5] & (1<<c)) == 0))
+                ++i;
+            arraycopy(in, consumed, out, outPos, n=i-consumed);
+            outPos += n;
+            if (i >= endLex) break;
+            out[outPos++] = '\\'; // add escape for c
+            switch (c) {
+                case '\\', '"' -> out[outPos++] = c;
+                case '\t'      -> out[outPos++] = 't';
+                case '\r'      -> out[outPos++] = 'r';
+                case '\n'      -> out[outPos++] = 'n';
+                default        -> {
+                    for (int k = c*5, kEnd = k+5; k < kEnd; k++)
+                        out[outPos++] = UNICODE_WS[k];
+                }
+            }
+        }
+        int n = len-endLex;
+        arraycopy(in, endLex, out, outPos, n);
+        return ((long)(outPos-outBegin)<<32) | (outPos+n);
     }
 
     public static byte[] peekU8(CharSequence hdtStr) {

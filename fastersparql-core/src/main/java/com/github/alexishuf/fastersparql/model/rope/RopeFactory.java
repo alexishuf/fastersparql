@@ -130,6 +130,13 @@ public abstract sealed class RopeFactory extends BaseRopeFactory<RopeFactory> {
         }
     }
 
+    public PooledSegmentRopeView pooledView(int begin, int len) {
+        if (!live)
+            throw new IllegalStateException("duplicate/concurrent take()/naked()");
+        return pooledView0(begin, len);
+    }
+
+
     public NakedRopeFactory naked() {
         if (live) {
             return (Naked)this;
