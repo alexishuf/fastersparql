@@ -167,19 +167,28 @@ public class FinalSegmentRope extends SegmentRope {
     }
     public static FinalSegmentRope asFinal(CharSequence other, int begin, int end) {
         if (end == begin) return EMPTY;
-        if (begin == 0 && other instanceof FinalSegmentRope f && end == f.len) return f;
+        if (other instanceof FinalSegmentRope f) return asFinal(f, begin, end);
         return make(requiredBytes(other, begin, end)).add(other, begin, end).take();
+    }
+    public static FinalSegmentRope asFinal(FinalSegmentRope other, int begin, int end) {
+        int len = end-begin;
+        if (len == 0) return EMPTY;
+        if (len == other.len) return other;
+        if (begin < 0 || end > other.len)
+            throw new IndexOutOfBoundsException("[begin,end) not in [0,other.len)");
+        return new FinalSegmentRope(other.segment, other.utf8,
+                                    other.offset+begin, end-begin);
     }
     public static FinalSegmentRope asFinal(Rope other, int begin, int end) {
         int len = end-begin;
         if (len == 0) return EMPTY;
-        if (len == other.len && other instanceof FinalSegmentRope f) return f;
+        if (other instanceof FinalSegmentRope f) return asFinal(f, begin, end);
         return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(SegmentRope other, int begin, int end) {
         int len = end-begin;
         if (len == 0) return EMPTY;
-        if (len == other.len && other instanceof FinalSegmentRope f) return f;
+        if (other instanceof FinalSegmentRope f) return asFinal(f, begin, end);
         return make(len).add(other, begin, end).take();
     }
     public static FinalSegmentRope asFinal(SegmentRopeView other, int begin, int end) {
