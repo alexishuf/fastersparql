@@ -94,6 +94,7 @@ public class GatheringEmitter<B extends Batch<B>>
             if ((st&(IS_INIT|IS_TERM)) == 0)
                 throw new RebindStateException(this);
             requireAlive();
+            requestChunk = preferredRequestChunk();
             termConnectors = 0;
             for (int i = 0, n = nConnectors; i < n; i++)
                 connectors[i].rebind(binding);
@@ -138,8 +139,15 @@ public class GatheringEmitter<B extends Batch<B>>
     private void onConnectorTerminated() {
         int st = lock(), termState = PENDING_COMPLETED;
         try {
-            if (++termConnectors < nConnectors || (st&IS_TERM) != 0)
+            ++termConnectors;
+            if (termConnectors < nConnectors || (st&IS_TERM) != 0) {
+                if (termConnectors == nConnectors-1) {
+                    // no need to break requests in chunks when there is only one upstream
+                    requestChunk = Integer.MAX_VALUE;
+                    updateRequests();
+                }
                 return;
+            }
             for (int i = 0, n = nConnectors; i < n; i++) {
                 var c = connectors[i];
                 switch (c.state) {
