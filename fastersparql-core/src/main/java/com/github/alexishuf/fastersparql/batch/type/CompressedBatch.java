@@ -128,10 +128,12 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         if (termsCapacity<<1 > slices.length)
             return false;
         int slw = (cols<<1);
+        int exLocalsLen = 0;
         for (int r = 0; r < rows; r++) {
             for (int c = 0, i = r*slw; c < cols; c++, i += 2) {
                 short off = slices[i+SL_OFF], fLen = slices[i+SL_LEN];
                 int end = off+fLen&LEN_MASK;
+                exLocalsLen = Math.max(exLocalsLen, end);
                 if ((fLen&LEN_MASK) != 0 && (off < 0 || end > locals.length || end < off))
                     return false; // out-of-bounds off or len
                 if (end > off) {
@@ -147,6 +149,8 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 }
             }
         }
+        if (localsLen < exLocalsLen)
+            return false; // data will be lost on batch-level copy/append/... operations
         return super.validateNode(validation);
     }
 
@@ -1029,7 +1033,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff, int localLen, boolean sharedSuffix) {
         int dest = allocTermMaybeChangeTail(col, shared,
                               localLen|(sharedSuffix?SH_SUFF_MASK : 0));
-        local.copy(localOff, localOff+localLen, locals, dest);
+        local.copy(localOff, localOff+localLen, tail.locals, dest);
     }
 
     public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
