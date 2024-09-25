@@ -123,6 +123,8 @@ public class QueryBench {
     private final BenchmarkEvent jfrEvent = new BenchmarkEvent();
     private Blackhole bh;
     private int drainTimeoutMs;
+    private long forkDeadline;
+    private int forkTimeoutSecs;
     private boolean skip;
 
     private static class BoundCounter<B extends Batch<B>>
@@ -246,6 +248,13 @@ public class QueryBench {
         if (flowModel == FlowModel.EMIT
                 || srcKind.serverFlowModel().equals(Optional.of(FlowModel.EMIT))) {
             ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
+        }
+        String forkTimeoutStr = System.getProperty("fastersparql.fork-timeout-secs");
+        if (forkTimeoutStr != null && !forkTimeoutStr.isEmpty()) {
+            forkTimeoutSecs = Integer.parseInt(forkTimeoutStr);
+            System.err.printf("## fork-timeout-secs=%d\n", forkTimeoutSecs);
+        } else {
+            forkTimeoutSecs = Integer.MAX_VALUE;
         }
         // comunica enforces its own timeout
         setProperty("fastersparql.comunica.timeout-secs",
@@ -387,6 +396,7 @@ public class QueryBench {
             } else {
                 Async.uninterruptibleSleep(250); // slack for GC & JIT
             }
+            forkDeadline = System.nanoTime() + NANOSECONDS.convert(forkTimeoutSecs, SECONDS);
         } else {
             if (idle > 1_000 && iterationNumber == 0)
                 System.out.printf("Will sleep %dms before each warmup iteration\n", idle);
@@ -402,6 +412,10 @@ public class QueryBench {
                 skip = true;
                 System.out.println("Last measurement iteration timed-out. Will skip this " +
                                    "and all subsequent measurement iterations.");
+            } else if (System.nanoTime() > forkDeadline) {
+                skip = true;
+                System.out.printf("fastersparql.fork-timeout-secs=%d exceeded," +
+                                 " skipping subsequent iterations", forkTimeoutSecs);
             }
             Async.uninterruptibleSleep(idle);
         }
