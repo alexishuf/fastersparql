@@ -6,17 +6,21 @@ import com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.checkerframework.common.returnsreceiver.qual.This;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -34,6 +38,7 @@ import static java.lang.Long.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class LocalityCompositeDict extends Dict {
+    private static final Logger log = LoggerFactory.getLogger(LocalityCompositeDict.class);
     public  static final long        SUFFIX_MASK = 0x8000000000000000L;
     public  static final long         SH_ID_MASK = 0x7fffff8000000000L;
     private static final long FLAGGED_SH_ID_MASK = 0x8fffff8000000000L;
@@ -52,6 +57,9 @@ public class LocalityCompositeDict extends Dict {
     private final int[] litSuffIds;
     private final FinalSegmentRope[] litSuffRopes;
     private final long emptySharedId;
+    private final int maxLitSuf;
+    private final LexicalPresence lexPresence;
+
 
     /**
      * Creates read-only view into the dictionary stored at the given location.
@@ -93,6 +101,13 @@ public class LocalityCompositeDict extends Dict {
         quickValidateOffsets(OFF_MASK);
         this.litSuffIds = scanLitSuffixes();
         this.litSuffRopes = makeLitSuffixesRopes();
+        int maxLitSuf = 0;
+        for (FinalSegmentRope r : litSuffRopes)
+            maxLitSuf = Math.max(maxLitSuf, r.len);
+        this.maxLitSuf = maxLitSuf;
+        Path lexFile = file.resolveSibling("lexical");
+        var lexPresence = LexicalPresence.load(file, lexFile, litSuffRopes);
+        this.lexPresence = lexPresence == null ? makeLexPresence(lexFile) : lexPresence;
     }
 
     private FinalSegmentRope[] makeLitSuffixesRopes() {
@@ -109,6 +124,30 @@ public class LocalityCompositeDict extends Dict {
             }
         }
         return ropes;
+    }
+
+    private LexicalPresence makeLexPresence(Path destFile) throws IOException {
+        try (var lookupG = new Guard<Lookup>(this)) {
+            var lookup = lookupG.set(lookup().takeOwnership(this));
+            var b = LexicalPresence.build(litSuffRopes);
+            long nextUpdateNs = Timestamp.nanoTime()+5_000_000_000L;
+            long updateIdStep = nStrings/100;
+            long nextUpdateId = updateIdStep;
+            for (long id = MIN_ID, endId = id+nStrings; id < endId; id++) {
+                b.add(lookup.get(id));
+                if (id == nextUpdateId) {
+                    if (Timestamp.nanoTime() > nextUpdateNs) {
+                        log.info("{}% of {} generated...", id/updateIdStep, destFile);
+                        nextUpdateNs = Timestamp.nanoTime()+5_000_000_000L;
+                    }
+                    nextUpdateId += updateIdStep;
+                }
+            }
+            var lexPresence = b.build();
+            lexPresence.write(destFile);
+            log.info("Generated {} ({} KiB)", destFile, Files.size(destFile)/1024);
+            return lexPresence;
+        }
     }
 
     private int[] scanLitSuffixes() {
@@ -175,7 +214,9 @@ public class LocalityCompositeDict extends Dict {
         return l.releaseOwnership(RECYCLED);
     }
 
-    public Orphan<LocalityLexIt> lexIt() { return new LocalityLexIt.Concrete(lookup(), litSuffIds); }
+    public Orphan<LocalityLexIt> lexIt() {
+        return new LocalityLexIt.Concrete(lookup(), litSuffRopes);
+    }
 
     private static final int TL_DICTS_PER_THREAD = 64;
     private static final int TL_DICTS_PER_THREAD_MASK = TL_DICTS_PER_THREAD-1;
@@ -462,23 +503,26 @@ public class LocalityCompositeDict extends Dict {
     }
 
     public static class LocalityLexIt extends LexIt<LocalityLexIt> {
-        private static final int BLANK = -3;
-        private static final int IRI   = -2;
-        private static final int PLAIN = -1;
         private final Lookup lookup;
+        private final LexicalPresence lexPresence;
         private final MutableRope string;
-        private final int[] suffixes;
-        private int lexEnd, suffix;
+        private final FinalSegmentRope[] suffixes;
+        private final int maxLitSuf;
+        private int stringLexEnd, base, type;
 
-        private LocalityLexIt(Orphan<Lookup> lookup, int[] suffixes) {
-            this.lookup = lookup.takeOwnership(this);
-            this.suffixes = suffixes;
-            this.string = new MutableRope(24);
+        private LocalityLexIt(Orphan<Lookup> lookup, FinalSegmentRope[] suffixes) {
+            this.lookup      = lookup.takeOwnership(this);
+            this.lexPresence = this.lookup.dict.lexPresence;
+            this.maxLitSuf   = this.lookup.dict.maxLitSuf;
+            this.suffixes    = suffixes;
+            this.string      = new MutableRope(24);
             end();
         }
 
         private static final class Concrete extends LocalityLexIt implements Orphan<LocalityLexIt> {
-            private Concrete(Orphan<Lookup> lookup, int[] suffixes) {super(lookup, suffixes);}
+            private Concrete(Orphan<Lookup> lookup, FinalSegmentRope[] suffixes) {
+                super(lookup, suffixes);
+            }
             @Override public LocalityLexIt takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
@@ -491,70 +535,74 @@ public class LocalityCompositeDict extends Dict {
 
         @Override public void find(PlainRope nt) {
             requireAlive();
+            int ntLen = nt.len;
             boolean bad = nt.len < 2;
             if (!bad) {
-                byte[] u8 = string.clear().ensureFreeCapacity(nt.len+2).u8();
                 byte first = nt.get(0);
+                int lexBegin = 1, lexEnd = ntLen;
                 switch (first) {
-                    case '"', '<' -> {
-                        lexEnd = first == '<' ? nt.len-1
-                               : nt.reverseSkipUntil(0, nt.len, '"');
-                        if (lexEnd > 0) {
-                            u8[0] = '_'; u8[1] = ':';
-                            string.len = 2;
-                            string.append(nt, 1, lexEnd);
-                        } else {
-                            bad = true;
-                        }
-                    }
-                    case '_' -> {
-                        lexEnd = nt.len-1;
-                        string.append(nt);
-                    }
-                    default -> bad = true;
+                    case '"' -> lexEnd = nt.skipUntilLastFar(0, ntLen, (byte)'"');
+                    case '<' -> lexEnd = ntLen-1;
+                    case '_' -> lexBegin = 2;
+                    default ->  bad = true;
                 }
+                string.clear().ensureFreeCapacity(2 + lexEnd-lexBegin + maxLitSuf)
+                        .append('_').append(':');
+                if (lexBegin < ntLen)
+                    string.append(nt, lexBegin, lexEnd);
+                stringLexEnd = string.len;
             }
             if (bad) {
                 end();
             } else {
-                suffix = BLANK;
-                string.ensureFreeCapacity(6); /* "@en-US */
+                base = lexPresence.baseOf(nt);
+                type = LexicalPresence.BEFORE_FIRST_TYPE;
+                id   = NOT_FOUND;
             }
         }
 
         @Override public void end() {
-            lexEnd = 1;
+            type = LexicalPresence.NO_TYPE;
             id = NOT_FOUND;
-            suffix = suffixes.length;
         }
 
         @Override public boolean advance() {
             requireAlive();
-            int[] suffixes = this.suffixes;
             byte[] u8 = string.u8();
-            int suffix = this.suffix;
             id = NOT_FOUND;
-            while (id == NOT_FOUND && suffix < suffixes.length) {
-                switch (suffix) {
-                    case BLANK -> suffix = IRI;
-                    case IRI -> {
-                        System.arraycopy(u8, 2, u8, 1, string.len-2);
-                        u8[0] = '<';
-                        u8[lexEnd] = '>';
-                        suffix = PLAIN;
+            while (type != LexicalPresence.NO_TYPE && id == NOT_FOUND) {
+                string.offset = 0;
+                string.len    = stringLexEnd;
+                type          = lexPresence.findNextType(base, type);
+                if (type < 0)
+                    continue;
+                switch (type) {
+                    case LexicalPresence.BLANK_TYPE -> {
+                        u8[0]      = '_';
+                        u8[1]      = ':';
+                        string.len = stringLexEnd;
                     }
-                    case PLAIN -> {
-                        u8[0] = '"'; u8[lexEnd] = '"';
-                        suffix = 0;
+                    case LexicalPresence.IRI_TYPE -> {
+                        u8[1]            = '<';
+                        u8[stringLexEnd] = '>';
+                        string.offset    = 1;
+                        string.len       = stringLexEnd; // + 1  - 1
+                    }
+                    case LexicalPresence.PLAIN_TYPE -> {
+                        u8[1]            = '"';
+                        u8[stringLexEnd] = '"';
+                        string.offset    = 1;
+                        string.len       = stringLexEnd; // + 1 - 1
                     }
                     default -> {
-                        string.len = lexEnd;
-                        string.append(lookup.shared.get(suffixes[suffix++]));
+                        u8[1] = '"';
+                        string.append(suffixes[type-LexicalPresence.LIT_SUF_TYPE_BASE]);
+                        string.offset = 1;
+                        --string.len;
                     }
-                }
-                id = lookup.find(string);
+               }
+               id = lookup.find(string);
             }
-            this.suffix = suffix;
             return id != NOT_FOUND;
         }
     }

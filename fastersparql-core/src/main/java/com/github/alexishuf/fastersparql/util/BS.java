@@ -237,6 +237,24 @@ public class BS {
     }
 
     /**
+     * Similar to {@link #nextSet(long[], int)}, but will only search for bits between
+     * positions {@code from} (inclusive) and {@code end} (exclusive).
+     *
+     * @param set the bitset
+     * @param from position of the first bit that can be returned if set
+     * @param end position of the first bit that cannot be returned if set.
+     * @return position of the first bit set in {@code [from, end)} or -1 if there is no bit
+     *         set in that range.
+     */
+    public static int nextSetOrEnd(long[] set, int from, int end) {
+        int wIdx = from>>6, wEnd = Math.min(set.length, (end>>6)+1);
+        long word = wIdx >= wEnd ? 0 : set[wIdx] & -1L<<from;
+        while (word == 0 && ++wIdx < wEnd) word = set[wIdx];
+        return Math.min((wIdx<<6) + numberOfTrailingZeros(word), end);
+    }
+
+
+    /**
      * {@code (set.length+1)<<5} or first {@code i >= from} where {@code set[i>>5]&(1<<i) !=0}
      */
     public static int nextSetOrLen(int[] set, int from) {
