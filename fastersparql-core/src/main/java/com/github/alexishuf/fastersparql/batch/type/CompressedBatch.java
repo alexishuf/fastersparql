@@ -1433,6 +1433,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                         short d2 = (short)(dPos<<1), len;
                         if ((s=sources[c]) == 0)  {
                             tsh[dPos]      = null;
+                            tsl[d2+SL_OFF] = lDst;
                             tsl[d2+SL_LEN] = 0;
                         } else if (s > 0) {
                             tsh[dPos]      = lsh[i=(short)(s-1)];
