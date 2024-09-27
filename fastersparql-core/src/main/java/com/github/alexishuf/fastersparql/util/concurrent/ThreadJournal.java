@@ -64,10 +64,12 @@ public class ThreadJournal {
      * threads will transparently trigger the assignment of a new journal.
      */
     public static void resetJournals() {
-        lockForWrite();
-        try {
-            resetJournals0();
-        } finally { unlockForWrite(); }
+        if (ENABLED) {
+            lockForWrite();
+            try {
+                resetJournals0();
+            } finally { unlockForWrite(); }
+        }
     }
 
     private static void resetJournals0() {

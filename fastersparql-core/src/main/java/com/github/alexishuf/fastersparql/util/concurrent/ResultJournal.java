@@ -99,11 +99,13 @@ public class ResultJournal {
     }
 
     public static void clear() {
-        for (var it = JOURNALS.entrySet().iterator(); it.hasNext(); ) {
-            try {
-                it.next().getValue().close();
-                it.remove();
-            } catch (NoSuchElementException ignored) {  }
+        if (ENABLED) {
+            for (var it = JOURNALS.entrySet().iterator(); it.hasNext(); ) {
+                try {
+                    it.next().getValue().close();
+                    it.remove();
+                } catch (NoSuchElementException ignored) {  }
+            }
         }
     }
 

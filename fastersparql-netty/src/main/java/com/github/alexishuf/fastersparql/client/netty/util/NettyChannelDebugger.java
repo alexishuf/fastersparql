@@ -19,6 +19,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class NettyChannelDebugger extends ChannelDuplexHandler {
+    private static boolean NOT_USED = true;
     private static final int TICK_COLUMN_WIDTH = "99m59s999_999us".length()+1;
     private static final String  IN_SIGN = ">> ";
     private static final String OUT_SIGN = "<< ";
@@ -32,6 +33,8 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
     private final StringBuilder history = new StringBuilder();
 
     public NettyChannelDebugger(String nameContext) {
+        if (NOT_USED)
+            NOT_USED = false;
         this.nameContext = nameContext;
         this.name = nameContext;
         ACTIVE_LOCK.lock();
@@ -41,6 +44,8 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
     }
 
     @SuppressWarnings("unused") public static void dump(PrintStream dest) {
+        if (NOT_USED)
+            return;
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
@@ -51,6 +56,8 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
     }
 
     public static void reset() {
+        if (NOT_USED)
+            return;
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE)
@@ -59,6 +66,8 @@ public class NettyChannelDebugger extends ChannelDuplexHandler {
     }
 
     @SuppressWarnings("unused") public static void dumpAndReset(PrintStream dest) {
+        if (NOT_USED)
+            return;
         ACTIVE_LOCK.lock();
         try {
             for (NettyChannelDebugger d : ACTIVE) {
