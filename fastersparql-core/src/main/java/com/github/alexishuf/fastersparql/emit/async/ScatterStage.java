@@ -332,6 +332,7 @@ public class ScatterStage<B extends Batch<B>>
             if ((state&IS_TERM) != 0)
                 return;
             long now, oldest = p.oldest;
+            boolean wasClogged = (state&CLOGGED) != 0;
             boolean wasOldest = clocks[index] <= oldest;
             boolean added     = maxAcquire(REQ, p, rows);
             clocks[index]     = now = p.delivered; // onBatch() wrote this before REQ.release
@@ -339,9 +340,8 @@ public class ScatterStage<B extends Batch<B>>
                 state = p.updateDelta();
 
             // do not request upstream if the oldest request() was more than 2 chunks ago
-            if ((wasOldest || added) && (state&CLOGGED) == 0) {
-                if ((rows = Math.max(p.plainReq, rows)) > 0)
-                    p.upstream.request(rows);
+            if ((wasOldest || added || wasClogged || now <= p.oldest) && (state&CLOGGED) == 0) {
+                p.upstream.request(Math.max((long)REQ.getOpaque(p), rows));
             }
         }
     }
