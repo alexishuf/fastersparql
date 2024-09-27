@@ -84,6 +84,7 @@ public class Jsons2Csv implements Callable<Void> {
         transient File originFile;
         transient long lastModified;
         transient boolean oom;
+        transient boolean timeout;
         transient boolean failed;
         String benchmark;
         String jvm;
@@ -199,6 +200,8 @@ public class Jsons2Csv implements Callable<Void> {
         private static final String OOM = "OutOfMemoryError";
         private static final String OOM_KILLED = "OOM-killed";
         private static final String FAILED = "<forked VM failed with exit code ";
+        private static final String EXIT_CODE_OOM  = "exit code 23";
+        private static final String EXIT_CODE_HANG = "exit code 27";
         private static final Pattern BATCH_KIND = Pattern.compile("[( ]batchKind = (\\w+)");
         private static final Pattern FLOW_MODEL = Pattern.compile("[( ]flowModel = (\\w+)");
         private static final Pattern QUERIES = Pattern.compile("[( ]queries = (\\w+)");
@@ -299,6 +302,7 @@ public class Jsons2Csv implements Callable<Void> {
                 return;
             try (var reader = new BufferedReader(new FileReader(f))) {
                 boolean oom = false;
+                boolean timeout = false;
                 Params params = null;
                 for (String line; (line=reader.readLine()) != null; ) {
                     if (line.startsWith(PARAMS_LINE_PREFIX)) {
@@ -332,11 +336,16 @@ public class Jsons2Csv implements Callable<Void> {
                     } else if (line.contains(OOM) || line.contains(OOM_KILLED)) {
                         oom = true;
                     } else if (line.startsWith(FAILED) && params != null) {
+                        if (line.contains(EXIT_CODE_HANG))
+                            timeout = true;
+                        if (line.contains(EXIT_CODE_OOM))
+                            oom = true;
                         var results             = new JmhResults();
                         results.originFile      = f;
                         results.lastModified    = f.lastModified();
                         results.failed          = true;
                         results.oom             = oom;
+                        results.timeout         = timeout;
                         results.benchmark       = "";
                         results.jvmArgs         = List.of();
                         results.jvm             = "";

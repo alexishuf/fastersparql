@@ -481,7 +481,8 @@ public class QueryBench {
         }
     }
     @SuppressWarnings("unused") private static int plainNextWatchdogId;
-    private volatile @Nullable Plan watchdogPlan;
+    private volatile long watchdogData = 0x7fffffff00000000L;
+    private @Nullable Plan watchdogPlan;
     private @Nullable StreamNode dbgExecution;
     private String benchmarkId;
     private Thread watchdog;
@@ -490,12 +491,16 @@ public class QueryBench {
         Watchdog.reset();
         dbgExecution = execution;
         watchdogPlan = plan;
+        //noinspection NonAtomicOperationOnVolatileField
+        watchdogData = ((long)drainTimeoutMs << 32)
+                     | ((watchdogData+1) & 0xffffffffL);
         LockSupport.unpark(watchdog);
     }
     private void disarmWatchdog() {
         watchdogPlan = null;
         dbgExecution = null;
-        LockSupport.unpark(watchdog);
+        //noinspection NonAtomicOperationOnVolatileField
+        watchdogData = 0x7fffffff00000000L | ((watchdogData+1) & 0xffffffffL);
     }
     private void dump(Plan plan, @Nullable StreamNode streamNode, String tag) {
         try {
@@ -531,20 +536,41 @@ public class QueryBench {
     }
 
     private void watchdog() {
-        for (Plan plan; true; ) {
-            while ((plan = watchdogPlan) == null)
-                LockSupport.park(this);
-            var execution = dbgExecution;
+        while (true) {
+            long data      = watchdogData;
 
-            long deadline = System.nanoTime()
-                          + NANOSECONDS.convert((int)(0.8*drainTimeoutMs), MILLISECONDS);
-            long rem;
-            while (watchdogPlan == plan && (rem=deadline-System.nanoTime()) > 0)
-                LockSupport.parkNanos(this, rem);
-            if (watchdogPlan != plan)
-                continue; // disarmed or armed for another query
-            watchdogPlan = null;
+            // wait until 90% or 30s before drainer timeout
+            int  timeoutMs = (int)(data>>>32);
+            int  dumpMs    = (int)Math.max(0.9*timeoutMs, timeoutMs-30_000);
+            long rem       = NANOSECONDS.convert(dumpMs, MILLISECONDS);
+            long deadline  = System.nanoTime()+rem;
+            while (data == watchdogData && (rem=deadline-System.nanoTime()) > 0)
+                LockSupport.parkNanos(rem);
+            if (timeoutMs == Integer.MAX_VALUE)
+                continue; // not armed
+
+            // dump execution state if watchdog ws nto disarmed/re-armed
+            if (watchdogData != data)
+                continue; // disarmWatchdog()/armWatchdog()
+            var plan      = watchdogPlan;
+            var execution = this.dbgExecution;
+            if (watchdogData != data)
+                continue; // disarmWatchdog()/armWatchdog()
+            log.info("{}s/{}s elapsed for drainer timeout", dumpMs/1_000, timeoutMs/1_000);
             dump(plan, execution, watchdog.getName());
+
+            // wait for drainer not responding to timeout cancellation
+            timeoutMs = (timeoutMs-dumpMs) // wait until drainTimeoutMs
+                      + 60_000;            // allow 1min grace after cancel()
+            deadline = System.nanoTime() + NANOSECONDS.convert(timeoutMs, MILLISECONDS);
+            while (watchdogData == data && (rem=deadline-System.nanoTime()) > 0)
+                LockSupport.parkNanos(rem);
+
+            // kill JVM if watchdog was not disarmed/re-armed
+            if (watchdogData == data) {
+                log.error("Unresponsive drainer for 1min after cancel(), calling exit(27)");
+                System.exit(27);
+            } // else: disarmWatchdog()/armWatchdog()
         }
     }
 
