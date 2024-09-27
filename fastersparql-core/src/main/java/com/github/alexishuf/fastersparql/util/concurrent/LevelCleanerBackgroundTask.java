@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue;
 import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
@@ -99,38 +100,43 @@ public abstract class LevelCleanerBackgroundTask<T> extends Thread implements Ba
     protected abstract void clear(T obj);
 
     @Override public void run() {
-        if (Thread.currentThread() != this)
-            throw new IllegalStateException("run() called from unexpected thread");
-        boolean parking = false;
-        //noinspection InfiniteLoopStatement
-        while (true) {
-            boolean empty = true;
-            for (int i = 0; i < queues.length; i++) {
-                T o = queues[i].relaxedPoll();
-                if (o != null) {
-                    empty = false;
-                    try {
-                        clear(o);
-                        if (pool.offerToLevelShared(o, i) == null)
-                            ++objsPooled;
-                        else
-                            ++fullPoolGarbage;
-                    } catch (Throwable t) {
-                        log.error("{} during clear/pool of {}: ",
-                                  t.getClass().getSimpleName(), o, t);
+        try {
+            if (Thread.currentThread() != this)
+                throw new IllegalStateException("run() called from unexpected thread");
+            boolean parking = false;
+            //noinspection InfiniteLoopStatement
+            while (true) {
+                boolean empty = true;
+                for (int i = 0; i < queues.length; i++) {
+                    T o = queues[i].relaxedPoll();
+                    if (o != null) {
+                        empty = false;
+                        try {
+                            clear(o);
+                            if (pool.offerToLevelShared(o, i) == null)
+                                ++objsPooled;
+                            else
+                                ++fullPoolGarbage;
+                        } catch (Throwable t) {
+                            log.error("{} during clear/pool of {}: ",
+                                    t.getClass().getSimpleName(), o, t);
+                        }
                     }
                 }
-            }
-            if (empty && sync.drain(ANSWER_SYNC) == 0) {
-                parking = true;
-                if ((int) PARKED.getAndAddRelease(this, 1) == 1) {
-                    LockSupport.park();
+                if (empty && sync.drain(ANSWER_SYNC) == 0) {
+                    parking = true;
+                    if ((int) PARKED.getAndAddRelease(this, 1) == 1) {
+                        LockSupport.park();
+                        PARKED.setRelease(this, 0);
+                    }
+                } else if (parking) {
+                    parking = false;
                     PARKED.setRelease(this, 0);
                 }
-            } else if (parking) {
-                parking = false;
-                PARKED.setRelease(this, 0);
             }
+        } catch (OutOfMemoryError e) {
+            OOMHandler.notifyOOM(e);
+            throw e;
         }
     }
 }

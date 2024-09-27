@@ -14,6 +14,7 @@ import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.emit.exceptions.RegisterAfterStartException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
@@ -181,6 +182,10 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
                     }
                 }
             }
+        } catch (OutOfMemoryError e) {
+            error = e;
+            OOMHandler.notifyOOM(e);
+            throw e;
         } catch (Throwable t) {
             error = t;
         } finally {

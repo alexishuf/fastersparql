@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import org.jctools.queues.MessagePassingQueue.Consumer;
 import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
 import org.slf4j.Logger;
@@ -86,6 +87,9 @@ public class PoolCleaner implements BackgroundTask {
                 waitCleanIntervalOrSyncRequests();
             } catch (Exception e) {
                 log.error("Unexpected error", e);
+            } catch (OutOfMemoryError e) {
+                OOMHandler.notifyOOM(e);
+                throw e;
             }
         }
     }

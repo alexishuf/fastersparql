@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import net.openhft.affinity.Affinity;
 
 import java.util.BitSet;
@@ -14,7 +15,12 @@ public class CpuAffinityRunnable implements Runnable {
     }
 
     @Override public void run() {
-        Affinity.setAffinity(affinityMask);
-        delegate.run();
+        try {
+            Affinity.setAffinity(affinityMask);
+            delegate.run();
+        } catch (OutOfMemoryError e) {
+            OOMHandler.notifyOOM(e);
+            throw e;
+        }
     }
 }

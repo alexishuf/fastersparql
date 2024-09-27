@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -302,6 +303,9 @@ public abstract class BitsetRunnable<R> implements Runnable, LongRenderer {
         }
         try {
             doRun(SKIP);
+        } catch (OutOfMemoryError e) {
+            OOMHandler.notifyOOM(e);
+            throw e;
         } catch (Throwable t) {
             journal(t, "on BitsetRunnable recv=", receiver);
             log.error("{} on {}.run()", t.getClass().getSimpleName(), this, t);

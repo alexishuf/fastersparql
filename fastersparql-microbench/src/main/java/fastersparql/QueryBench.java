@@ -31,6 +31,7 @@ import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.IOUtils;
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
@@ -38,6 +39,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.profile.AsyncProfiler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -126,6 +128,7 @@ public class QueryBench {
     private long forkDeadline;
     private int forkTimeoutSecs;
     private boolean skip;
+    private AsyncProfiler.JavaApi apInstance;
 
     private static class BoundCounter<B extends Batch<B>>
             extends QueryRunner.BoundCounter<B, BoundCounter<B>>
@@ -238,6 +241,21 @@ public class QueryBench {
         }
     }
 
+    private final class StopAsyncProfiler implements Runnable {
+        private volatile boolean stopped = false;
+        @Override public void run() {
+            if (stopped)
+                return;
+            stopped = true;
+            try {
+                if (apInstance != null)
+                    apInstance.execute("stop");
+            } catch (IOException e) {
+                System.err.println("IOException during async-profiler stop");
+            }
+        }
+    }
+
     @Setup(Level.Trial) public void trialSetup(BenchmarkParams params) throws IOException {
         if (srcKind.isNoNative())
             System.setProperty(FSProperties.SAME_SOURCE_IDS, "false");
@@ -256,6 +274,8 @@ public class QueryBench {
         } else {
             forkTimeoutSecs = Integer.MAX_VALUE;
         }
+        OOMHandler.exitOnOOM(23);
+        OOMHandler.onOOM(StopAsyncProfiler.class.getSimpleName(), new StopAsyncProfiler());
         // comunica enforces its own timeout
         setProperty("fastersparql.comunica.timeout-secs",
                     String.valueOf(params.getTimeout().convertTo(SECONDS)));
@@ -386,6 +406,9 @@ public class QueryBench {
         long drainTimeoutMs = warmup ? maxWarmupItMs : opts.getTimeout().convertTo(MILLISECONDS);
         this.drainTimeoutMs = (int)Math.min(Integer.MAX_VALUE, drainTimeoutMs);
         if (first) {
+            try {
+                apInstance = AsyncProfiler.JavaApi.getInstance("/non-existing-async-profiler");
+            } catch (Throwable ignored) {}
             skip = false;
             System.gc();
             if (thermalCooldown) {

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.emit.async;
 
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -240,6 +241,9 @@ public final class EmitterService {
                 Task<?> task = svc.queue.take(this);
                 try {
                     task.run(this, threadId);
+                } catch (OutOfMemoryError e) {
+                    OOMHandler.notifyOOM(e);
+                    throw e;
                 } catch (Throwable t) {
                     log.error("Dispatch failed for task={}", task, t);
                 }

@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.util.owned;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.BackgroundTask;
 import com.github.alexishuf.fastersparql.util.concurrent.BackgroundTasks;
@@ -124,25 +125,30 @@ public class LeakDetector implements BackgroundTask {
         }
 
         @Override public void run() {
-            if (leak) {
-                if (PRINT) {
-                    var out = LeakDetector.INSTANCE.out;
-                    if (out != null) {
+            try {
+                if (leak) {
+                    if (PRINT) {
+                        var out = LeakDetector.INSTANCE.out;
+                        if (out != null) {
+                            try {
+                                singleThreadPrintLeak(out);
+                            } catch (Throwable t) {
+                                log.error("Could not print leak for {}", this, t);
+                            }
+                        }
+                        INSTANCE.reportPrintError();
+                    }
+                    if (JFR) {
                         try {
-                            singleThreadPrintLeak(out);
+                            singleThreadFillAndCommitJFR();
                         } catch (Throwable t) {
-                            log.error("Could not print leak for {}", this, t);
+                            log.error("Could not record JFR leak event for {}", this, t);
                         }
                     }
-                    INSTANCE.reportPrintError();
                 }
-                if (JFR) {
-                    try {
-                        singleThreadFillAndCommitJFR();
-                    } catch (Throwable t) {
-                        log.error("Could not record JFR leak event for {}", this, t);
-                    }
-                }
+            } catch (OutOfMemoryError e) {
+                OOMHandler.notifyOOM(e);
+                throw e;
             }
         }
 

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import org.jctools.queues.MessagePassingQueue;
 import org.jctools.queues.MessagePassingQueue.Consumer;
 import org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
@@ -64,33 +65,38 @@ public abstract class SingleThreadBackgroundTask<T, Q extends MessagePassingQueu
     }
 
     @Override public final void run() {
-        if (Thread.currentThread() != this)
-            throw new IllegalStateException("wrong thread");
-        boolean parking = false;
-        //noinspection InfiniteLoopStatement
-        while (true) {
-            T item = work.poll();
-            if (item == null && sync.drain(ANSWER_SYNC) == 0) {
-                parking     = true;
-                if ((int)PARKED.getAndAddRelease(this, 1) == 1) {
-                    LockSupport.park();
-                    parking = false;
-                    PARKED.setRelease(this, 0);
-                }
-            } else {
-                if (parking) {
-                    parking = false;
-                    PARKED.setRelease(this, 0);
-                }
-                if (item != null) {
-                    try {
-                        handle(item);
-                    } catch (Throwable t) {
-                        log.error("{} during {}.handle({})",
-                                t.getClass().getSimpleName(), getName(), item, t);
+        try {
+            if (Thread.currentThread() != this)
+                throw new IllegalStateException("wrong thread");
+            boolean parking = false;
+            //noinspection InfiniteLoopStatement
+            while (true) {
+                T item = work.poll();
+                if (item == null && sync.drain(ANSWER_SYNC) == 0) {
+                    parking     = true;
+                    if ((int)PARKED.getAndAddRelease(this, 1) == 1) {
+                        LockSupport.park();
+                        parking = false;
+                        PARKED.setRelease(this, 0);
+                    }
+                } else {
+                    if (parking) {
+                        parking = false;
+                        PARKED.setRelease(this, 0);
+                    }
+                    if (item != null) {
+                        try {
+                            handle(item);
+                        } catch (Throwable t) {
+                            log.error("{} during {}.handle({})",
+                                    t.getClass().getSimpleName(), getName(), item, t);
+                        }
                     }
                 }
             }
+        } catch (OutOfMemoryError e) {
+            OOMHandler.notifyOOM(e);
+            throw e;
         }
     }
 
