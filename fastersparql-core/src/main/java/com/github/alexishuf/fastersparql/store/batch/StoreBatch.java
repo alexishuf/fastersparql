@@ -83,8 +83,9 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             var r = lookup.get(unsource(id));
             if (r == null || r.len == 0) {
                 hash = FNV_BASIS;
-            } else if (r.sndLen > MIN_INTERNED_LEN && r.snd.get(JAVA_BYTE, r.sndOff) == '"'
-                    && isNumericDatatype(sh=SHARED_ROPES.internDatatype(r, r.fstLen, r.len))) {
+            } else if (r.sndLen > MIN_INTERNED_LEN && r.fstLen > 0
+                    && r.fst.get(JAVA_BYTE, r.fstOff) == '"'
+                    && isNumericDatatype(sh=lookup.lastGetLitSuffixElse(EMPTY))) {
                 try (var tmp = PooledTermView.of(sh, r.fst, r.fstU8, r.fstOff,
                                                  r.fstLen, true)) {
                     hash = tmp.hashCode();
