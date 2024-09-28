@@ -135,7 +135,7 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
         int addr = row * cols + col;
         long id = arr[addr];
         if (id == 0)
-            return null;
+            return info.setEmpty();
 
         // try returning a cached value
         FinalTerm term = cachedTerm(addr);
