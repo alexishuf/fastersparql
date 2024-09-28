@@ -915,8 +915,8 @@ public abstract class SegmentRope extends PlainRope {
             result |= len-((result&CMP_NUM_SKIP_MASK)>>>CMP_NUM_SKIP_BIT);
         return result;
     }
-    public static int compareNumbers(MemorySegment lSeg, long lOff, int lLen,
-                                     MemorySegment rSeg, long rOff, int rLen) {
+    public static int compareNumbersSafe(MemorySegment lSeg, long lOff, int lLen,
+                                         MemorySegment rSeg, long rOff, int rLen) {
         int lScan = compareNumbersScan(lSeg, lOff, lLen);
         int rScan = compareNumbersScan(rSeg, rOff, rLen);
         if (((lScan|rScan)&CMP_NUM_HAS_EXP) != 0)
@@ -981,8 +981,8 @@ public abstract class SegmentRope extends PlainRope {
         var right = new BigDecimal(tmp, 0, rLen);
         return left.compareTo(right);
     }
-    public static int compareNumbers(byte[] lU8, long lOff, int lLen,
-                                     byte[] rU8, long rOff, int rLen) {
+    public static int compareNumbersUnsafe(byte[] lU8, long lOff, int lLen,
+                                           byte[] rU8, long rOff, int rLen) {
         if (lU8 != null)
             lOff += U8_BASE;
         if (rU8 != null)
@@ -1019,11 +1019,17 @@ public abstract class SegmentRope extends PlainRope {
         return 0;
     }
 
+    public static int compareNumbers(MemorySegment l, byte[] lU8, long lOff, int lLen,
+                                     MemorySegment r, byte[] rU8, long rOff, int rLen) {
+        if (U == null)
+            return compareNumbersSafe(l, lOff, lLen, r, rOff, rLen);
+        return compareNumbersUnsafe(lU8, l.address()+lOff, lLen, rU8, r.address()+rOff, rLen);
+    }
+
+
     public static int compareNumbers(SegmentRope l, int lOff, int lLen,
                                      SegmentRope r, int rOff, int rLen) {
-        long alOff = l.offset+lOff, arOff = r.offset+rOff;
-        if (U == null)
-            return compareNumbers(l.segment, alOff, lLen, r.segment, arOff, rLen);
-        return compareNumbers(l.utf8, alOff, lLen, r.utf8, arOff, rLen);
+        return compareNumbers(l.segment, l.utf8, l.offset+lOff, lLen,
+                              r.segment, r.utf8, r.offset+rOff, rLen);
     }
 }

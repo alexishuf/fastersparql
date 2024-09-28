@@ -1507,10 +1507,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     public int compareNumeric(Term rhs) {
         SegmentRope l = first, r = rhs.first;
-        long lOff = l.segment.address()+l.offset+1, rOff = r.segment.address()+r.offset+1;
-        if (U == null)
-            return compareNumbers(l.segment, lOff, l.len-1, r.segment, rOff, r.len-1);
-        return compareNumbers(l.utf8, lOff, l.len-1, r.utf8, rOff, r.len-1);
+        return compareNumbers(l, 1, l.len-1, r, 1, r.len-1);
     }
 
     public Term add(Term rhs) {

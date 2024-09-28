@@ -7,7 +7,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.lang.foreign.MemorySegment;
 import java.util.stream.Stream;
 
-import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNumbers;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static java.lang.Integer.signum;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -90,8 +90,8 @@ public class SegmentRopeCompareNumbersTest {
         SegmentRopeView lAbsRope = new SegmentRopeView().wrap(lSeg, lU8, 0, lU8.length);
         SegmentRopeView rAbsRope = new SegmentRopeView().wrap(rSeg, rU8, 0, rU8.length);
 
-        assertEquals(expected, signum(compareNumbers(lU8,  lOff, lLen, rU8,  rOff, rLen)));
-        assertEquals(expected, signum(compareNumbers(lSeg, lOff, lLen, rSeg, rOff, rLen)));
+        assertEquals(expected, signum(compareNumbersUnsafe(lU8,  lOff, lLen, rU8,  rOff, rLen)));
+        assertEquals(expected, signum(compareNumbersSafe(lSeg, lOff, lLen, rSeg, rOff, rLen)));
         assertEquals(expected, signum(compareNumbers(lRope, 0, lRope.len, rRope, 0, rRope.len)));
         assertEquals(expected, signum(compareNumbers(lAbsRope, lOff, lLen, rAbsRope, rOff, rLen)));
     }

@@ -21,6 +21,7 @@ import java.lang.foreign.MemorySegment;
 
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNumbers;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
@@ -105,12 +106,6 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
 
     @Override public int hash(int row, int col) {return hashId(id(row, col));}
 
-    private static @Nullable SegmentRope datatypeSuff(TwoSegmentRope nt) {
-        if (nt.sndLen > MIN_INTERNED_LEN &&  nt.snd.get(JAVA_BYTE, nt.sndOff) == '"')
-            return SHARED_ROPES.internDatatype(nt, nt.fstLen, nt.len);
-        return null;
-    }
-
     @Override public boolean equals(@NonNegative int row, long[] ids, int idsOffset) {
         short rows = this.rows, cols = this.cols;
         //noinspection ConstantValue
@@ -133,21 +128,22 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         var lLookup = dict(ldId).lookup().takeOwnership(EQUALS);
         var rLookup = dict(rdId).lookup().takeOwnership(EQUALS);
         try {
-            TwoSegmentRope left = lLookup.get(lId), right = rLookup.get(rId);
+            TwoSegmentRope l = lLookup.get(lId), r = rLookup.get(rId);
             // nulls only appear here if the dictId was recycled and the id referred to
             // the deregistered dict or if the id was above the dict size (garbage)
-            if (left  == null) return right == null;
-            if (right == null) return false;
+            if (l == null) return r == null;
+            if (r == null) return false;
 
             // numeric datatypes require parsing the numbers, compare as terms
-            SegmentRope leftDt = datatypeSuff(left), rightDt = datatypeSuff(right);
-            if (isNumericDatatype(leftDt))
-                return isNumericDatatype(rightDt) && tsr2term(left).equals(tsr2term(right));
-            if (isNumericDatatype(rightDt))
-                return false;
-
-            // non-null, non-numeric, different dicts, compare by string
-            return left.equals(right);
+            var lSuffix = lLookup.lastGetLitSuffixElse(EMPTY);
+            var rSuffix = rLookup.lastGetLitSuffixElse(EMPTY);
+            if (isNumericDatatype(lSuffix)) {
+                return isNumericDatatype(rSuffix)
+                        && compareNumbers(l.fst, l.fstU8, l.fstOff+1, l.fstLen-1,
+                                          r.fst, r.fstU8, r.fstOff+1, r.fstLen-1) == 0;
+            }
+            // compare strings if not numeric
+            return !isNumericDatatype(rSuffix) && l.equals(r);
         } finally {
             lLookup.recycle(EQUALS);
             rLookup.recycle(EQUALS);

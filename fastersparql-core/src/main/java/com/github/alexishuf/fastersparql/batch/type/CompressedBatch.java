@@ -728,7 +728,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
                 ol.len|(other.sharedSuffixed() ? SH_SUFF_MASK : 0));
     }
 
-    public boolean termEquals(@Nullable FinalSegmentRope lSh, byte[] lU8, long lOff, int lfLen,
+    private boolean termEquals(@Nullable FinalSegmentRope lSh, byte[] lU8, long lOff, int lfLen,
                               @Nullable FinalSegmentRope rSh, byte[] rU8, long rOff, int rfLen) {
         boolean numeric = isNumericDatatype(lSh);
         if (numeric != isNumericDatatype(rSh))
@@ -741,7 +741,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             lfLen &= LEN_MASK;
             rfLen &= LEN_MASK;
             if (numeric)
-                return compareNumbers(lU8, lOff+1, lfLen-1, rU8, rOff+1, rfLen-1) == 0;
+                return compareNumbersUnsafe(lU8, lOff+1, lfLen-1, rU8, rOff+1, rfLen-1) == 0;
             return compare2_2(
                     lU8, lOff, lfLen,
                     lSh.utf8, lSh.segment.address()+lSh.offset, lSh.len,
@@ -756,7 +756,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         }
     }
 
-    public boolean safeTermEquals(@Nullable FinalSegmentRope lSh, MemorySegment lSeg,
+    private boolean safeTermEquals(@Nullable FinalSegmentRope lSh, MemorySegment lSeg,
                                   long lOff, int lfLen,
                                   @Nullable FinalSegmentRope rSh, MemorySegment rSeg,
                                   long rOff, int rfLen) {
@@ -771,7 +771,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             lfLen&=LEN_MASK;
             rfLen&=LEN_MASK;
             if (numeric)
-                return compareNumbers(lSeg, lOff, lfLen-1, rSeg, rOff, rfLen-1) == 0;
+                return compareNumbersSafe(lSeg, lOff, lfLen-1, rSeg, rOff, rfLen-1) == 0;
             return compare2_2(lSeg, lOff, lfLen, lSh.segment, lSh.offset, lSh.len,
                               rSeg, rOff, rfLen, rSh.segment, rSh.offset, rSh.len) == 0;
         } else {
