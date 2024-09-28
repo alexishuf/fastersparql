@@ -735,8 +735,6 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             return false; // number and non-number
         if (lSh == null) lSh = EMPTY;
         if (rSh == null) rSh = EMPTY;
-        if ((lfLen&SH_SUFF_MASK) != (rfLen&SH_SUFF_MASK) && (lSh.len&rSh.len) !=0)
-            return false; // literal and non-literal
         if (((lfLen|rfLen)&SH_SUFF_MASK) != 0) {
             lfLen &= LEN_MASK;
             rfLen &= LEN_MASK;

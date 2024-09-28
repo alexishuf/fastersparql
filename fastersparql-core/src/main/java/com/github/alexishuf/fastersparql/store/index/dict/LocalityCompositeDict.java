@@ -261,6 +261,7 @@ public class LocalityCompositeDict extends Dict {
         private final SegmentRopeView tmp = new SegmentRopeView();
         private final TwoSegmentRope out = new TwoSegmentRope();
         private int lastGetSharedId;
+        private boolean lastGetSharedSuffixed = false;
         private final TwoSegmentRope termTmp = new TwoSegmentRope();
         private LocalityStandaloneDict.Lookup shared;
         private final Splitter split = Splitter.create(Splitter.Mode.LAST).takeOwnership(this);
@@ -474,6 +475,10 @@ public class LocalityCompositeDict extends Dict {
                                  : d.readValue(off+4) == SharedSide.SUFFIX_CHAR;
         }
 
+        public boolean lastGetSharedSuffixed() {
+            return lastGetSharedSuffixed;
+        }
+
         public @PolyNull FinalSegmentRope
         lastGetLitSuffixElse(@PolyNull FinalSegmentRope fallback) {
             if (lastGetSharedId == dict.emptySharedId)
@@ -516,6 +521,7 @@ public class LocalityCompositeDict extends Dict {
                 throw new BadSharedId(id, d, off, len);
             out.wrapFirst(sharedRope);
             out.wrapSecond(d.seg, null, off, len);
+            lastGetSharedSuffixed = flip;
             if (flip)
                 out.flipSegments();
             return out;

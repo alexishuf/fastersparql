@@ -85,7 +85,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             if (r == null || r.len == 0) {
                 hash = FNV_BASIS;
             } else if (r.sndLen > MIN_INTERNED_LEN && r.fstLen > 0
-                    && r.fst.get(JAVA_BYTE, r.fstOff) == '"'
+                    && lookup.lastGetSharedSuffixed()
                     && isNumericDatatype(sh=lookup.lastGetLitSuffixElse(EMPTY))) {
                 try (var tmp = PooledTermView.of(sh, r.fst, r.fstU8, r.fstOff,
                                                  r.fstLen, true)) {
@@ -197,25 +197,22 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         var lookup = dict(dictId(id)).lookup().takeOwnership(this);
         try {
             var tmp = lookup.get(unsource(id));
-            boolean lit = tmp.get(0) == '"', localSnd = true;
+            boolean localFst = lookup.lastGetSharedSuffixed();
             FinalSegmentRope sh;
-            if (lit) {
-                localSnd = tmp.fstLen == 0;
+            if (localFst) {
                 sh = lookup.lastGetLitSuffixElse(EMPTY);
             } else if (WASTE) {
                 sh = EMPTY;
             } else {
                 sh = lookup.lastGetIriPrefix();
             }
-            int lLen = localSnd ? tmp.sndLen : tmp.fstLen;
+            int lLen = localFst ? tmp.fstLen : tmp.sndLen;
             if (lLen + sh.len != tmp.len)
-                return info.setUninternable(true, tmp, localSnd);
-            MemorySegment lSeg;
-            byte[] lU8;
-            long lOff;
-            if (localSnd) {lSeg = tmp.snd; lU8  = tmp.sndU8; lOff = tmp.sndOff; }
-            else          {lSeg = tmp.fst; lU8  = tmp.fstU8; lOff = tmp.fstOff; }
-            return info.setSharedAndSegment(true, sh, lSeg, lU8, lOff, lLen, lit);
+                return info.setUninternable(true, tmp, !localFst);
+            return info.setSharedAndSegment(true, sh,
+                    localFst ? tmp.fst    : tmp.snd,
+                    localFst ? tmp.fstU8  : tmp.sndU8,
+                    localFst ? tmp.fstOff : tmp.sndOff, lLen, localFst);
         } finally {
             lookup.recycle(this);
         }
@@ -254,22 +251,21 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             if (tmp == null || tmp.len <= 0)
                 return false;
             FinalSegmentRope sh;
-            boolean lit = tmp.get(0) == '"', localSnd = true;
-            if (lit) {
-                localSnd = tmp.fstLen == 0;
+            boolean localFst = lookup.lastGetSharedSuffixed();
+            if (localFst) {
                 sh = lookup.lastGetLitSuffixElse(EMPTY);
             } else if (WASTE) {
                 sh = EMPTY;
             } else {
                 sh = lookup.lastGetIriPrefix();
             }
-            int lLen = localSnd ? tmp.sndLen : tmp.fstLen;
+            int lLen = localFst ? tmp.fstLen : tmp.sndLen;
             if (lLen + sh.len == tmp.len) {
-                dest.wrap(sh, localSnd ? tmp.snd    : tmp.fst,
-                          localSnd     ? tmp.sndU8  : tmp.fstU8,
-                          localSnd     ? tmp.sndOff : tmp.fstOff, lLen, lit);
+                dest.wrap(sh, localFst ? tmp.fst    : tmp.snd,
+                              localFst ? tmp.fstU8  : tmp.sndU8,
+                              localFst ? tmp.fstOff : tmp.sndOff, lLen, localFst);
             } else { //cold
-                getViewCold(dest, tmp, lit);
+                getViewCold(dest, tmp, localFst);
             }
             return true;
         } finally {
@@ -368,7 +364,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
                 return 0;
             if (tmp.fstLen == 0)
                 return tmp.snd.get(JAVA_BYTE, tmp.sndOff) == '"' ? tmp.sndLen-1 : 0;
-            return tmp.fst.get(JAVA_BYTE, tmp.fstOff) == '"'
+            return lookup.lastGetSharedSuffixed()
                     ? tmp.fstLen-(tmp.sndLen == 0 ? 1 : 0)
                     : 0;
         } finally {
