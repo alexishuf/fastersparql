@@ -481,10 +481,35 @@ public class LocalityCompositeDict extends Dict {
 
         public @PolyNull FinalSegmentRope
         lastGetLitSuffixElse(@PolyNull FinalSegmentRope fallback) {
-            if (lastGetSharedId == dict.emptySharedId)
+            int id = lastGetSharedId;
+            if (id == dict.emptySharedId)
                 return FinalSegmentRope.EMPTY;
-            int idx = Arrays.binarySearch(dict.litSuffIds, lastGetSharedId);
-            return  idx >= 0 ? dict.litSuffRopes[idx] : fallback;
+            int[] ids = dict.litSuffIds;
+            int idx = 0;
+            if (ids.length < 8) {
+                int diff = -1;
+                while (idx < ids.length && (diff=ids[idx]-id) < 0)
+                    ++idx;
+                if (diff > 0)
+                    idx = ids.length;
+            } else {
+                idx = Arrays.binarySearch(ids, lastGetSharedId)&0x7fffffff;
+            }
+            if (idx < dict.litSuffRopes.length)
+                return dict.litSuffRopes[idx];
+            return fallback;
+        }
+
+        private SegmentRope getSharedRope(int shId) {
+            lastGetSharedId = shId;
+            int[] ids = dict.litSuffIds;
+            if (ids.length < 8) {
+                int i = 0, diff = -1;
+                while (i < ids.length  && (diff=ids[i]-shId) < 0) ++i;
+                if (diff == 0)
+                    return dict.litSuffRopes[i];
+            }
+            return shared.get(shId);
         }
 
         public FinalSegmentRope lastGetIriPrefix() {
@@ -509,13 +534,13 @@ public class LocalityCompositeDict extends Dict {
             boolean flip;
             if (d.embedSharedId) {
                 flip = (off & SUFFIX_MASK) != 0;
-                sharedRope = shared.get(lastGetSharedId=(int)((off&SH_ID_MASK) >>> SH_ID_BIT));
+                sharedRope = getSharedRope((int)((off&SH_ID_MASK) >>> SH_ID_BIT));
                 off &= OFF_MASK;
                 len = (int) ((d.readOffUnsafe(id) & OFF_MASK) - off);
             } else {
                 len = (int)(d.readOffUnsafe(id) - off);
                 flip = d.seg.get(JAVA_BYTE, off+4) == SharedSide.SUFFIX_CHAR;
-                sharedRope = shared.get(lastGetSharedId=Splitter.decode(d.seg, off));
+                sharedRope = getSharedRope(Splitter.decode(d.seg, off));
             }
             if (sharedRope == null)
                 throw new BadSharedId(id, d, off, len);
