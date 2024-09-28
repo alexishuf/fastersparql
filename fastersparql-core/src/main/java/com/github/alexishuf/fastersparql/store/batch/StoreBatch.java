@@ -8,7 +8,10 @@ import com.github.alexishuf.fastersparql.batch.type.IdHashCache;
 import com.github.alexishuf.fastersparql.batch.type.TermInfo;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
-import com.github.alexishuf.fastersparql.sparql.expr.*;
+import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
+import com.github.alexishuf.fastersparql.sparql.expr.InvalidTermException;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
@@ -80,17 +83,13 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             return hash;
         var lookup = dict(dictId(id)).lookup().takeOwnership(HASH_ID);
         try {
-            FinalSegmentRope sh;
             var r = lookup.get(unsource(id));
             if (r == null || r.len == 0) {
                 hash = FNV_BASIS;
             } else if (r.sndLen > MIN_INTERNED_LEN && r.fstLen > 0
                     && lookup.lastGetSharedSuffixed()
-                    && isNumericDatatype(sh=lookup.lastGetLitSuffixElse(EMPTY))) {
-                try (var tmp = PooledTermView.of(sh, r.fst, r.fstU8, r.fstOff,
-                                                 r.fstLen, true)) {
-                    hash = tmp.hashCode();
-                }
+                    && isNumericDatatype(lookup.lastGetLitSuffixElse(EMPTY))) {
+                hash = Term.hashNumeric(r.fst, r.fstU8, r.fstOff, r.fstLen);
             } else {
                 hash = r.hashCode();
             }

@@ -624,6 +624,12 @@ public abstract class SegmentRope extends PlainRope {
         return h;
     }
 
+    public static int hash(int h, MemorySegment seg, byte[] u8, long off, int len) {
+        if (U == null)
+            return hashSafe(h, seg, off, len);
+        return hashUnsafe(h, u8, seg.address()+off, len);
+    }
+
     @Override public int hashCode() {
         if (U == null)
             return hashSafe(FNV_BASIS, segment, offset, len);

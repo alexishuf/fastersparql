@@ -5,7 +5,6 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.*;
-import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -301,47 +300,16 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     @Override public int hash(int row) {
         if (cols == 0)
             return FNV_BASIS;
-        if (LowLevelHelper.U == null)
-            return safeHash(row);
-        int h = 0, termHash;
+        int h = 0;
         short slb = slBase(row, 0), cslb;
         for (int c = 0, cols = this.cols; c < cols; c++) {
-            cslb = (short)(slb+(c<<1));
-            int fstLen, sndLen = slices[cslb+SL_LEN];
-            long fstOff, sndOff = slices[cslb+SL_OFF];
-            var sh = shared[row*cols+c];
-            if (isNumericDatatype(sh)) {
-                termHash = hashTerm(row, c);
-            } else if (sh == null) {
-                termHash = FinalSegmentRope.hashUnsafe(FNV_BASIS, locals, sndOff, sndLen&LEN_MASK);
-            } else {
-                byte[] fst, snd;
-                long shOff = sh.segment.address() + sh.offset;
-                if ((sndLen & SH_SUFF_MASK) == 0) {
-                    fst = sh.utf8; fstOff = shOff; fstLen = sh.len;
-                    snd = locals;                  sndLen &= LEN_MASK;
-                } else {
-                    fst =  locals; fstOff = sndOff; fstLen = sndLen&LEN_MASK;
-                    snd = sh.utf8; sndOff =  shOff; sndLen = sh.len;
-                }
-                termHash = FinalSegmentRope.hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
-                termHash = FinalSegmentRope.hashUnsafe(termHash,  snd, sndOff, sndLen);
-            }
-            h ^= termHash;
-        }
-        return h;
-    }
-
-    private int safeHash(int row) {
-        int h = 0, slb = slBase(row, 0);
-        for (int c = 0, cols = this.cols; c < cols; c++) {
-            var sh = shared[row*cols+c];
-            if (isNumericDatatype(sh)) {
-                h ^= hashTerm(row, c);
-            } else {
-                int base = slb+(c<<1);
-                h ^= safeHashString(sh, slices[base+SL_OFF], slices[base+SL_LEN]);
-            }
+            cslb             = (short)(slb+(c<<1));
+            int localFlagLen = slices[cslb+SL_LEN];
+            long localOff    = slices[cslb+SL_OFF];
+            var sh           = shared[row*cols+c];
+            h ^= Term.hashCode(sh==null ? EMPTY : sh, localsSeg, locals, localOff,
+                               localFlagLen&LEN_MASK,
+                               (localFlagLen&SH_SUFF_MASK) != 0);
         }
         return h;
     }
@@ -647,52 +615,13 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         }
     }
 
-    private int hashTerm(int row, int col) {
-        try (var tmp = PooledTermView.ofEmptyString()) {
-            return getView(row, col, tmp) ? tmp.hashCode() : FNV_BASIS;
-        }
-    }
-
     @Override public int hash(int row, int col) {
-        FinalSegmentRope sh = shared[row*cols + col];
-        if (isNumericDatatype(sh))
-            return hashTerm(row, col);
-        int slb = slBase(row, col), fstLen, sndLen = slices[slb+SL_LEN];
-        long fstOff, sndOff = slices[slb+SL_OFF];
-        if (LowLevelHelper.U != null) {
-            if (sh == null)
-                return FinalSegmentRope.hashUnsafe(FNV_BASIS, locals, sndOff, sndLen & LEN_MASK);
-            byte[] fst, snd;
-            long shOff = sh.segment.address() + sh.offset;
-            if ((sndLen & SH_SUFF_MASK) == 0) {
-                fst = sh.utf8; fstOff = shOff; fstLen = sh.len;
-                snd = locals;                  sndLen &= LEN_MASK;
-            } else {
-                fst =  locals; fstOff = sndOff; fstLen = sndLen &LEN_MASK;
-                snd = sh.utf8; sndOff =  shOff; sndLen = sh.len;
-            }
-            int h = FinalSegmentRope.hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
-            return FinalSegmentRope.hashUnsafe(h, snd, sndOff, sndLen);
-        } else {
-            return safeHashString(sh, sndOff, sndLen);
-        }
-    }
-
-    private int safeHashString(SegmentRope shared, long localOff, int localLen) {
-        long fstOff;
-        int fstLen;
-        if (shared == null)
-            return FinalSegmentRope.hashSafe(com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS, localsSeg, localOff, localLen&LEN_MASK);
-        MemorySegment fst, snd;
-        if ((localLen & SH_SUFF_MASK) == 0) {
-            fst = shared.segment; fstOff = shared.offset;    fstLen = shared.len;
-            snd = localsSeg;                              localLen &= LEN_MASK;
-        } else {
-            fst = localsSeg;        fstOff = localOff;        fstLen = localLen&LEN_MASK;
-            snd = shared.segment; localOff = shared.offset; localLen = shared.len;
-        }
-        int h = FinalSegmentRope.hashSafe(FNV_BASIS, fst, fstOff, fstLen);
-        return FinalSegmentRope.hashSafe(h, snd, localOff, localLen);
+        var sh        = shared[row*cols + col];
+        int slb       = slBase(row, col), localFlagLen = slices[slb+SL_LEN];
+        long localOff = slices[slb+SL_OFF];
+        return Term.hashCode(sh == null ? EMPTY : sh, localsSeg, locals, localOff,
+                localFlagLen&LEN_MASK,
+                (localFlagLen&SH_SUFF_MASK) != 0);
     }
 
     @Override public boolean equals(@NonNegative int row, @NonNegative int col,

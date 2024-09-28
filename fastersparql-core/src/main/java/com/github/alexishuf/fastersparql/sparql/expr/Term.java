@@ -35,6 +35,7 @@ import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNu
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.PN_LOCAL_LAST;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Integer.numberOfTrailingZeros;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -1787,28 +1788,81 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     public int cachedHash() { return hash; }
 
+    public static int hashCode(SegmentRope sh,
+                               MemorySegment localSeg, byte[] localU8,
+                               long localOff, int localLen) {
+        if (isNumericDatatype(sh))
+            return hashNumeric(localSeg, localU8, localOff, localLen);
+        return hashNonNumeric(sh, localSeg, localU8, localOff, localLen,
+                sh.len > 0 && sh.get(0) == '"');
+    }
+    public static int hashCode(SegmentRope sh,
+                               MemorySegment localSeg, byte[] localU8,
+                               long localOff, int localLen, boolean suffixShared) {
+        if (suffixShared && isNumericDatatype(sh))
+            return hashNumeric(localSeg, localU8, localOff, localLen);
+        return hashNonNumeric(sh, localSeg, localU8, localOff, localLen, suffixShared);
+    }
+    private static int hashNonNumeric(SegmentRope sh,
+                                      MemorySegment localSeg, byte[] localU8,
+                                      long localOff, int localLen, boolean suffixShared) {
+        MemorySegment fSeg, sSeg;
+        byte[]        fU8,  sU8;
+        long          fOff, sOff;
+        int           fLen, sLen;
+        if (suffixShared) {
+            fSeg =   localSeg; fU8  = localU8; fOff =  localOff; fLen = localLen;
+            sSeg = sh.segment; sU8  = sh.utf8; sOff = sh.offset; sLen = sh.len;
+        } else {
+            fSeg = sh.segment; fU8  = sh.utf8; fOff = sh.offset; fLen = sh.len;
+            sSeg =   localSeg; sU8  = localU8; sOff =  localOff; sLen = localLen;
+        }
+        int h = SegmentRope.hash(FNV_BASIS, fSeg, fU8, fOff, fLen);
+        h     = SegmentRope.hash(h,         sSeg, sU8, sOff, sLen);
+        return h;
+    }
+    public static int hashNumeric(MemorySegment localSeg, byte[] localU8,
+                                  long localOff, int localLen) {
+        return U == null
+                ? hashNumericSafe(localSeg, localOff, localLen)
+                : hashNumericUnsafe(localU8, localSeg.address()+localOff, localLen);
+    }
+    private static int hashNumericSafe(MemorySegment seg, long off, int len) {
+        int h = FNV_BASIS;
+        boolean beforeNumber = true;
+        for (int i = 1; i < len; i++) {
+            int c = seg.get(JAVA_BYTE, off+i);
+            if (beforeNumber) {
+                if (c == '0' || c == '+') continue;
+                if (c != '-') beforeNumber = false;
+            }
+            if (c == '.' || c == 'e' || c == 'E') break;
+            h = FNV_PRIME * (h ^ (0xff&c));
+        }
+        return h;
+    }
+    private static int hashNumericUnsafe(byte[] base, long off, int len) {
+        if (base != null)
+            off += U8_BASE;
+        int h = FNV_BASIS;
+        boolean beforeNumber = true;
+        for (int i = 1; i < len; i++) {
+            byte c = U.getByte(base, off+i);
+            if (beforeNumber) {
+                if (c == '0' || c == '+') continue;
+                if (c != '-') beforeNumber = false;
+            }
+            if (c == '.' || c == 'e' || c == 'E') break;
+            h = FNV_PRIME * (h ^ (0xff&c));
+        }
+        return h;
+    }
+
     @Override public int hashCode() {
         int hash = this.hash;
         if (hash == 0)  {
-            if (isNumeric()) {
-                SegmentRope local = first;
-                hash = FNV_BASIS;
-                boolean beforeNumber = true;
-                for (int i = 1, end = local.len; i < end; i++) {
-                    int c = 0xff & local.get(i);
-                    if (beforeNumber) {
-                        if (c == '0' || c == '+') continue;
-                        if (c != '-') beforeNumber = false;
-                    }
-                    if (c == '.' || c == 'e' || c == 'E') break;
-                    hash = FNV_PRIME * (hash ^ c);
-                }
-            } else {
-                SegmentRope fst = first, snd = second;
-                hash = SegmentRope.hashSafe(FNV_BASIS, fst.segment, fst.offset, fst.len);
-                hash = SegmentRope.hashSafe(hash, snd.segment, snd.offset, snd.len);
-            }
-            this.hash = hash;
+            SegmentRope s = shared(), l = local();
+            this.hash = hash = hashCode(s, l.segment, l.utf8, l.offset, l.len, sharedSuffixed());
         }
         return hash;
     }

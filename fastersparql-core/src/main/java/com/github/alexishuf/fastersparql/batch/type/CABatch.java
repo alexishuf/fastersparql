@@ -8,7 +8,6 @@ import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
-import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.index.qual.NonNegative;
@@ -23,7 +22,7 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchType.PREFERRED_B
 import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
-import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
+import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_SEGMENT;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.min;
 import static java.lang.System.arraycopy;
@@ -742,61 +741,21 @@ public sealed class CABatch extends Batch<CABatch> {
         int h = mdHash(ti);
         if (h != 0)
             return h; // cache hit
-        h = LowLevelHelper.U == null ? computeHashSafe(ti) : computeHashUnsafe(ti);
+        var  sh       = sh(ti);
+        int  lFlagLen = flagLen(ti);
+        var  seg      = seg(ti);
+        long off      = off(ti);
+        if (sh == null)
+            sh = EMPTY;
+        if (seg == null) {
+            seg      = EMPTY_SEGMENT;
+            off      = 0;
+            lFlagLen = 0;
+        }
+        h = Term.hashCode(sh, seg, utf8(ti), off,
+                          lFlagLen&LEN_MASK, (lFlagLen&SUF_MASK) != 0);
         setHash(ti, h);
         return h;
-    }
-
-    private int hashTerm(int ti) {
-        try (var view = PooledTermView.ofEmptyString()) {
-            return getView0(ti, view) ? view.hashCode() : FNV_BASIS;
-        }
-    }
-
-    private int computeHashUnsafe(int ti) {
-        var sh   = sh(ti);
-        if (Term.isNumericDatatype(sh))
-            return hashTerm(ti);
-        var lSeg = seg(ti);
-        var lU8  = utf8(ti);
-        int  fstLen, sndLen = flagLen(ti);
-        long fstOff, sndOff = (lSeg == null ? 0 : lSeg.address()) + off(ti);
-
-        if (sh == null)
-            return FinalSegmentRope.hashUnsafe(FNV_BASIS, lU8, sndOff, sndLen&LEN_MASK);
-        byte[] fst, snd;
-        long shOff = sh.segment.address() + sh.offset;
-        if ((sndLen&SUF_MASK) == 0) {
-            fst = sh.utf8; fstOff = shOff; fstLen = sh.len;
-            snd = lU8;                     sndLen &= LEN_MASK;
-        } else {
-            fst =  lU8;    fstOff = sndOff; fstLen = sndLen&LEN_MASK;
-            snd = sh.utf8; sndOff =  shOff; sndLen = sh.len;
-        }
-        int h = FinalSegmentRope.hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
-        return  FinalSegmentRope.hashUnsafe(h,         snd, sndOff, sndLen);
-    }
-
-    private int computeHashSafe(int ti) {
-        var sh   = sh(ti);
-        if (Term.isNumericDatatype(sh))
-            return hashTerm(ti);
-        var lSeg = seg(ti);
-        int  fstLen, sndLen = flagLen(ti);
-        long fstOff, sndOff = off(ti);
-
-        if (sh == null)
-            return FinalSegmentRope.hashSafe(FNV_BASIS, lSeg, sndOff, sndLen&LEN_MASK);
-        MemorySegment fst, snd;
-        if ((sndLen&SUF_MASK) == 0) {
-            fst = sh.segment; fstOff = sh.offset;  fstLen = sh.len;
-            snd = lSeg;                           sndLen &= LEN_MASK;
-        } else {
-            fst = lSeg;        fstOff = sndOff;     fstLen = sndLen&LEN_MASK;
-            snd = sh.segment;  sndOff = sh.offset;  sndLen = sh.len;
-        }
-        int h = FinalSegmentRope.hashSafe(FNV_BASIS, fst, fstOff, fstLen);
-        return  FinalSegmentRope.hashSafe(h,         snd, sndOff, sndLen);
     }
 
     private boolean equals(TermView myView, int myTermIdx,
