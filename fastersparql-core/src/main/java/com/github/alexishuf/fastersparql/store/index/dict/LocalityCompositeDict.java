@@ -527,8 +527,12 @@ public class LocalityCompositeDict extends Dict {
         private final LexicalPresence lexPresence;
         private final MutableRope string;
         private final FinalSegmentRope[] suffixes;
+        private final long[] repeatIds;
         private final int maxLitSuf;
         private int stringLexEnd, base, type;
+        private int repeatIdsWrite, repeatIdsRead;
+        private boolean checkRepeatIds = true;
+        private int repeatIdsHits, repeatIdsChecks;
 
         private LocalityLexIt(Orphan<Lookup> lookup, FinalSegmentRope[] suffixes) {
             this.lookup      = lookup.takeOwnership(this);
@@ -536,6 +540,7 @@ public class LocalityCompositeDict extends Dict {
             this.maxLitSuf   = this.lookup.dict.maxLitSuf;
             this.suffixes    = suffixes;
             this.string      = new MutableRope(24);
+            this.repeatIds   = ArrayAlloc.longsAtLeast(lexPresence.typesCount());
             end();
         }
 
@@ -547,9 +552,11 @@ public class LocalityCompositeDict extends Dict {
         }
 
         @Override public @Nullable LocalityLexIt recycle(Object currentOwner) {
+            checkRepeatIds = true;
             internalMarkGarbage(currentOwner);
             lookup.recycle(this);
             string.close();
+            ArrayAlloc.recycleLongs(repeatIds);
             return null;
         }
 
@@ -566,28 +573,50 @@ public class LocalityCompositeDict extends Dict {
                     case '_' -> lexBegin = 2;
                     default ->  bad = true;
                 }
-                string.clear().ensureFreeCapacity(2 + lexEnd-lexBegin + maxLitSuf)
-                        .append('_').append(':');
-                if (lexBegin < ntLen)
-                    string.append(nt, lexBegin, lexEnd);
-                stringLexEnd = string.len;
+                if (!bad) {
+                    int oldBase = base;
+                    base = lexPresence.baseOf(nt);
+                    type = LexicalPresence.BEFORE_FIRST_TYPE;
+                    id   = NOT_FOUND;
+                    if (oldBase == base && checkRepeatIds && 2+lexEnd-lexBegin == stringLexEnd) {
+                        repeatIdsChecks++;
+                        string.offset = 0;
+                        string.len = stringLexEnd;
+                        if (string.has(2, nt, lexBegin, lexEnd)) {
+                            repeatIdsHits++;
+                            repeatIdsRead = 0;
+                            return;
+                        } else if (repeatIdsChecks == 128 && repeatIdsHits<<3 < repeatIdsChecks) {
+                            checkRepeatIds = false;
+                        }
+                    }
+                    repeatIdsRead  = -1;
+                    repeatIdsWrite =  0;
+                    string.clear().ensureFreeCapacity(2 + lexEnd-lexBegin + maxLitSuf)
+                            .append('_').append(':');
+                    if (lexBegin < ntLen)
+                        string.append(nt, lexBegin, lexEnd);
+                    stringLexEnd = string.len;
+                }
             }
-            if (bad) {
+            if (bad)
                 end();
-            } else {
-                base = lexPresence.baseOf(nt);
-                type = LexicalPresence.BEFORE_FIRST_TYPE;
-                id   = NOT_FOUND;
-            }
         }
 
         @Override public void end() {
+            repeatIdsRead = -1;
             type = LexicalPresence.NO_TYPE;
             id = NOT_FOUND;
         }
 
         @Override public boolean advance() {
             requireAlive();
+            if (repeatIdsRead >= 0) {
+                if (repeatIdsRead >= repeatIdsWrite)
+                    return false;
+                id = repeatIds[repeatIdsRead++];
+                return true;
+            }
             byte[] u8 = string.u8();
             id = NOT_FOUND;
             while (type != LexicalPresence.NO_TYPE && id == NOT_FOUND) {
@@ -623,7 +652,10 @@ public class LocalityCompositeDict extends Dict {
                }
                id = lookup.find(string);
             }
-            return id != NOT_FOUND;
+            if (id == NOT_FOUND)
+                return false;
+            repeatIds[repeatIdsWrite++] = id;
+            return true;
         }
     }
 }

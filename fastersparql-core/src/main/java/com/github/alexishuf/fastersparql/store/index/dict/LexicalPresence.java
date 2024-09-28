@@ -189,6 +189,8 @@ public class LexicalPresence {
         return nt.fastHash(sliceBegin(slice), sliceEnd(slice))&rowsMask;
     }
 
+    public int typesCount() { return typesCount; }
+
     /**
      * Get a value for use with {@link #findNextType(int, int)}.
      * @param nt the N-Triples representation of an RDF term
