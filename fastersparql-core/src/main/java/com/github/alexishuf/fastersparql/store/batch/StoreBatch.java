@@ -208,7 +208,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             } else if (WASTE) {
                 sh = EMPTY;
             } else {
-                sh = SHARED_ROPES.internPrefix(tmp, 0, tmp.fstLen);
+                sh = lookup.lastGetIriPrefix();
             }
             int lLen = localSnd ? tmp.sndLen : tmp.fstLen;
             if (lLen + sh.len != tmp.len)
@@ -252,31 +252,36 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
 
         // load from dict
         var lookup = dict(dictId(id)).lookup().takeOwnership(this);
-        try (var local = PooledSegmentRopeView.ofEmpty()) {
+        try {
             TwoSegmentRope tmp = lookup.get(unsource(id));
             if (tmp == null || tmp.len <= 0)
                 return false;
-            int fLen = tmp.fstLen, sLen = tmp.sndLen;
             FinalSegmentRope sh;
-            boolean isLit = tmp.get(0) == '"';
-            if (isLit && fLen > 0) local.wrap(tmp.fst, tmp.fstU8, tmp.fstOff, fLen);
-            else                   local.wrap(tmp.snd, tmp.sndU8, tmp.sndOff, sLen);
-            if (!isLit) {
-                sh = new FinalSegmentRope(tmp.fst, tmp.fstU8, tmp.fstOff, fLen);
-            } else if (fLen > 0) {
-                if (sLen == 0) sh = EMPTY;
-                else if (sLen < MIN_INTERNED_LEN)
-                    sh = new FinalSegmentRope(tmp.snd, tmp.sndU8, tmp.sndOff, sLen);
-                else
-                    sh = SHARED_ROPES.internDatatype(tmp, fLen, tmp.len);
-            } else {
+            boolean lit = tmp.get(0) == '"', localSnd = true;
+            if (lit) {
+                localSnd = tmp.fstLen == 0;
+                sh = lookup.lastGetLitSuffixElse(EMPTY);
+            } else if (WASTE) {
                 sh = EMPTY;
+            } else {
+                sh = lookup.lastGetIriPrefix();
             }
-            dest.wrap(sh, local, isLit);
+            int lLen = localSnd ? tmp.sndLen : tmp.fstLen;
+            if (lLen + sh.len == tmp.len) {
+                dest.wrap(sh, localSnd ? tmp.snd    : tmp.fst,
+                          localSnd     ? tmp.sndU8  : tmp.fstU8,
+                          localSnd     ? tmp.sndOff : tmp.fstOff, lLen, lit);
+            } else { //cold
+                getViewCold(dest, tmp, lit);
+            }
+            return true;
         } finally {
             lookup.recycle(this);
         }
-        return true;
+    }
+
+    private static void getViewCold(TermView dest, TwoSegmentRope tmp, boolean lit) {
+        dest.wrap(EMPTY, RopeFactory.make(tmp.len).add(tmp).take(), lit);
     }
 
     @Override

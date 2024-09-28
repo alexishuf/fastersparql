@@ -96,26 +96,18 @@ public class StoreSparqlClient extends AbstractSparqlClient
                                implements CardinalityEstimatorProvider {
     private static final Logger log = LoggerFactory.getLogger(StoreSparqlClient.class);
     private static final StoreBatchType TYPE = StoreBatchType.STORE;
-    private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
-            (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
-    private static final LIFOPool<FinalSegmentRope[]> PREFIXES_POOL = new LIFOPool<>(
-            FinalSegmentRope[].class, "StoreSparqlClient.PREFIXES_POOL", 16,
-            16/*obj*/ + 2*4/*Rope*/ + 8+2*4/*SegmentRope*/ + 2*4 /*SegmentRopeView*/);
     private static boolean warnedNonNative = false;
 
     private final LocalityCompositeDict dict;
     private final int dictId;
     private final Triples spo, pso, ops;
     private final SingletonFederator federator;
-    private final FinalSegmentRope[] prefixes;
     private final boolean hugeDict;
 
     /* --- --- --- lifecycle --- --- --- */
 
     public StoreSparqlClient(SparqlEndpoint ep) {
         super(ep);
-        FinalSegmentRope[] prefixes = PREFIXES_POOL.get();
-        this.prefixes = prefixes == null ? new FinalSegmentRope[PREFIXES_MASK+1] : prefixes;
         this.bindingAwareProtocol = true;
         this.cheapestDistinct = DistinctType.WEAK;
         this.localInProcess = true;
@@ -199,7 +191,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
         spo.close();
         pso.close();
         ops.close();
-        PREFIXES_POOL.offer(prefixes);
     }
 
     /* --- --- --- properties--- --- --- */
@@ -1368,17 +1359,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 }
                 yield r;
             }
-            case '<' -> {
-                if (t.fstLen == 0)
-                    yield FinalSegmentRope.EMPTY;
-                int slot = (int)(t.fstOff&PREFIXES_MASK);
-                var cached = prefixes[slot];
-                if (cached == null || cached.offset != t.fstOff) {
-                    cached = new FinalSegmentRope(t.fst, t.fstU8, t.fstOff, t.fstLen);
-                    prefixes[slot] = cached;
-                }
-                yield cached;
-            }
+            case '<' -> lookup.lastGetIriPrefix();
             case '_' -> FinalSegmentRope.EMPTY;
             default -> throw new IllegalArgumentException("Not an RDF term");
         };

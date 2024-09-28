@@ -45,14 +45,12 @@ public abstract class SingleThreadBackgroundTask<T, Q extends MessagePassingQueu
 
     protected abstract void handle(T work);
 
-    public void sched(T item) {
-        if (item == null)
-            throw new NullPointerException("Cannot sched(null)");
-        while (!work.offer(item))
-            Thread.yield(); // queue is unbounded, should never run
+    protected final void afterSched() {
         if ((int)PARKED.compareAndExchangeAcquire(this, 1, 0) == 1)
             LockSupport.unpark(this);
     }
+
+    public abstract void sched(T item);
 
     @Override public void sync(CountDownLatch latch) {
         if (sync.offer(latch)) {

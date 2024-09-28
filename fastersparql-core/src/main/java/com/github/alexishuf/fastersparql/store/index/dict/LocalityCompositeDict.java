@@ -3,10 +3,7 @@ package com.github.alexishuf.fastersparql.store.index.dict;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.store.index.dict.Splitter.SharedSide;
-import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
-import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
-import com.github.alexishuf.fastersparql.util.concurrent.Primer;
-import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
+import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -49,6 +46,11 @@ public class LocalityCompositeDict extends Dict {
 
     public static final int SH_ID_SUFF = 0x01000000;
 
+    private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
+            (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
+    private static final LIFOPool<FinalSegmentRope[]> PREFIXES_POOL = new LIFOPool<>(
+            FinalSegmentRope[].class, "StoreSparqlClient.PREFIXES_POOL", 16,
+            16/*obj*/ + 2*4/*Rope*/ + 8+2*4/*SegmentRope*/ + 2*4 /*SegmentRopeView*/);
 
     private final boolean sharedOverflow, embedSharedId;
     private final byte tlDictId;
@@ -59,6 +61,7 @@ public class LocalityCompositeDict extends Dict {
     private final long emptySharedId;
     private final int maxLitSuf;
     private final LexicalPresence lexPresence;
+    private final FinalSegmentRope[] prefixes;
 
 
     /**
@@ -108,6 +111,8 @@ public class LocalityCompositeDict extends Dict {
         Path lexFile = file.resolveSibling("lexical");
         var lexPresence = LexicalPresence.load(file, lexFile, litSuffRopes);
         this.lexPresence = lexPresence == null ? makeLexPresence(lexFile) : lexPresence;
+        FinalSegmentRope[] prefixes = PREFIXES_POOL.get();
+        this.prefixes = prefixes == null ? new FinalSegmentRope[PREFIXES_MASK+1] : prefixes;
     }
 
     private FinalSegmentRope[] makeLitSuffixesRopes() {
@@ -177,6 +182,8 @@ public class LocalityCompositeDict extends Dict {
 
     @Override public void close() {
         super.close();
+        Arrays.fill(prefixes, null);
+        PREFIXES_POOL.offer(prefixes);
         for (int i = tlSlot(0); i < tl.length; i += TL_DICTS_PER_THREAD) {
             var l = tl[i];
             if (l != null && l.dict == this && TL.compareAndExchangeAcquire(tl, i, l, null) == l)
@@ -473,6 +480,19 @@ public class LocalityCompositeDict extends Dict {
                 return FinalSegmentRope.EMPTY;
             int idx = Arrays.binarySearch(dict.litSuffIds, lastGetSharedId);
             return  idx >= 0 ? dict.litSuffRopes[idx] : fallback;
+        }
+
+        public FinalSegmentRope lastGetIriPrefix() {
+            int len = out.fstLen, slot;
+            if (len == 0)
+                return FinalSegmentRope.EMPTY;
+            long off = out.fstOff;
+            var cached = dict.prefixes[slot=(int)(off&PREFIXES_MASK)];
+            if (cached == null || cached.offset != off) {
+                cached = new FinalSegmentRope(out.fst, out.fstU8, off, len);
+                dict.prefixes[slot] = cached;
+            }
+            return cached;
         }
 
         @Override public TwoSegmentRope get(long id) {

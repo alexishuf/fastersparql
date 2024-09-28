@@ -1,13 +1,13 @@
 package com.github.alexishuf.fastersparql.util.concurrent;
 
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.jctools.queues.MpmcUnboundedXaddArrayQueue;
+import org.jctools.queues.MpmcArrayQueue;
 
 import java.util.Objects;
 import java.util.function.Supplier;
 
 public abstract class CleanerBackgroundTask<T>
-        extends SingleThreadBackgroundTask<T, MpmcUnboundedXaddArrayQueue<T>> {
+        extends SingleThreadBackgroundTask<T, MpmcArrayQueue<T>> {
     public @MonotonicNonNull Alloc<T> pool;
     public Supplier<T> newInstance;
     public ClearElseMake clearElseMake;
@@ -17,7 +17,7 @@ public abstract class CleanerBackgroundTask<T>
     }
 
     public CleanerBackgroundTask(String name, Supplier<T> maker, int priority) {
-        super(name, new MpmcUnboundedXaddArrayQueue<>(PREFERED_QUEUE_CHUNK), priority);
+        super(name, new MpmcArrayQueue<>(PREFERED_QUEUE_CHUNK), priority);
         this.newInstance = maker;
         this.clearElseMake = new ClearElseMake(maker);
     }
@@ -38,6 +38,15 @@ public abstract class CleanerBackgroundTask<T>
             clear(o);
             return o;
         }
+    }
+
+    @Override public void sched(T item) {
+        if (item == null)
+            return;
+        if (work.offer(item))
+            afterSched();
+        else
+            handle(item);
     }
 
     protected abstract void clear(T obj);

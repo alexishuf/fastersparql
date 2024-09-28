@@ -33,9 +33,15 @@ public class Primer
     }
 
     @Override public void sched(Runnable item) {
-        if (Thread.currentThread() == INSTANCE)
+        if (item == null)
+            return;
+        if (Thread.currentThread() == INSTANCE) {
             item.run();
-        super.sched(item);
+        } else {
+            while (!work.offer(item))
+                Thread.yield(); // unbounded queue, will never run
+            afterSched();
+        }
     }
 
     @Override protected void handle(Runnable work) {
