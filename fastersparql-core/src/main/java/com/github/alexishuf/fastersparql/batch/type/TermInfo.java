@@ -110,7 +110,8 @@ public final class TermInfo {
             suffixShared = false;
         } else {
             type = Type.TERM;
-            localRope = t.local();
+            suffixShared = t.sharedSuffixed();
+            localRope    = t.local();
             localSeg     = localRope.segment;
             localU8      = localRope.utf8;
             localOff     = localRope.offset;
@@ -162,19 +163,20 @@ public final class TermInfo {
     }
 
     public Type setIri(FinalSegmentRope iri) {
-        this.type      = iri.len == 0 ? Type.EMPTY : Type.IRI;
-        this.term      = null;
-        this.shared    = EMPTY;
-        this.localRope = iri;
-        this.localSeg  = iri.segment;
-        this.localU8   = iri.utf8;
-        this.localOff  = iri.offset;
-        this.localLen  = iri.len;
-        this.stable    = true;
-        this.sharedSeg = EMPTY_SEGMENT;
-        this.sharedU8  = EMPTY_UTF8;
-        this.sharedOff = 0L;
-        this.sharedLen = 0;
+        this.type         = iri.len == 0 ? Type.EMPTY : Type.IRI;
+        this.term         = null;
+        this.suffixShared = false;
+        this.shared       = EMPTY;
+        this.localRope    = iri;
+        this.localSeg     = iri.segment;
+        this.localU8      = iri.utf8;
+        this.localOff     = iri.offset;
+        this.localLen     = iri.len;
+        this.stable       = true;
+        this.sharedSeg    = EMPTY_SEGMENT;
+        this.sharedU8     = EMPTY_UTF8;
+        this.sharedOff    = 0L;
+        this.sharedLen    = 0;
         return type;
     }
 
