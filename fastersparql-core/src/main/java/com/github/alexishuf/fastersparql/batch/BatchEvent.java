@@ -25,12 +25,13 @@ import static java.lang.invoke.MethodType.methodType;
 @Category({"FasterSparql", "Batch"})
 public abstract class BatchEvent extends Event {
     private static final VarHandle POOLED, UNPOOLED, GARBAGE, CREATED, LEAKED, GROWN;
-    @SuppressWarnings("unused") private static int plainPooled,  plainUnpooled, plainGarbage;
+    @SuppressWarnings("unused") private static long plainPooled,  plainUnpooled;
+    @SuppressWarnings("unused") private static int plainGarbage;
     @SuppressWarnings("unused") private static int plainCreated, plainLeaked,   plainGrown;
     static {
         try {
-            POOLED   = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainPooled",   int.class);
-            UNPOOLED = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainUnpooled", int.class);
+            POOLED   = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainPooled",   long.class);
+            UNPOOLED = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainUnpooled", long.class);
             GARBAGE  = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainGarbage",  int.class);
             CREATED  = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainCreated",  int.class);
             LEAKED   = MethodHandles.lookup().findStaticVarHandle(BatchEvent.class, "plainLeaked",   int.class);
@@ -43,8 +44,8 @@ public abstract class BatchEvent extends Event {
     public static final boolean RECORD = FSProperties.batchJFREnabled();
 
     @SuppressWarnings("unused") public static void resetCounters() {
-        POOLED  .setOpaque(0);
-        UNPOOLED.setOpaque(0);
+        POOLED  .setOpaque(0L);
+        UNPOOLED.setOpaque(0L);
         CREATED .setOpaque(0);
         LEAKED  .setOpaque(0);
         GARBAGE .setOpaque(0);
@@ -71,7 +72,7 @@ public abstract class BatchEvent extends Event {
                 Batches   Leaked: %s
                 Batches  Created: %,9d
                 Batches    Grown: %,9d
-                """, (int)POOLED.getOpaque(), (int)UNPOOLED.getOpaque(), (int)GARBAGE.getOpaque(),
+                """, (long)POOLED.getOpaque(), (long)UNPOOLED.getOpaque(), (int)GARBAGE.getOpaque(),
                      leaked,                  (int)CREATED.getOpaque(),  (int)GROWN.getOpaque());
     }
 
@@ -133,7 +134,7 @@ public abstract class BatchEvent extends Event {
         /** Creates and {@link Event#commit()}s a {@link Pooled} event with given {@code capacity}. */
         public static void record(Batch<?> batch) {
             if (!RECORD) return;
-            POOLED.getAndAddRelease(1);
+            POOLED.getAndAddRelease(1L);
             if (!fillAndCommitPooled(EV_POOL, batch))
                 new Pooled().fillAndCommit(batch);
         }
@@ -148,7 +149,7 @@ public abstract class BatchEvent extends Event {
         /** Creates and {@link #commit()}s a {@link Unpooled} event with given {@code capacity}. */
         public static void record(Batch<?> batch) {
             if (!RECORD) return;
-            UNPOOLED.getAndAddRelease(1);
+            UNPOOLED.getAndAddRelease(1L);
             if (!BatchEvent.fillAndCommitPooled(EV_POOL, batch))
                 new Unpooled().fillAndCommit(batch);
         }
