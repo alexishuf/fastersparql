@@ -1812,15 +1812,13 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     }
     private static int hashNumericSafe(int prefixHash, MemorySegment seg, long off, int len) {
         int h = prefixHash;
-        boolean beforeNumber = true;
         for (int i = 1; i < len; i++) {
-            int c = seg.get(JAVA_BYTE, off+i);
-            if (beforeNumber) {
-                if (c == '0' || c == '+') continue;
-                if (c != '-') beforeNumber = false;
-            }
-            if (c == '.' || c == 'e' || c == 'E') break;
-            h = FNV_PRIME * (h ^ (0xff&c));
+            int c = 0xff&(seg.get(JAVA_BYTE, off+i)-'0');
+            if (c < 9)
+                h = FNV_PRIME * (h^c);
+            if (c < 208) // char is above '9', stop
+                break;
+            // else: could be junk, or one of '.', '-', or '+'
         }
         return h;
     }
@@ -1828,15 +1826,13 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         if (base != null)
             off += U8_BASE;
         int h = prefixHash;
-        boolean beforeNumber = true;
         for (int i = 1; i < len; i++) {
-            byte c = U.getByte(base, off+i);
-            if (beforeNumber) {
-                if (c == '0' || c == '+') continue;
-                if (c != '-') beforeNumber = false;
-            }
-            if (c == '.' || c == 'e' || c == 'E') break;
-            h = FNV_PRIME * (h ^ (0xff&c));
+            int c = 0xff&(U.getByte(base, off+i)-'0');
+            if (c < 9)
+                h = FNV_PRIME * (h^c);
+            if (c < 208) // char is above '9', stop
+                break;
+            // else: could be junk, or one of '.', '-', or '+'
         }
         return h;
     }
