@@ -21,6 +21,8 @@ public class SharedRopes {
     private static final String XSD_DT = "\"^^<http://www.w3.org/2001/XMLSchema#";
     private static final String RDF_DT = "\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
+    public static final int MIN_XSD_DT_LEN = XSD_DT.length()+1;
+
     public static final FinalSegmentRope DT_duration           = SHARED_ROPES.internDatatype(XSD_DT+"duration>");
     public static final FinalSegmentRope DT_dateTime           = SHARED_ROPES.internDatatype(XSD_DT+"dateTime>");
     public static final FinalSegmentRope DT_time               = SHARED_ROPES.internDatatype(XSD_DT+"time>");

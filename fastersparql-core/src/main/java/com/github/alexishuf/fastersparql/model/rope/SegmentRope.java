@@ -26,6 +26,7 @@ import static jdk.incubator.vector.ByteVector.fromMemorySegment;
 
 @SuppressWarnings("resource")
 public abstract class SegmentRope extends PlainRope {
+    public static final int BYTES = Rope.BYTES + 8 + 2*4;
     protected static final boolean DEBUG = SegmentRope.class.desiredAssertionStatus();
 
     public static final byte[]        EMPTY_UTF8    = Bytes.EMPTY.arr;
@@ -630,13 +631,14 @@ public abstract class SegmentRope extends PlainRope {
         return hashUnsafe(h, u8, seg.address()+off, len);
     }
 
-    @Override public int hashCode() {
-        if (U == null)
-            return hashSafe(FNV_BASIS, segment, offset, len);
-        else
-            return hashUnsafe(FNV_BASIS, utf8, segment.address()+offset, len);
-    }
+    @Override public int hashCode() { return hash(FNV_BASIS); }
 
+    @Override public int hash(int prefixHash) {
+        if (U == null)
+            return hashSafe(prefixHash, segment, offset, len);
+        else
+            return hashUnsafe(prefixHash, utf8, segment.address()+offset, len);
+    }
 
     @Override public void appendTo(StringBuilder sb, int begin, int end) {
         try (var d = RopeDecoder.create()) {

@@ -25,8 +25,7 @@ import java.lang.foreign.MemorySegment;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNumbers;
-import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
-import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.*;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.batch.StoreBatchType.STORE;
@@ -86,12 +85,17 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             var r = lookup.get(unsource(id));
             if (r == null || r.len == 0) {
                 hash = FNV_BASIS;
-            } else if (r.sndLen > MIN_INTERNED_LEN && r.fstLen > 0
-                    && lookup.lastGetSharedSuffixed()
-                    && isNumericDatatype(lookup.lastGetLitSuffixElse(EMPTY))) {
-                hash = Term.hashNumeric(r.fst, r.fstU8, r.fstOff, r.fstLen);
+            } else if (lookup.lastGetSharedSuffixed()) {
+                var sh = lookup.lastGetLitSuffixElse(EMPTY);
+                if (r.sndLen > MIN_XSD_DT_LEN && r.fstLen > 0 && isNumericDatatype(sh)) {
+                    hash = Term.hashNumeric(FNV_BASIS, r.fst, r.fstU8, r.fstOff, r.fstLen);
+                } else {
+                    hash = Term.hashNonNumeric(FNV_BASIS, sh, r.fst, r.fstU8,
+                                               r.fstOff, r.fstLen, true);
+                }
             } else {
-                hash = r.hashCode();
+                hash = Term.hashNonNumeric(FNV_BASIS, lookup.lastGetIriPrefix(),
+                                           r.snd, r.sndU8, r.sndOff, r.sndLen, false);
             }
         } finally {
             lookup.recycle(HASH_ID);

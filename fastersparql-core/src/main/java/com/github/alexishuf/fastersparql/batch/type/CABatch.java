@@ -22,6 +22,7 @@ import static com.github.alexishuf.fastersparql.batch.type.BatchType.PREFERRED_B
 import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
+import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_SEGMENT;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Math.min;
@@ -752,7 +753,7 @@ public sealed class CABatch extends Batch<CABatch> {
             off      = 0;
             lFlagLen = 0;
         }
-        h = Term.hashCode(sh, seg, utf8(ti), off,
+        h = Term.hashCode(FNV_BASIS, sh, seg, utf8(ti), off,
                           lFlagLen&LEN_MASK, (lFlagLen&SUF_MASK) != 0);
         setHash(ti, h);
         return h;

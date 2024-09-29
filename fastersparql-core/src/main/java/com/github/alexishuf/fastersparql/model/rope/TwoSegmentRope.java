@@ -469,8 +469,10 @@ public class TwoSegmentRope extends PlainRope {
         return  hashSafe(h,         max(lEnd, end-12), end, fst, fstOff, fstLen, snd, sndOff);
     }
 
-    @Override public int hashCode() {
-        int h = SegmentRope.hashSafe(FNV_BASIS, fst, fstOff, fstLen);
+    @Override public int hashCode() {return hash(FNV_BASIS);}
+
+    @Override public int hash(int prefixHash) {
+        int h = SegmentRope.hashSafe(prefixHash, fst, fstOff, fstLen);
         return SegmentRope.hashSafe(h, snd, sndOff, sndLen);
     }
 

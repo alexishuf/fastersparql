@@ -1788,47 +1788,30 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     public int cachedHash() { return hash; }
 
-    public static int hashCode(SegmentRope sh,
-                               MemorySegment localSeg, byte[] localU8,
-                               long localOff, int localLen) {
-        if (isNumericDatatype(sh))
-            return hashNumeric(localSeg, localU8, localOff, localLen);
-        return hashNonNumeric(sh, localSeg, localU8, localOff, localLen,
-                sh.len > 0 && sh.get(0) == '"');
-    }
-    public static int hashCode(SegmentRope sh,
+    public static int hashCode(int prefixHash, SegmentRope sh,
                                MemorySegment localSeg, byte[] localU8,
                                long localOff, int localLen, boolean suffixShared) {
         if (suffixShared && isNumericDatatype(sh))
-            return hashNumeric(localSeg, localU8, localOff, localLen);
-        return hashNonNumeric(sh, localSeg, localU8, localOff, localLen, suffixShared);
+            return hashNumeric(prefixHash, localSeg, localU8, localOff, localLen);
+        return hashNonNumeric(prefixHash, sh, localSeg, localU8, localOff, localLen, suffixShared);
     }
-    private static int hashNonNumeric(SegmentRope sh,
+    public static int hashNonNumeric(int prefixHash, SegmentRope sh,
                                       MemorySegment localSeg, byte[] localU8,
                                       long localOff, int localLen, boolean suffixShared) {
-        MemorySegment fSeg, sSeg;
-        byte[]        fU8,  sU8;
-        long          fOff, sOff;
-        int           fLen, sLen;
-        if (suffixShared) {
-            fSeg =   localSeg; fU8  = localU8; fOff =  localOff; fLen = localLen;
-            sSeg = sh.segment; sU8  = sh.utf8; sOff = sh.offset; sLen = sh.len;
-        } else {
-            fSeg = sh.segment; fU8  = sh.utf8; fOff = sh.offset; fLen = sh.len;
-            sSeg =   localSeg; sU8  = localU8; sOff =  localOff; sLen = localLen;
-        }
-        int h = SegmentRope.hash(FNV_BASIS, fSeg, fU8, fOff, fLen);
-        h     = SegmentRope.hash(h,         sSeg, sU8, sOff, sLen);
-        return h;
+        int hash = suffixShared ? prefixHash : sh.hash(prefixHash);
+        hash = SegmentRope.hash(hash, localSeg, localU8, localOff, localLen);
+        if (suffixShared && sh.len > 2 && sh.get(1) == '@')
+            hash = sh.hash(hash);
+        return hash;
     }
-    public static int hashNumeric(MemorySegment localSeg, byte[] localU8,
+    public static int hashNumeric(int prefixHash, MemorySegment localSeg, byte[] localU8,
                                   long localOff, int localLen) {
         return U == null
-                ? hashNumericSafe(localSeg, localOff, localLen)
-                : hashNumericUnsafe(localU8, localSeg.address()+localOff, localLen);
+                ? hashNumericSafe(prefixHash, localSeg, localOff, localLen)
+                : hashNumericUnsafe(prefixHash, localU8, localSeg.address()+localOff, localLen);
     }
-    private static int hashNumericSafe(MemorySegment seg, long off, int len) {
-        int h = FNV_BASIS;
+    private static int hashNumericSafe(int prefixHash, MemorySegment seg, long off, int len) {
+        int h = prefixHash;
         boolean beforeNumber = true;
         for (int i = 1; i < len; i++) {
             int c = seg.get(JAVA_BYTE, off+i);
@@ -1841,10 +1824,10 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         }
         return h;
     }
-    private static int hashNumericUnsafe(byte[] base, long off, int len) {
+    private static int hashNumericUnsafe(int prefixHash, byte[] base, long off, int len) {
         if (base != null)
             off += U8_BASE;
-        int h = FNV_BASIS;
+        int h = prefixHash;
         boolean beforeNumber = true;
         for (int i = 1; i < len; i++) {
             byte c = U.getByte(base, off+i);
@@ -1860,11 +1843,14 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     @Override public int hashCode() {
         int hash = this.hash;
-        if (hash == 0)  {
-            SegmentRope s = shared(), l = local();
-            this.hash = hash = hashCode(s, l.segment, l.utf8, l.offset, l.len, sharedSuffixed());
-        }
+        if (hash == 0)
+            this.hash = hash = hash(FNV_BASIS);
         return hash;
+    }
+
+    @Override public int hash(int prefixHash) {
+        SegmentRope s = shared(), l = local();
+        return hashCode(prefixHash, s, l.segment, l.utf8, l.offset, l.len, sharedSuffixed());
     }
 
     @Override public void appendTo(StringBuilder sb, int begin, int end) {

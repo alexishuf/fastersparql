@@ -22,14 +22,31 @@ import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.requiredB
  */
 @SuppressWarnings("unused")
 public class FinalSegmentRope extends SegmentRope {
+    public static final int BYTES = SegmentRope.BYTES + 8;
     public static final FinalSegmentRope EMPTY     = new FinalSegmentRope(EMPTY_UTF8);
     public static final FinalSegmentRope DQ        = new FinalSegmentRope(new byte[]{'"'});
     public static final FinalSegmentRope GT        = new FinalSegmentRope(new byte[]{'>'});
     public static final FinalSegmentRope DT_MID    = new FinalSegmentRope(new byte[]{'"', '^', '^'});
     public static final FinalSegmentRope DT_MID_LT = new FinalSegmentRope(new byte[]{'"', '^', '^', '<'});
 
+    private int hash;
+
     public FinalSegmentRope(byte[] utf8) {
         super(MemorySegment.ofArray(utf8), utf8, 0, utf8.length);
+    }
+
+    @Override public int hashCode() {
+        int hash = this.hash;
+        if (hash == 0)
+            this.hash = hash = super.hashCode();
+        return hash;
+    }
+
+    @Override public int hash(int prefixHash) {
+        int hash;
+        if (prefixHash == FNV_BASIS && (hash=this.hash) != 0)
+            return hash;
+        return super.hash(prefixHash);
     }
 
     public static FinalSegmentRope asFinal(byte @Nullable[] u8) {

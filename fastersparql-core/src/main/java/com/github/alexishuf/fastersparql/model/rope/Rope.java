@@ -13,6 +13,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("unused")
 public abstract class Rope implements CharSequence, Comparable<Rope> {
+    protected static final int BYTES = 16 + 8;
     public int len;
 
     private static void raiseBadRange(int begin, int end) {
@@ -724,8 +725,10 @@ public abstract class Rope implements CharSequence, Comparable<Rope> {
         return new String(u8, UTF_8);
     }
 
-    @Override public int hashCode() {
-        int h = FNV_BASIS;
+    @Override public int hashCode() {return hash(FNV_BASIS);}
+
+    public int hash(int prefixHash) {
+        int h = prefixHash;
         for (int i = 0; i < len; i++)
             h = FNV_PRIME * (h ^ (0xff&get(i)));
         return h;

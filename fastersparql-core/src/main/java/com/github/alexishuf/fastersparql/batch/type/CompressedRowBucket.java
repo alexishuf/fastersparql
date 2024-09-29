@@ -1,11 +1,12 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.*;
+import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.MutableRope;
+import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.BS;
-import com.github.alexishuf.fastersparql.util.LowLevelHelper;
 import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
@@ -15,7 +16,6 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
 
-import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -24,7 +24,6 @@ import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.LEN_M
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatch.SH_SUFF_MASK;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
-import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.hashUnsafe;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.*;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -313,83 +312,15 @@ public abstract sealed class CompressedRowBucket
     @Override public int hashCode(int row) {
         if (!BS.get(has, row))
             return 0;
-        if (LowLevelHelper.U == null)
-            return safeHashCode(row);
         int h = 0;
         var shared = this.shared;
         var d = rowsData[row];
-        PooledTermView tmp = null;
-        try {
-            for (int c = 0, cols = this.cols, shIdx = cols*row; c < cols; c++, shIdx++) {
-                SegmentRope sh = shared[shIdx];
-                int flLen = readLen(d.arr, c), fstLen, sndLen = flLen&LEN_MASK;
-                long fstOff, sndOff = readOff(d.arr, c);
-                if (sh == null)
-                    sh = FinalSegmentRope.EMPTY;
-                if (rowsData[row] == null) {
-                    int dataBegin = cols << 2;
-                    sndOff = Math.max(dataBegin, sndOff);
-                    sndLen = Math.min(d.arr.length-dataBegin, sndLen);
-                }
-                if (Term.isNumericDatatype(sh)) {
-                    if (tmp == null)
-                        tmp = PooledTermView.ofEmptyString();
-                    tmp.wrap(sh, d.segment, d.arr, sndOff, sndLen, true);
-                    h ^= tmp.hashCode();
-                    continue;
-                }
-                fstLen = sh.len;
-                fstOff = sh.segment.address()+sh.offset;
-                byte[] fst = sh.utf8, snd = d.arr;
-                if ((flLen & SH_SUFF_MASK) != 0) {
-                    fst = d.arr;   fstOff = sndOff;    fstLen = sndLen;
-                    snd = sh.utf8; sndOff = sh.offset; sndLen = sh.len;
-                }
-                int termHash = hashUnsafe(FNV_BASIS, fst, fstOff, fstLen);
-                h ^=           hashUnsafe(termHash,  snd, sndOff, sndLen);
-            }
-        } finally {
-            if (tmp != null) tmp.close();
-        }
-        return h;
-    }
-
-    private int safeHashCode(int row) {
-        int h = 0;
-        var shared = this.shared;
-        var d = rowsData[row];
-        PooledTermView tmp = null;
-        try {
-            for (int c = 0, cols = this.cols, shIdx = cols*row; c < cols; c++, shIdx++) {
-                SegmentRope sh = shared[shIdx];
-                int flLen = readLen(d.arr, c), fstLen, sndLen = flLen&LEN_MASK;
-                long fstOff, sndOff = readOff(d.arr, c);
-                if (sh == null)
-                    sh = FinalSegmentRope.EMPTY;
-                if (rowsData[row] == null) {
-                    int dataBegin = cols << 2;
-                    sndOff = Math.max(dataBegin, sndOff);
-                    sndLen = Math.min(d.arr.length-dataBegin, sndLen);
-                }
-                if (Term.isNumericDatatype(sh)) {
-                    if (tmp == null)
-                        tmp = PooledTermView.ofEmptyString();
-                    tmp.wrap(sh, d.segment, d.arr, sndOff, sndLen, true);
-                    h ^= tmp.hashCode();
-                    continue;
-                }
-                fstLen = sh.len;
-                fstOff = sh.offset;
-                MemorySegment fst = sh.segment, snd = d.segment;
-                if ((flLen & SH_SUFF_MASK) != 0) {
-                    fst = snd ;       fstOff = sndOff;    fstLen = sndLen;
-                    snd = sh.segment; sndOff = sh.offset; sndLen = sh.len;
-                }
-                int termHash = SegmentRope.hashSafe(FNV_BASIS, fst, fstOff, fstLen);
-                h ^=           SegmentRope.hashSafe(termHash,  snd, sndOff, sndLen);
-            }
-        } finally {
-            if (tmp != null) tmp.close();
+        for (int c = 0, cols = this.cols, shIdx = cols*row; c < cols; c++, shIdx++) {
+            SegmentRope sh = shared[shIdx];
+            int flLen = readLen(d.arr, c);
+            h ^= Term.hashCode(FNV_BASIS, sh == null ? FinalSegmentRope.EMPTY : sh,
+                              d.segment, d.arr, readOff(d.arr, c), flLen&LEN_MASK,
+                             (flLen&SH_SUFF_MASK) != 0);
         }
         return h;
     }

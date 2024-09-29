@@ -47,10 +47,10 @@ public class LocalityCompositeDict extends Dict {
     public static final int SH_ID_SUFF = 0x01000000;
 
     private static final int PREFIXES_MASK = -1 >>> Integer.numberOfLeadingZeros(
-            (8*1024*1024)/(4/* SegmentRope ref */ + 32/* SegmentRope obj */));
+            (8*1024*1024)/(4/* ref */ + FinalSegmentRope.BYTES));
     private static final LIFOPool<FinalSegmentRope[]> PREFIXES_POOL = new LIFOPool<>(
-            FinalSegmentRope[].class, "StoreSparqlClient.PREFIXES_POOL", 16,
-            16/*obj*/ + 2*4/*Rope*/ + 8+2*4/*SegmentRope*/ + 2*4 /*SegmentRopeView*/);
+            FinalSegmentRope[].class, "LocalityCompositeDict.PREFIXES_POOL", 16,
+            20/*array header & length*/ + FinalSegmentRope.BYTES*(PREFIXES_MASK+1));
 
     private final boolean sharedOverflow, embedSharedId;
     private final byte tlDictId;

@@ -307,7 +307,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             int localFlagLen = slices[cslb+SL_LEN];
             long localOff    = slices[cslb+SL_OFF];
             var sh           = shared[row*cols+c];
-            h ^= Term.hashCode(sh==null ? EMPTY : sh, localsSeg, locals, localOff,
+            h ^= Term.hashCode(FNV_BASIS, sh==null ? EMPTY : sh, localsSeg, locals, localOff,
                                localFlagLen&LEN_MASK,
                                (localFlagLen&SH_SUFF_MASK) != 0);
         }
@@ -619,7 +619,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         var sh        = shared[row*cols + col];
         int slb       = slBase(row, col), localFlagLen = slices[slb+SL_LEN];
         long localOff = slices[slb+SL_OFF];
-        return Term.hashCode(sh == null ? EMPTY : sh, localsSeg, locals, localOff,
+        return Term.hashCode(FNV_BASIS, sh == null ? EMPTY : sh, localsSeg, locals, localOff,
                 localFlagLen&LEN_MASK,
                 (localFlagLen&SH_SUFF_MASK) != 0);
     }
