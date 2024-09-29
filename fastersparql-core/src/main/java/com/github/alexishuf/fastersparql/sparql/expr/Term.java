@@ -1225,14 +1225,23 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         if (type() != Type.LIT) return -1;
         int endLex = 0xff&cachedEndLex;
         if (endLex == 0) {
-            endLex = second.len == 0 ? first.reverseSkipUntil(1, first.len, '"')
-                   : second.get(0) == '"' ? first.len : coldEndLex();
+            if (first.len > 0 && second.len > 0) {
+                endLex = first.len;
+            } else {
+                var local = local();
+                if (local.get(local.len-1) == '"')
+                    endLex = local.len-1;
+                else
+                    endLex = coldEndLex(local);
+            }
             cachedEndLex = endLex > 0xff ? 0 : (byte)endLex;
         }
         return endLex;
     }
 
-    private int coldEndLex() { return reverseSkipUntil(1, len, '"'); }
+    private int coldEndLex(SegmentRope local) {
+        return local.skipUntilLastFar(1, local.len, (byte)'"');
+    }
 
     /**
      * If {@link #type()} is {@link Type#LIT}, get the explicit or implicit (i.e.,
