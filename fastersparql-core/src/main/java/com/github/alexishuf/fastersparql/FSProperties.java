@@ -76,7 +76,9 @@ public class FSProperties {
     public static final String FED_ASK_NEG_CAP           = "fastersparql.fed.ask.neg.cap";
     public static final String EMIT_REQ_CHUNK_BATCHES    = "fastersparql.emit.request.chunk.batches";
     public static final String EMIT_STATS                = "fastersparql.emit.stats";
+    public static final String EMIT_STATS_GLOBAL         = "fastersparql.emit.stats.global";
     public static final String EMIT_STATS_LOG            = "fastersparql.emit.stats.log";
+    public static final String COUNT_SUBQUERIES          = "fastersparql.subqueries.count";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
     public static final String SAME_SOURCE_IDS           = "fastersparql.same-source-ids";
     public static final String NETTY_EVLOOP_THREADS      = "io.netty.eventLoopThreads";
@@ -140,6 +142,8 @@ public class FSProperties {
     private static Boolean CACHE_IT_TRACE_CANCEL        = null;
     private static Boolean CACHE_IT_STATS               = null;
     private static Boolean CACHE_EMIT_STATS             = null;
+    private static Boolean CACHE_EMIT_STATS_GLOBAL      = null;
+    private static Boolean CACHE_COUNT_SUBQUERIES       = null;
     private static Boolean CACHE_EMIT_STATS_LOG         = null;
     private static Boolean CACHE_STORE_CLIENT_VALIDATE  = null;
     private static Boolean CACHE_SAME_SOURCE_IDS        = null;
@@ -340,7 +344,26 @@ public class FSProperties {
         Boolean v = CACHE_EMIT_STATS;
         if (v == null) {
             boolean def = FSProperties.class.desiredAssertionStatus();
-            CACHE_EMIT_STATS = v = emitStatsLog() || readBoolean(EMIT_STATS, def);
+            CACHE_EMIT_STATS = v = emitStatsLog() || emitStatsGlobal()
+                                || readBoolean(EMIT_STATS, def);
+        }
+        return v;
+    }
+
+    public static boolean emitStatsGlobal() {
+        Boolean v = CACHE_EMIT_STATS_GLOBAL;
+        if (v == null) {
+            boolean def = FSProperties.class.desiredAssertionStatus();
+            CACHE_EMIT_STATS_GLOBAL = v = readBoolean(EMIT_STATS_GLOBAL, def);
+        }
+        return v;
+    }
+
+    public static boolean countSubqueries() {
+        Boolean v = CACHE_COUNT_SUBQUERIES;
+        if (v == null) {
+            boolean def = FSProperties.class.desiredAssertionStatus();
+            CACHE_COUNT_SUBQUERIES = v = readBoolean(COUNT_SUBQUERIES, def);
         }
         return v;
     }

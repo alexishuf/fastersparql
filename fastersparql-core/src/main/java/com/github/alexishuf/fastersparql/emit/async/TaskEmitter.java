@@ -60,6 +60,8 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     @Override protected void doRelease() {
         if (EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
+        if (EmitterStats.GLOBAL_ENABLED && stats != null)
+            stats.updateGlobalCounters();
         super.doRelease();
     }
 

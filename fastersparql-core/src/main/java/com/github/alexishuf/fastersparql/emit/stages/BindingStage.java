@@ -174,6 +174,8 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
     @Override protected void doRelease() {
         if (EmitterStats.LOG_ENABLED && stats != null)
             stats.report(log, this);
+        if (EmitterStats.GLOBAL_ENABLED && stats != null)
+            stats.updateGlobalCounters();
         Owned.safeRecycle(leftUpstream, this);
         Owned.safeRecycle(rightRecv.merger, rightRecv);
         Owned.safeRecycle(termTask, this);

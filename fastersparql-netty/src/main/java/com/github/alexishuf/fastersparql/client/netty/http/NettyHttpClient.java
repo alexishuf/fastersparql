@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.client.netty.http;
 
+import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.netty.util.ChannelRecycler;
 import com.github.alexishuf.fastersparql.client.netty.util.EventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties;
@@ -225,6 +226,8 @@ public final class NettyHttpClient implements SafeCloseable {
                     headers.set("x-fastersparql-info", ch.id().asShortText());
                 if (request instanceof HttpContent hc && !headers.contains(CONTENT_LENGTH))
                     headers.set(CONTENT_LENGTH, hc.content().readableBytes());
+                if (SubqueriesStats.ENABLED)
+                    countRequest(request, headers);
                 cookie = handler.start(client.recycler, request);
                 sent = true;
                 onStarted(handler, cookie);
@@ -248,6 +251,19 @@ public final class NettyHttpClient implements SafeCloseable {
                 }
             }
         }
+    }
+
+    private static void countRequest(HttpRequest request, HttpHeaders headers) {
+        int bytes = request.method().asciiName().length() + 1 + request.uri().length() + 2;
+        bytes += 20; // Content-Type: xxx\r\n
+        for (var i = headers.iteratorCharSequence(); i.hasNext(); ) {
+            var e = i.next();
+            bytes += e.getKey().length() + 2/*: */ + e.getValue().length() + 2/*\r\n*/;
+        }
+        if (request instanceof FullHttpRequest f)
+            bytes += f.content().readableBytes();
+        bytes += 4; // trailing \r\n\r\n
+        SubqueriesStats.subquerySent(bytes);
     }
 
     public <T extends NettyHttpHandler> void

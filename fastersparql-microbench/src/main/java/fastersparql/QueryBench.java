@@ -8,8 +8,10 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.async.EmitterService;
 import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
 import com.github.alexishuf.fastersparql.lrb.BenchmarkEvent;
@@ -128,6 +130,8 @@ public class QueryBench {
     private long forkDeadline;
     private int forkTimeoutSecs;
     private boolean skip;
+    private long nonSkippedMeasurementIterations;
+    private long invocations, resultRows;
     private AsyncProfiler.JavaApi apInstance;
 
     private static class BoundCounter<B extends Batch<B>>
@@ -138,13 +142,13 @@ public class QueryBench {
         @Override public BoundCounter<B> takeOwnership(Object newOwner) {return takeOwnership0(newOwner);}
     }
 
-    private static final class RowCounter<B extends Batch<B>>
+    private final class RowCounter<B extends Batch<B>>
             extends BatchConsumer<B, RowCounter<B>>
             implements Orphan<RowCounter<B>> {
         public int rows;
         public RowCounter(BatchType<B> batchType) {super(batchType);}
         public int rows() { return rows; }
-        @Override protected void start0(Vars vars)              { rows = 0; }
+        @Override protected void start0(Vars vars) {rows = 0;}
 
         @Override public RowCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
 
@@ -159,13 +163,18 @@ public class QueryBench {
             rows += batch == null ? 0 : batch.totalRows();
         }
 
-        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
+        @Override public void finish(@Nullable Throwable error) {
+            if (EmitterStats.GLOBAL_ENABLED)
+                resultRows += rows;
+            throwAsUnchecked(error);
+        }
     }
 
-    private static final class RopeLenCounter<B extends Batch<B>>
+    private final class RopeLenCounter<B extends Batch<B>>
             extends BatchConsumer<B, RopeLenCounter<B>> implements Orphan<RopeLenCounter<B>> {
         private final TwoSegmentRope tmp = new TwoSegmentRope();
         private int acc;
+        private long accRows;
 
         public RopeLenCounter(BatchType<B> batchType) {super(batchType);}
 
@@ -173,41 +182,13 @@ public class QueryBench {
 
         public int len() { return acc; }
 
-        @Override protected void start0(Vars vars) { acc = 0; }
-        @Override public void finish(@Nullable Throwable error) { throwAsUnchecked(error); }
-
-        @Override public void onBatch(Orphan<B> orphan) {
-            if (orphan == null) return;
-            B b = orphan.takeOwnership(this);
-            onBatchByCopy(b);
-            b.recycle(this);
-        }
-
-        @Override public void onBatchByCopy(B batch) {
-            for (var b = batch; b != null; b = b.next) {
-                for (int r = 0, rows = b.rows, cols = b.cols; r < rows; r++) {
-                    for (int c = 0; c < cols; c++) {
-                        if (b.getRopeView(r, c, tmp))
-                            acc += tmp.len;
-                    }
-                }
-            }
-        }
-    }
-
-    private static final class TermLenCounter<B extends Batch<B>>
-            extends BatchConsumer<B, TermLenCounter<B>> implements Orphan<TermLenCounter<B>> {
-        private final TermView tmp = new TermView();
-        private int acc;
-
-        public TermLenCounter(BatchType<B> batchType) {super(batchType);}
-        @Override public TermLenCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
-        public int len() { return acc; }
-
-        @Override public void start0(Vars vars) {
+        @Override protected void start0(Vars vars) {
             acc = 0;
+            accRows = 0;
         }
         @Override public void finish(@Nullable Throwable error) {
+            if (EmitterStats.GLOBAL_ENABLED)
+                resultRows += accRows;
             throwAsUnchecked(error);
         }
 
@@ -220,7 +201,52 @@ public class QueryBench {
 
         @Override public void onBatchByCopy(B batch) {
             for (var b = batch; b != null; b = b.next) {
-                for (int r = 0, rows = batch.rows, cols = batch.cols; r < rows; r++) {
+                int rows = batch.rows;
+                if (EmitterStats.GLOBAL_ENABLED)
+                    accRows += rows;
+                for (int r = 0, cols = b.cols; r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        if (b.getRopeView(r, c, tmp))
+                            acc += tmp.len;
+                    }
+                }
+            }
+        }
+    }
+
+    private final class TermLenCounter<B extends Batch<B>>
+            extends BatchConsumer<B, TermLenCounter<B>> implements Orphan<TermLenCounter<B>> {
+        private final TermView tmp = new TermView();
+        private int acc;
+        private long accRows;
+
+        public TermLenCounter(BatchType<B> batchType) {super(batchType);}
+        @Override public TermLenCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+        public int len() { return acc; }
+
+        @Override public void start0(Vars vars) {
+            acc = 0;
+            accRows = 0;
+        }
+        @Override public void finish(@Nullable Throwable error) {
+            if (EmitterStats.GLOBAL_ENABLED)
+                resultRows += accRows;
+            throwAsUnchecked(error);
+        }
+
+        @Override public void onBatch(Orphan<B> orphan) {
+            if (orphan == null) return;
+            B b = orphan.takeOwnership(this);
+            onBatchByCopy(b);
+            b.recycle(this);
+        }
+
+        @Override public void onBatchByCopy(B batch) {
+            for (var b = batch; b != null; b = b.next) {
+                int rows = batch.rows;
+                if (EmitterStats.GLOBAL_ENABLED)
+                    accRows += rows;
+                for (int r = 0, cols = batch.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
                         if (batch.getView(r, c, tmp))
                             acc += tmp.len;
@@ -371,6 +397,30 @@ public class QueryBench {
     }
 
     @TearDown(Level.Trial) public void trialTearDown() {
+        if (EmitterStats.GLOBAL_ENABLED) {
+            System.err.printf("""
+                Stats for %,d invocations in %,d non-skipped measurement iterations:
+                +-----------|--------------------|--------------------+--------------------+
+                |           |            Batches |               Rows |  Intermediary Rows |
+                | Received  | %,18.3f | %,18.3f | %,18.3f |
+                | Delivered | %,18.3f | %,18.3f | %,18.3f |
+                +-----------|--------------------|--------------------+--------------------+
+                Subqueries sent: %,9f (%,.3f KiB)
+                Bindings sent: %,.3f KiB
+                Responses received: %,.3f KiB
+                """, invocations, nonSkippedMeasurementIterations,
+                    EmitterStats.globalBatchesReceived()/(double)invocations,
+                    EmitterStats.globalRowsReceived()/(double)invocations,
+                    EmitterStats.globalRowsReceived()/(double)invocations,
+                    EmitterStats.globalBatchesDelivered()/(double)invocations,
+                    EmitterStats.globalRowsDelivered()/(double)invocations,
+                    (EmitterStats.globalRowsDelivered()-resultRows)/(double)invocations,
+                    SubqueriesStats.subqueriesSent()/(double)invocations,
+                    SubqueriesStats.subqueriesBytesSent()/1024.0/invocations,
+                    SubqueriesStats.bindingsBytes()/1024.0/invocations,
+                    SubqueriesStats.responseBytes()/1024.0/invocations
+            );
+        }
         journal("trialTearDown");
         //watchdog.interrupt();
         //try {
@@ -410,6 +460,10 @@ public class QueryBench {
                 apInstance = AsyncProfiler.JavaApi.getInstance("/non-existing-async-profiler");
             } catch (Throwable ignored) {}
             skip = false;
+            invocations = 0;
+            resultRows = 0;
+            EmitterStats.resetGlobalStats();
+            SubqueriesStats.reset();
             System.gc();
             if (thermalCooldown) {
                 System.out.print("\nThermal cooldown of 5s...");
@@ -442,6 +496,8 @@ public class QueryBench {
             }
             Async.uninterruptibleSleep(idle);
         }
+        if (!skip && !warmup)
+            nonSkippedMeasurementIterations++;
         iterationStart = System.nanoTime();
         jfrEvent.iterationNumber = iterationNumber;
         jfrEvent.warmup = warmup;
@@ -577,6 +633,7 @@ public class QueryBench {
     private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
         if (skip)
             return lastBenchResult;
+        ++invocations;
         this.bh = bh;
         Plan currentPlan = null;
         StreamNode streamNode = null;

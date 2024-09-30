@@ -73,6 +73,8 @@ public abstract sealed class BItEmitter<B extends Batch<B>>
     @Override protected void doRelease() {
         try {
             it.close();
+        if (EmitterStats.GLOBAL_ENABLED && stats != null)
+                stats.updateGlobalCounters();
         } finally {super.doRelease();}
     }
 

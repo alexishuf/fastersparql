@@ -64,6 +64,7 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
+import static com.github.alexishuf.fastersparql.client.SubqueriesStats.subquerySent;
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.MIN_HINT;
 import static com.github.alexishuf.fastersparql.client.netty.util.ByteBufSink.NORMAL_HINT;
 import static com.github.alexishuf.fastersparql.sparql.results.AbstractWsParser.*;
@@ -615,6 +616,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
                 parent.beforeSendBindQuery();
                 serializer.init(bindingsVars, usefulBindingsVars, false);
                 serializer.serializeHeader(bbSink.touch());
+                if (SubqueriesStats.ENABLED)
+                    subquerySent(queryFrame.content().readableBytes() + bbSink.len());
                 ctx.write(queryFrame);
                 ctx.write(new TextWebSocketFrame(bbSink.take())); // headers
                 if (SEND_INFO) {
@@ -858,6 +861,8 @@ public class NettyWsSparqlClient extends AbstractSparqlClient {
             } else {
                 st |= ST_GOT_FRAMES;
                 SegmentRope rope = bbView.wrapAsSingle(f.content());
+                if (SubqueriesStats.ENABLED)
+                    SubqueriesStats.responseReceived(rope.len);
                 if ((st&ST_CANCEL_SENT) != 0) {
                     parser.feedPendingTerminationAck(rope);
                 } else {

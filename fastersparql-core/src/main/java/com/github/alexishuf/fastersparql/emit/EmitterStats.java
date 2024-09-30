@@ -8,15 +8,48 @@ import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+
 public class EmitterStats {
-    public static final boolean ENABLED = FSProperties.emitStats();
-    public static final boolean LOG_ENABLED = FSProperties.emitStatsLog();
+    public static final boolean         ENABLED = FSProperties.emitStats();
+    public static final boolean  GLOBAL_ENABLED = FSProperties.emitStatsGlobal();
+    public static final boolean     LOG_ENABLED = FSProperties.emitStatsLog();
     public long deliveredBatches, deliveredNullBatches, deliveredRows, deliveredSingleRowBatches;
     public long receivedBatches, receivedNullBatches, receivedRows, receivedSingleRowBatches;
     public long rebinds;
     public int rebindVarsChanged;
     public int receivers;
     private Vars lastRebindVars = Vars.EMPTY;
+
+    private static final VarHandle GLOBAL_BATCHES_RECEIVED, GLOBAL_ROWS_RECEIVED;
+    private static final VarHandle GLOBAL_BATCHES_DELIVERED, GLOBAL_ROWS_DELIVERED;
+    @SuppressWarnings("unused") private static long plainGlobalBatchesReceived;
+    @SuppressWarnings("unused") private static long plainGlobalRowsReceived;
+    @SuppressWarnings("unused") private static long plainGlobalBatchesDelivered;
+    @SuppressWarnings("unused") private static long plainGlobalRowsDelivered;
+    static {
+        try {
+            GLOBAL_BATCHES_RECEIVED  = MethodHandles.lookup().findStaticVarHandle(EmitterStats.class, "plainGlobalBatchesReceived",  long.class);
+            GLOBAL_ROWS_RECEIVED     = MethodHandles.lookup().findStaticVarHandle(EmitterStats.class, "plainGlobalRowsReceived",     long.class);
+            GLOBAL_BATCHES_DELIVERED = MethodHandles.lookup().findStaticVarHandle(EmitterStats.class, "plainGlobalBatchesDelivered", long.class);
+            GLOBAL_ROWS_DELIVERED    = MethodHandles.lookup().findStaticVarHandle(EmitterStats.class, "plainGlobalRowsDelivered",    long.class);
+        } catch (NoSuchFieldException|IllegalAccessException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    public static long globalBatchesDelivered() { return (long)GLOBAL_BATCHES_DELIVERED.getOpaque(); }
+    public static long  globalBatchesReceived() { return (long) GLOBAL_BATCHES_RECEIVED.getOpaque(); }
+    public static long    globalRowsDelivered() { return (long)   GLOBAL_ROWS_DELIVERED.getOpaque(); }
+    public static long     globalRowsReceived() { return (long)    GLOBAL_ROWS_RECEIVED.getOpaque(); }
+
+    public static void resetGlobalStats() {
+        GLOBAL_ROWS_RECEIVED   .setRelease(0L);
+        GLOBAL_ROWS_DELIVERED  .setRelease(0L);
+        GLOBAL_BATCHES_RECEIVED.setRelease(0L);
+        GLOBAL_BATCHES_RECEIVED.setRelease(0L);
+    }
 
     public static EmitterStats createIfEnabled() { return ENABLED ? new EmitterStats() : null; }
 
@@ -93,6 +126,13 @@ public class EmitterStats {
             ++rebindVarsChanged;
             lastRebindVars = binding.vars;
         }
+    }
+
+    public void updateGlobalCounters() {
+        GLOBAL_BATCHES_DELIVERED.getAndAddRelease(deliveredBatches);
+        GLOBAL_BATCHES_RECEIVED .getAndAddRelease(receivedBatches);
+        GLOBAL_ROWS_DELIVERED   .getAndAddRelease(deliveredRows);
+        GLOBAL_ROWS_RECEIVED    .getAndAddRelease(receivedRows);
     }
 
     public void report(Logger log, Object owner) {

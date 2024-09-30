@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.netty.util.*;
 import com.github.alexishuf.fastersparql.emit.*;
 import com.github.alexishuf.fastersparql.emit.async.BItEmitter;
@@ -1489,6 +1490,8 @@ public class NettySparqlServer implements SparqlServer {
         private void readBindings(WsServerParser<CompressedBatch> bindingsParser,
                                   SegmentRope msg) {
             try {
+                if (SubqueriesStats.ENABLED)
+                    SubqueriesStats.bindingsReceived(msg.len);
                 bindingsParser.feedShared(msg);
             } catch (BatchQueue.TerminatedException|CancelledException ignored) {}
         }

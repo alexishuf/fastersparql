@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
+import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.model.SparqlMethod;
 import com.github.alexishuf.fastersparql.client.netty.http.NettyHttpClient;
@@ -599,6 +600,8 @@ public class NettySparqlClient extends AbstractSparqlClient {
             var parser = requireNonNull(this.parser);
             try {
                 var bb = content.content();
+                if (SubqueriesStats.ENABLED)
+                    SubqueriesStats.responseReceived(bb.readableBytes());
                 if (decodeCS == null)
                     parser.feedShared(bbView.wrapAsSingle(bb));
                 else
