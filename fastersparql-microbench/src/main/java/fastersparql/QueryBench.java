@@ -294,12 +294,12 @@ public class QueryBench {
             ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
         }
         String forkTimeoutStr = System.getProperty("fastersparql.fork-timeout-secs");
-        if (forkTimeoutStr != null && !forkTimeoutStr.isEmpty()) {
+        if (forkTimeoutStr == null || forkTimeoutStr.isEmpty()) // typo:
+            forkTimeoutStr = System.getProperty("fastersparql.fastersparql.fork-timeout-secs");
+        if (forkTimeoutStr != null && !forkTimeoutStr.isEmpty())
             forkTimeoutSecs = Integer.parseInt(forkTimeoutStr);
-            System.err.printf("## fork-timeout-secs=%d\n", forkTimeoutSecs);
-        } else {
+        else
             forkTimeoutSecs = Integer.MAX_VALUE;
-        }
         OOMHandler.exitOnOOM(23);
         OOMHandler.onOOM(StopAsyncProfiler.class.getSimpleName(), new StopAsyncProfiler());
         // comunica enforces its own timeout
