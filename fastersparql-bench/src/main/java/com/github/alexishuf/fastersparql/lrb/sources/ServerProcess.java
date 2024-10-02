@@ -14,12 +14,15 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.Async.uninterruptibleWaitFor;
+import static java.lang.ProcessBuilder.Redirect.INHERIT;
+import static java.nio.file.StandardOpenOption.*;
 import static java.util.concurrent.TimeUnit.*;
 
 public class ServerProcess implements SafeCloseable {
@@ -42,7 +45,9 @@ public class ServerProcess implements SafeCloseable {
                                                        SparqlEndpoint processEndpoint,
                                                        int port, String sparqlPath) {
         try {
+            killPID(name);
             ServerProcess proc = new ServerProcess(builder, name, processEndpoint.configuration(), port, sparqlPath);
+            savePID(name, proc.process.pid());
             proc.requirePort(processEndpoint);
             return new ProcessNettySparqlClient(proc.httpEndpoint(), proc);
         } catch (Throwable t) {
@@ -51,6 +56,56 @@ public class ServerProcess implements SafeCloseable {
                 throw fs;
             }
             throw new FSServerException(processEndpoint, "Could not start fuseki", t);
+        }
+    }
+
+    private static final Path TMP_DIR = Path.of(System.getProperty("java.io.tmpdir"));
+
+    private static void killPID(String name) {
+        Path file = TMP_DIR.resolve(name);
+        if (!Files.exists(file))
+            return;
+        long pid;
+        try {
+            pid = Long.parseLong(Files.readString(file));
+        } catch (IOException e) {
+            log.info("Could not read contents of PID file at {}: {}", file, e.getMessage());
+            return;
+        }
+        if (pid < 128) {
+            log.info("PID {} for {} is too low will not kill", pid, name);
+            return;
+        }
+        try {
+            var kill = new ProcessBuilder("kill", String.valueOf(pid))
+                    .redirectOutput(INHERIT).redirectError(INHERIT).start();
+            if (!kill.waitFor(2, SECONDS))
+                log.warn("kill could not kill {} in under 2 seconds!", pid);
+            if (kill.exitValue() == 0)
+                log.info("Killed PID {} of {}", pid, name);
+        } catch (IOException e) {
+            log.warn("Failed to launch kill {} command, {}", pid, e.getMessage());
+        } catch (InterruptedException e) {
+            log.warn("Interrupted while killing {}", pid);
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void deletePID(String name, long expected) {
+        Path file = TMP_DIR.resolve(name);
+        try {
+            if (Files.exists(file) && Long.parseLong(Files.readString(file)) == expected)
+                Files.deleteIfExists(file);
+        } catch (IOException ignored) {}
+    }
+
+    private static void savePID(String name, long pid) {
+        Path file = TMP_DIR.resolve(name);
+        try {
+            Files.writeString(file, String.valueOf(pid),  StandardCharsets.UTF_8,
+                              TRUNCATE_EXISTING, WRITE, CREATE);
+        } catch (IOException e) {
+            log.warn("Failed to write PID {} of {} to {}: {}", pid, name, file, e.getMessage());
         }
     }
 
@@ -82,9 +137,13 @@ public class ServerProcess implements SafeCloseable {
                     + (sparqlPath.startsWith("/") ? "" : "/") + sparqlPath;
         this.httpEndpoint = new SparqlEndpoint(httpUri, clientConfig);
         this.process = processBuilder.start();
+        long pid = this.process.pid();
         FS.addShutdownHook(this::close); // ensure process gets killed
         this.alive = true;
-        process.onExit().whenComplete((ignored1, ignored2) -> alive = false);
+        process.onExit().whenComplete((ignored1, ignored2) -> {
+            alive = false;
+            deletePID(name, pid);
+        });
     }
 
     public static int freePort(@Nullable SparqlEndpoint processEndpoint) {
