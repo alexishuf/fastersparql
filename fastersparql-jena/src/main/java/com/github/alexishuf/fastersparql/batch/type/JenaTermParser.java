@@ -104,7 +104,7 @@ public abstract sealed class JenaTermParser extends AbstractOwned<JenaTermParser
         isLit = node.isLiteral();
         tmp.clear();
         fmt.format(writer, node);
-        shared = isLit ? SHARED_ROPES.internDatatypeOf(tmp, 0, tmp.len)
+        shared = isLit ? SHARED_ROPES.internDatatypeOf(tmp)
                        : SHARED_ROPES.internPrefixOf  (tmp, 0, tmp.len);
     }
 

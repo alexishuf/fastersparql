@@ -273,7 +273,7 @@ public class IdAccess {
             } else {
                 byte first = f.get(0);
                 if (first == '"') {
-                    shared = SHARED_ROPES.internDatatypeOf(f, 0, f.len);
+                    shared = SHARED_ROPES.internDatatypeOf(f);
                     local = shared == EMPTY ? f : asFinal(f, 0, f.len - shared.len);
                 } else if (INTERN_PREFIX && f.len > MIN_INTERNED_LEN) {
                     shared = SHARED_ROPES.internPrefixOf(f, 0, f.len);
@@ -349,7 +349,7 @@ public class IdAccess {
                 return info.setEmpty();
             byte first = f.get(0);
             if (first == '"') {
-                var dt = SHARED_ROPES.internDatatypeOf(f, 0, f.len);
+                var dt = SHARED_ROPES.internDatatypeOf(f);
                 return info.setSharedAndSegment(true, dt, f.segment, f.utf8,
                         f.offset, f.len-dt.len, true);
             } else if (INTERN_PREFIX && first == '<' && f.len > MIN_INTERNED_LEN) {

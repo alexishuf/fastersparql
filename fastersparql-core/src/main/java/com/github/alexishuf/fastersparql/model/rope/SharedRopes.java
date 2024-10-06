@@ -367,6 +367,12 @@ public class SharedRopes {
         return internDatatype(r, endLex, end);
     }
 
+    /** Equivalent to {@link #internDatatypeOf(PlainRope, int, int)} with {@code begin=0}
+     *  and {@code end=r.len} */
+    public FinalSegmentRope internDatatypeOf(PlainRope r) {
+        return internDatatypeOf(r, 0, r.len);
+    }
+
     /** Statically bound version of {@link #internPrefixOf(PlainRope, int, int)} to help the JIT. */
     public FinalSegmentRope internPrefixOf(SegmentRope r, int begin, int end) {
         int i = 1+r.skipUntilLastNear(begin, end, (byte)'/', (byte)'#');

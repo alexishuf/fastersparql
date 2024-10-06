@@ -332,7 +332,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                         if (sh.len > 0) {
                             localEnd = ntBuf.len-1;
                         } else {
-                            sh = SHARED_ROPES.internDatatypeOf(ntBuf, 0, ntBuf.len);
+                            sh = SHARED_ROPES.internDatatypeOf(ntBuf);
                             localEnd = ntBuf.len - (sh == null ? 0 : sh.len);
                         }
                         if (sh == SharedRopes.DT_string || sh == SharedRopes.DT_langString) {

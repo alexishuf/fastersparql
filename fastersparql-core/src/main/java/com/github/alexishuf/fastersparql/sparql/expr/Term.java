@@ -694,7 +694,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         else if (rope.len < 2) throw new InvalidTermException(rope, 0, "input too short");
         return switch (rope.get(0)) {
             case '"' -> {
-                SegmentRope suffix = SHARED_ROPES.internDatatypeOf(rope, 0, rope.len);
+                SegmentRope suffix = SHARED_ROPES.internDatatypeOf(rope);
                 if (suffix != null) rope.len -= suffix.len;
                 yield wrap(rope, suffix);
             }
