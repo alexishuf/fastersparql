@@ -960,7 +960,8 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         if (pos < 0 || begin < 0 || pos > len || end > rope.len)
             throw new IndexOutOfBoundsException();
         int rLen = end-begin;
-        if (pos+rLen > len) return false;
+        if (rLen     ==   0) return true;
+        if (pos+rLen >  len) return false;
         return cmp(pos, pos+rLen, rope, begin, end) == 0;
     }
 
@@ -1015,7 +1016,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return compare2_2(fst.utf8, fst.segment.address()+fst.offset+begin, fstLen,
                           snd.utf8,
                           snd.segment.address()+snd.offset+Math.max(0, begin-fst.len),
-                          len-fstLen,
+                          Math.max(0, end-Math.max(fstLen, begin)),
                           ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
     }
 
@@ -1050,7 +1051,8 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         else                   ofstLen = rEnd;
 
         return compare2_2(fst.segment, fst.offset+begin, fstLen,
-                snd.segment, snd.offset+Math.max(0, begin-fst.len), len-fstLen,
+                snd.segment, snd.offset+Math.max(0, begin-fst.len),
+                Math.max(0, end-Math.max(fstLen, begin)),
                 ofst, ofstOff, ofstLen, osnd, osndOff, osndLen);
     }
 

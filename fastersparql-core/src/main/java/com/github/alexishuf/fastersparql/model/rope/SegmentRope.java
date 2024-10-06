@@ -439,7 +439,8 @@ public abstract class SegmentRope extends PlainRope {
 
     @Override public boolean has(int position, byte[] seq) {
         if (position < 0) throw new IndexOutOfBoundsException();
-        if (position + seq.length > len) return false;
+        if (seq.length            ==   0) return true;
+        if (position + seq.length >  len) return false;
         if (U == null)
             return hasSafe(position, seq);
         return compare1_1(utf8, segment.address()+offset+position, seq.length,
@@ -447,6 +448,8 @@ public abstract class SegmentRope extends PlainRope {
     }
 
     public static boolean has(MemorySegment left, long pos, MemorySegment right, long begin, int rLen) {
+        if (rLen == 0)
+            return true;
         long end = begin+rLen;
 //        if (left != right)
 //            return mismatch(left, pos, pos+ rLen, right, begin, end) < 0;
@@ -580,8 +583,8 @@ public abstract class SegmentRope extends PlainRope {
     @Override public boolean hasAnyCase(int position, byte[] up,
                                         int upOffset, int upLen) {
         if (position < 0) throw new IndexOutOfBoundsException(position);
-        if (position+upLen > len)
-            return false;
+        if (upLen          ==   0) return true;
+        if (position+upLen >  len) return false;
         var segment = this.segment;
         long phys = position+offset;
         for (int i = upOffset, upEnd = upOffset+upLen; i < upEnd; i++) {

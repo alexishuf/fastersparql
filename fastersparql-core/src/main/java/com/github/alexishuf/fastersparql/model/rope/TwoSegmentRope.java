@@ -313,7 +313,8 @@ public class TwoSegmentRope extends PlainRope {
         if (!HAS_UNSAFE)
             return super.has(position, seq);
         if (position < 0) throw new IndexOutOfBoundsException(position);
-        if (position+seq.length > len) return false;
+        if (seq.length          ==   0) return true;
+        if (position+seq.length >  len) return false;
         int fLen;
         long sOff = snd.address()+sndOff;
         if (position < fstLen) {
@@ -332,6 +333,7 @@ public class TwoSegmentRope extends PlainRope {
         if (!HAS_UNSAFE)
             return hasNoUnsafe(pos, rope, begin, end);
         int rLen = end - begin;
+        if (rLen == 0) return true;
         if (begin < 0 || end > rope.len) throw new IndexOutOfBoundsException();
         if (pos+rLen > len) return false;
 
