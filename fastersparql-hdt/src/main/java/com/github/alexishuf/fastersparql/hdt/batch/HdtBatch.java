@@ -233,6 +233,14 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
         return HDT.hashId(id(row, col));
     }
 
+    @Override public int hash(int row) {
+        if (row >= rows) throw new IndexOutOfBoundsException("row >= rows");
+        int cols = this.cols, base = row*cols, acc = 0;
+        for (int c = 0; c < cols; c++)
+            acc ^= HDT.hashId(arr[base+c]);
+        return acc;
+    }
+
     /* --- --- --- mutators --- --- --- */
 
     /**

@@ -131,10 +131,12 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     public long id(int row, int col) {
         requireAlive();
-        if (row < 0 || col < 0 || row >= rows || col >= cols)
+        short cols = this.cols;
+        if (row >= rows || col >= cols || (CHK_NEG_IDX && (row < 0 || col < 0)))
             throw new IndexOutOfBoundsException("(row, col) out of bounds");
-        return arr[row * cols + col];
+        return arr[row*cols + col];
     }
+    private static final boolean CHK_NEG_IDX = IdBatch.class.desiredAssertionStatus();
 
     public long linkedId(int row, int col) {
         @SuppressWarnings("unchecked") B node = (B)this;
