@@ -4,7 +4,6 @@ import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.util.AutoCloseableSet;
-import org.tukaani.xz.UnsupportedOptionsException;
 
 import java.io.File;
 import java.io.IOException;
@@ -49,7 +48,15 @@ public enum SourceKind {
     FEDX_TDB2_JSON_EMIT,
     FEDX_TDB2_JSON_IT,
     FEDX_FUSEKI_TDB2_JSON,
-    FEDX_VIRTUOSO_JSON;
+    FEDX_VIRTUOSO_JSON,
+    SEDX_FS_JSON_EMIT,
+    SEDX_FS_JSON_IT,
+    SEDX_HDT_JSON_EMIT,
+    SEDX_HDT_JSON_IT,
+    SEDX_TDB2_JSON_EMIT,
+    SEDX_TDB2_JSON_IT,
+    SEDX_FUSEKI_TDB2_JSON,
+    SEDX_VIRTUOSO_JSON;
 
     private static final long IS_NN;
     private static final long IS_HDT;
@@ -63,11 +70,12 @@ public enum SourceKind {
     private static final long IS_WS;
     private static final long IS_PROCESS;
     private static final long IS_FEDX;
+    private static final long IS_SEDX;
     private static final long IS_FS_SERVER;
     private static final long IS_SERVER;
 
     static {
-        long nn = 0, hdt = 0, fs = 0, tdb = 0, fedx = 0, comu = 0;
+        long nn = 0, hdt = 0, fs = 0, tdb = 0, fedx = 0, sedx = 0, comu = 0;
         long emit = 0, it = 0, tsv = 0, json = 0, ws = 0, proc = 0;
         for (SourceKind kind : values()) {
             String name = kind.name();
@@ -77,6 +85,7 @@ public enum SourceKind {
             if (name.startsWith("VIRTUOSO_"))   proc |= 1L << ordinal;
             if (name.startsWith("FUSEKI_TDB2")) proc |= 1L << ordinal;
             if (name.startsWith("FEDX"))        fedx |= 1L << ordinal;
+            if (name.startsWith("SEDX"))        sedx |= 1L << ordinal;
             if (name.contains("_NN"))           nn   |= 1L << ordinal;
             if (name.contains("HDT_"))          hdt  |= 1L << ordinal;
             if (name.startsWith("FS_"))         fs   |= 1L << ordinal;
@@ -88,7 +97,8 @@ public enum SourceKind {
             if (name.contains("_WS"))           ws   |= 1L << ordinal;
         }
         IS_PROCESS     = proc;
-        IS_FEDX        = fedx;
+        IS_FEDX        = fedx|sedx;
+        IS_SEDX        = sedx;
         IS_NN          = nn;
         IS_HDT         = hdt;
         IS_FS          = fs;
@@ -115,6 +125,7 @@ public enum SourceKind {
     public boolean       isWs() { return (IS_WS       &(1L<<ordinal())) != 0; }
     public boolean  isProcess() { return (IS_PROCESS  &(1L<<ordinal())) != 0; }
     public boolean     isFedX() { return (IS_FEDX     &(1L<<ordinal())) != 0; }
+    public boolean     isSedX() { return (IS_SEDX     &(1L<<ordinal())) != 0; }
 
     public Optional<FlowModel> serverFlowModel() {
         int mask = 1 << ordinal();
@@ -147,9 +158,9 @@ public enum SourceKind {
             throw new IOException("Cannot open files with null dataDir.");
         if (isFedX()) {
             if (source != LrbSource.LargeRDFBench_all)
-                throw new UnsupportedOptionsException("FedX sources only allow the union LrbSource.LargeRDFBench_all");
-            String uri = "process://fedx/%s/?dir=%s".formatted(
-                    name().replace("FEDX_", ""),
+                throw new UnsupportedOperationException("FedX sources only allow the union LrbSource.LargeRDFBench_all");
+            String uri = "process://"+(isSedX() ? "sedx" : "fedx")+"/%s/?dir=%s".formatted(
+                    name().replace("FEDX_", "").replace("SEDX_", ""),
                     dataDir.getAbsolutePath()
             );
             return new SourceHandle(uri, source, this);
@@ -163,7 +174,7 @@ public enum SourceKind {
         if (isProcess()) {
             int split = name().indexOf("_");
             if (split < 0)
-                throw new UnsupportedOptionsException("process source "+this+" has no protocol");
+                throw new UnsupportedOperationException("process source "+this+" has no protocol");
             fileUri = "process://"+name().substring(0, split).toLowerCase()+"/?file="
                     + file.getAbsolutePath();
         } else {

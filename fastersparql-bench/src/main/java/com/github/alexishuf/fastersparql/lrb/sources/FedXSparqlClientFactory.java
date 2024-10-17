@@ -35,14 +35,14 @@ public class FedXSparqlClientFactory implements SparqlClientFactory {
         return false;
     }
 
-    private static final Pattern KIND_RX = Pattern.compile("process://fedx/(.*)/\\?dir=(.*)");
+    private static final Pattern KIND_RX = Pattern.compile("process://(fedx|sedx)/(.*)/\\?dir=(.*)");
 
     @Override public SparqlClient createFor(SparqlEndpoint endpoint) {
         Matcher matcher = KIND_RX.matcher(endpoint.uri());
         if (!matcher.find())
             throw new FSException("Unsupported uri: "+endpoint.uri());
-        SourceKind srcKind = SourceKind.valueOf(matcher.group(1));
-        Path dataDir = Path.of(matcher.group(2));
+        SourceKind srcKind = SourceKind.valueOf(matcher.group(2));
+        Path dataDir = Path.of(matcher.group(3));
         if (!Files.isDirectory(dataDir))
             throw new FSException("Path "+dataDir+" is nto a directory");
         if (!srcKind.isServer() || srcKind.isWs()) {
@@ -62,8 +62,11 @@ public class FedXSparqlClientFactory implements SparqlClientFactory {
                 endpoints.add(EndpointFactory.loadSPARQLEndpoint(name, uri));
                 callback.apply(null, null); // done
             });
+            var fxCfg = new FedXConfig().withEnforceMaxQueryTime(0);
+            if (matcher.group(1).equals("sedx"))
+                fxCfg.withBoundJoinBlockSize(1);
             var fx = FedXFactory.newFederation()
-                    .withConfig(new FedXConfig().withEnforceMaxQueryTime(0))
+                    .withConfig(fxCfg)
                     .withFedXBaseDir(fxDir.toFile())
                     .withMembers(endpoints).create();
             var client = new FedXSparqlClient(endpoint, fedHandle, fx);

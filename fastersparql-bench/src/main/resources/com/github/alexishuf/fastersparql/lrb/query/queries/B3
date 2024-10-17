@@ -12,4 +12,4 @@ WHERE
 ?results  tcga:beta_value ?methylationValue.
 FILTER(?age <= 51)
 }
-ORDER BY (?patient)
+#ORDER BY (?patient)
