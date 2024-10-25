@@ -35,6 +35,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.SUFF_LIT;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.util.StreamNodeDOT.Label.WITH_STATE_AND_STATS;
@@ -114,7 +115,7 @@ class GatherAndScatterTest {
                     for (long e = Math.min(end, next+n); next < e; next++) {
                         b.beginPut();
                         nt.clear().append('"').append(next);
-                        b.putTerm(0, DT_integer, nt.segment, nt.u8(), 0, nt.len, true);
+                        b.putTerm(0, DT_integer, nt.segment, nt.u8(), 0, nt.len, SUFF_LIT);
                         b.commitPut();
                     }
                     deliver(b.releaseOwnership(this));

@@ -18,6 +18,7 @@ import com.github.alexishuf.fastersparql.util.concurrent.BackgroundTasks;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
@@ -48,9 +49,8 @@ public class MergeBench {
     private BatchType<?> type;
     private List<Batch<?>> columns;
 
-    private <B extends Batch<B>> B makeBatch(int rows, int value) {
-        BatchType<B> type = (BatchType<B>) batchKind.asType(SourceKind.FS_JSON_EMIT);
-        B b = type.create(1).takeOwnership(this);
+    private <B extends Batch<B>> B makeBatch( int rows, int value) {
+        B b = ((BatchType<B>)type).create(1).takeOwnership(this);
         for (int r = 0; r < rows; r++) {
             b.beginPut();
             b.putTerm(0, Term.valueOf("\""+(value++)+"\""));
@@ -65,7 +65,7 @@ public class MergeBench {
     }
 
     @SuppressWarnings("unused") @Setup(Level.Iteration) public <B extends Batch<B>> void setup() {
-        type = batchKind.asType(SourceKind.FS_JSON_EMIT);
+        type = batchKind.asType(SourceKind.FS_JSON_EMIT, this);
         this.columns = new ArrayList<>();
         int next = 0;
         for (int i = 0; i < nShort; i++, next += shortHeight)
@@ -82,6 +82,8 @@ public class MergeBench {
         for (Batch<?> b : columns)
             b.recycle(this);
         columns.clear();
+        if (type instanceof Owned<?> o)
+            Owned.safeRecycle(o, this);
     }
 
     private static final class SourceBIt<B extends Batch<B>> extends UnitaryBIt<B> {

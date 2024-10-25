@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.hdt.batch;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.batch.type.TermInfo;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
@@ -19,9 +20,11 @@ import org.rdfhdt.hdt.dictionary.Dictionary;
 
 import java.util.Arrays;
 
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.*;
 import static com.github.alexishuf.fastersparql.hdt.batch.HdtBatchType.HDT;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.NOT_FOUND;
 import static com.github.alexishuf.fastersparql.hdt.batch.IdAccess.encode;
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static java.lang.System.arraycopy;
 import static java.lang.Thread.currentThread;
 
@@ -30,7 +33,7 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
     /* --- --- --- lifecycle --- --- --- */
 
     public HdtBatch(long[] ids, short cols) {
-        super(ids, cols);
+        super(ids, cols, HDT);
         BatchEvent.Created.record(this);
     }
 
@@ -53,8 +56,6 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
     }
 
     /* --- --- --- batch accessors --- --- --- */
-
-    @Override public HdtBatchType idType() { return HDT; }
 
     @Override public Orphan<HdtBatch> dup() {return dup((int)currentThread().threadId());}
     @Override public Orphan<HdtBatch> dup(int threadId) {
@@ -162,11 +163,11 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
             TermInfo t = new TermInfo();
             switch (IdAccess.toTermInfo(id, t)) {
                 case TERM -> dest.wrap(t.term());
-                case UNINTERNABLE -> dest.wrap(FinalSegmentRope.EMPTY, t.copyAsSegmentRope(), t.suffixShared);
+                case UNINTERNABLE -> dest.wrap(EMPTY, t.copyAsSegmentRope(), isLit(t.sharedKind));
                 case SHARED_AND_SEGMENT,IRI -> {
                     var local = new FinalSegmentRope(t.localSeg, t.localU8,
                                                      t.localOff, t.localLen);
-                    dest.wrap(t.shared, local, t.suffixShared);
+                    dest.wrap(t.shared, local, SharedKind.isLit(t.sharedKind));
                 }
                 default -> { return false; }
             }
@@ -195,7 +196,7 @@ public abstract sealed class HdtBatch extends IdBatch<HdtBatch> {
             if (nt == null)
                 return false;
             dest.wrapFirst(nt);
-            dest.wrapSecond(FinalSegmentRope.EMPTY);
+            dest.wrapSecond(EMPTY);
         }
         return true;
     }

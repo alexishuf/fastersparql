@@ -25,6 +25,7 @@ import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerial
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordingFile;
@@ -69,7 +70,7 @@ public class Measure implements Callable<Void>{
     private @MonotonicNonNull BatchType<?> batchType;
 
     @Override public Void call() throws Exception {
-        batchType = msrOp.batchKind.asType(srcOp.srcKind);
+        batchType = msrOp.batchKind.asType(srcOp.srcKind, this);
         loadProfilers();
         destDir = msrOp.destDir();
         var tasks = qryOp.queries().stream()
@@ -133,6 +134,9 @@ public class Measure implements Callable<Void>{
                     consumer = consumer.recycle(this);
                 BackgroundTasks.sync();
             }
+        } finally {
+            if (batchType instanceof Owned<?> o)
+                Owned.safeRecycle(o, this);
         }
         return null;
     }

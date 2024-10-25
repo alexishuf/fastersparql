@@ -46,13 +46,15 @@ public class MeasureOptions {
         TERM_NI,
         COMPRESSED,
         CA,
+        SCOPED,
         NATIVE;
 
-        public BatchType<?> asType(SourceKind src) {
+        public BatchType<?> asType(SourceKind src, Object ownerIfTypeIsOwned) {
             return switch (this) {
                 case TERM, TERM_NI -> TermBatchType.TERM;
                 case COMPRESSED -> CompressedBatchType.COMPRESSED;
                 case CA -> CABatchType.CA;
+                case SCOPED -> ScopedIdBatchType.beginScope().takeOwnership(ownerIfTypeIsOwned);
                 case NATIVE -> {
                     if (src.isServer())  yield CompressedBatchType.COMPRESSED;
                     if (src.isHdt())     yield HdtBatchType.HDT;

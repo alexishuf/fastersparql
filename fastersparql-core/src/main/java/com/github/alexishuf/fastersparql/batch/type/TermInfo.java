@@ -26,7 +26,8 @@ public final class TermInfo {
     public byte @Nullable [] localU8;
     public long localOff;
     public int localLen;
-    public boolean suffixShared, stable;
+    public byte sharedKind;
+    public boolean stable;
     public MemorySegment sharedSeg;
     public byte @Nullable [] sharedU8;
     public long sharedOff;
@@ -51,11 +52,11 @@ public final class TermInfo {
         localU8      = EMPTY_UTF8;
         localOff     = 0L;
         localLen     = 0;
-        sharedSeg     = EMPTY_SEGMENT;
-        sharedU8      = EMPTY_UTF8;
-        sharedOff     = 0L;
-        sharedLen     = 0;
-        suffixShared = false;
+        sharedSeg    = EMPTY_SEGMENT;
+        sharedU8     = EMPTY_UTF8;
+        sharedOff    = 0L;
+        sharedLen    = 0;
+        sharedKind   = SharedKind.WHOLE_UNKNOWN;
         stable       = false;
         return Type.EMPTY;
     }
@@ -66,7 +67,7 @@ public final class TermInfo {
         if (t != null) {
             var s        = t.finalShared();
             type         = Type.TERM;
-            suffixShared = t.sharedSuffixed();
+            sharedKind   = t.sharedKind();
             shared       = s;
             localRope    = t.local();
             localSeg     = localRope.segment;
@@ -79,7 +80,7 @@ public final class TermInfo {
             sharedLen    = s.len;
         } else {
             type         = Type.EMPTY;
-            suffixShared = false;
+            sharedKind   = SharedKind.WHOLE_UNKNOWN;
             shared       = EMPTY;
             localRope    = null;
             localSeg     = EMPTY_SEGMENT;
@@ -107,10 +108,10 @@ public final class TermInfo {
             sharedU8     = null;
             sharedOff    = 0L;
             sharedLen    = 0;
-            suffixShared = false;
+            sharedKind   = SharedKind.WHOLE_UNKNOWN;
         } else {
             type = Type.TERM;
-            suffixShared = t.sharedSuffixed();
+            sharedKind   = t.sharedKind();
             localRope    = t.local();
             localSeg     = localRope.segment;
             localU8      = localRope.utf8;
@@ -134,7 +135,7 @@ public final class TermInfo {
 
     public Type setSharedAndSegment(boolean stable, FinalSegmentRope shared,
                                     MemorySegment localSeg, byte @Nullable[] localU8,
-                                    long localOff, int localLen, boolean suffixShared) {
+                                    long localOff, int localLen, byte sharedKind) {
         var s             = shared == null ? EMPTY : shared;
         if (localLen == 0 && s.len == 0) {
             this.type = Type.EMPTY;
@@ -147,7 +148,7 @@ public final class TermInfo {
             this.type = Type.SHARED_AND_SEGMENT;
         }
         this.stable       = stable;
-        this.suffixShared = suffixShared;
+        this.sharedKind   = sharedKind;
         this.term         = null;
         this.localRope    = null;
         this.localSeg     = localSeg;
@@ -165,7 +166,7 @@ public final class TermInfo {
     public Type setIri(FinalSegmentRope iri) {
         this.type         = iri.len == 0 ? Type.EMPTY : Type.IRI;
         this.term         = null;
-        this.suffixShared = false;
+        this.sharedKind   = SharedKind.WHOLE_IRI_OR_BLANK;
         this.shared       = EMPTY;
         this.localRope    = iri;
         this.localSeg     = iri.segment;
@@ -189,7 +190,7 @@ public final class TermInfo {
         this.localRope    = null;
         this.shared       = EMPTY;
         if (localIsSnd) {
-            this.suffixShared = false;
+            this.sharedKind   = SharedKind.PREF_IRI_OR_BLANK;
             this.sharedSeg    = tsr.fst;
             this.sharedU8     = tsr.fstU8;
             this.sharedOff    = tsr.fstOff;
@@ -199,7 +200,7 @@ public final class TermInfo {
             this.localOff     = tsr.sndOff;
             this.localLen     = tsr.sndLen;
         } else {
-            this.suffixShared = true;
+            this.sharedKind   = SharedKind.SUFF_LIT;
             this.sharedSeg    = tsr.snd;
             this.sharedU8     = tsr.sndU8;
             this.sharedOff    = tsr.sndOff;
@@ -216,7 +217,7 @@ public final class TermInfo {
         int bytes = sharedLen + localLen;
         if (bytes == 0) return EMPTY;
         RopeFactory fac = RopeFactory.make(bytes);
-        for (int i = suffixShared ? 1 : 0, i2 = i+2; i < i2; i++) {
+        for (int i = SharedKind.isSuffix(sharedKind) ? 1 : 0, i2 = i+2; i < i2; i++) {
             if ((i&1)==0)
                 fac.add(localSeg, localU8, localOff, localLen);
             else

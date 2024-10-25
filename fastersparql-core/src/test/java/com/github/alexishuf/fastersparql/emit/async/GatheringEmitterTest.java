@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.emit.async;
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.client.util.TestTaskSet;
 import com.github.alexishuf.fastersparql.emit.CollectingReceiver;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
@@ -49,7 +50,7 @@ class GatheringEmitterTest {
             for (int i = 0; i < rows; i++) {
                 expected.beginPut();
                 local.clear().append((long)id*height + i).append('>');
-                expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
+                expected.putTerm(0, PREFIX, local.utf8, 0, local.len, SharedKind.PREF_IRI_OR_BLANK);
                 expected.commitPut();
             }
             return g.take();

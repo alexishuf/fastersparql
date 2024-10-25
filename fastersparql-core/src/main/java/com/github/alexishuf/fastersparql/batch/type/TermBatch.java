@@ -155,20 +155,20 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
     @Override
     public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
                                         byte @Nullable [] localU8, long localOff,
-                                        int localLen, boolean sharedSuffix) {
+                                        int localLen, byte sharedKind) {
         var tail = this.tail;
         if (col < 0 || col >= tail.cols)
             throw new IndexOutOfBoundsException(col);
         FinalTerm term;
         if ((shared == null || shared.len == 0) && localLen == 0) {
             term = null;
-        } else if (NO_INTERN_IRI && !sharedSuffix) {
+        } else if (NO_INTERN_IRI && !SharedKind.isLit(sharedKind)) {
             term = makeTermNoIntern(shared, local, localOff, localLen);
         } else {
             var localRope = new SegmentRopeView().wrap(local, localU8, localOff, localLen);
             SegmentRope fst, snd;
-            if (sharedSuffix) { fst = localRope; snd =    shared; }
-            else              { fst =    shared; snd = localRope; }
+            if (SharedKind.isSuffix(sharedKind)) { fst = localRope; snd =    shared; }
+            else                                 { fst =    shared; snd = localRope; }
             term = Term.wrap(fst, snd);
         }
         tail.arr[tail.offerRowBase+col] = term;

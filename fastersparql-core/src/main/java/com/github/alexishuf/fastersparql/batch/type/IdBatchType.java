@@ -16,21 +16,24 @@ import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED
 import static java.lang.Thread.currentThread;
 
 public abstract class IdBatchType<B extends IdBatch<B>> extends BatchType<B> {
+    public IdBatchType(IdBatchType<B> parent) {
+        super(parent);
+    }
     public IdBatchType(Class<B> cls, Supplier<B> factory) {
         super(cls, factory, factory, IdBatch.BYTES);
     }
 
-    @Override public Orphan<B> createForThread(int threadId, int cols) {
-        return createForThread0(threadId).clear(cols).releaseOwnership(RECYCLED);
+    @Override public final Orphan<B> createForThread(int threadId, int cols) {
+        return createForThread0(threadId).clear(cols, this).releaseOwnership(RECYCLED);
     }
 
-    @Override public @Nullable Orphan<B> pollForThread(int threadId, int cols) {
+    @Override public final @Nullable Orphan<B> pollForThread(int threadId, int cols) {
         B b = pollForThread0(threadId);
-        return b == null ? null : b.clear(cols).releaseOwnership(RECYCLED);
+        return b == null ? null : b.clear(cols, this).releaseOwnership(RECYCLED);
     }
 
-    @Override public B emptyForThread(int threadId, @Nullable B offer, Object owner, int cols) {
-        return emptyForThread0(threadId, offer, owner).clear(cols);
+    @Override public final B emptyForThread(int threadId, @Nullable B offer, Object owner, int cols) {
+        return emptyForThread0(threadId, offer, owner).clear(cols, this);
     }
 
     @Override public Orphan<B> create(int cols) {

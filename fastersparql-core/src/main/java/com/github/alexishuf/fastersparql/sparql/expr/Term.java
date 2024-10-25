@@ -25,6 +25,8 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.SUFF_LIT;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.asKind;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.RopeFactory.make;
@@ -1208,6 +1210,9 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     public FinalSegmentRope finalShared() { return (FinalSegmentRope)shared(); }
     public SegmentRope            local() { return (flags & IS_SUFFIX) != 0 ? first  : second; }
     public boolean       sharedSuffixed() { return (flags & IS_SUFFIX) != 0; }
+    public byte              sharedKind() {
+        return (flags&IS_SUFFIX) != 0 ? SUFF_LIT : asKind(type(), first.len != 0);
+    }
 
 
     /** If this is a var, gets its name (without leading '?'/'$'). Else, return {@code null}. */

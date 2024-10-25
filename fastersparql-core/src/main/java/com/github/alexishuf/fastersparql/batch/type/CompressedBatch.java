@@ -17,6 +17,8 @@ import java.lang.foreign.MemorySegment;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.WHOLE_UNKNOWN;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.isLit;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
@@ -399,16 +401,10 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col, TermInfo info) {
         short i2 = slBase(row, col), len = slices[i2+SL_LEN];
-        boolean suffix = len < 0;
-        len &= LEN_MASK;
-        FinalSegmentRope sh = shared[row*cols + col];
-        if (sh == null) {
-            if (len == 0)
-                return info.setEmpty();
-            sh = EMPTY;
-        }
+        var sh = shared[row*cols + col];
+        byte sharedKind = SharedKind.make(sh != null, len < 0);
         return info.setSharedAndSegment(false, sh, localsSeg, locals,
-                                        slices[i2+SL_OFF], len, suffix);
+                                        slices[i2+SL_OFF], len&LEN_MASK, sharedKind);
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {
@@ -947,40 +943,58 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
 
     @Override
     public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
-                        byte @Nullable[] localU8, long localOff, int localLen, boolean sharedSuffix) {
+                        byte @Nullable[] localU8, long localOff, int localLen, byte sharedKind) {
         int dest = allocTermMaybeChangeTail(col, shared,
-                             localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+                             localLen | (isLit(sharedKind) ? SH_SUFF_MASK : 0));
         if (localU8 != null)
             arraycopy(localU8, (int)(localOff+local.address()), tail.locals, dest, localLen);
         else
             MemorySegment.copy(local, JAVA_BYTE, localOff, tail.locals, dest, localLen);
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            checkLiteral(col, dest);
+    }
+
+    private void checkLiteral(int destCol, int dest) {
+        if (tail.locals[dest] == '"')
+            tail.slices[((tail.rows*tail.cols + destCol)<<1) + SL_LEN] |= SH_SUFF_MASK;
+
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff, int localLen, boolean sharedSuffix) {
+    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
+                        int localLen, byte sharedKind) {
         int dest = allocTermMaybeChangeTail(col, shared,
-                              localLen|(sharedSuffix?SH_SUFF_MASK : 0));
+                              localLen|(isLit(sharedKind)?SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, tail.locals, dest);
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            checkLiteral(col, dest);
     }
 
-    public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff, int localLen, boolean sharedSuffix) {
+    public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff,
+                        int localLen, byte sharedKind) {
         int dest = allocTermMaybeChangeTail(col, shared,
-                             localLen | (sharedSuffix ? SH_SUFF_MASK : 0));
+                             localLen | (isLit(sharedKind) ? SH_SUFF_MASK : 0));
         arraycopy(local, localOff, tail.locals, dest, localLen);
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            checkLiteral(col, dest);
     }
 
     public void putTerm(int col, FinalSegmentRope shared, SegmentRope local, int localOff,
-                        int localLen, boolean sharedSuffix) {
+                        int localLen, byte sharedKind) {
         int dest = allocTermMaybeChangeTail(col, shared,
-                             localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
+                             localLen|(isLit(sharedKind) ? SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            checkLiteral(col, dest);
     }
 
     public void putTerm(int col, FinalSegmentRope shared, TwoSegmentRope local, int localOff,
-                        int localLen, boolean sharedSuffix) {
+                        int localLen, byte sharedKind) {
         int dest = allocTermMaybeChangeTail(col, shared,
-                             localLen|(sharedSuffix ? SH_SUFF_MASK : 0));
+                             localLen|(isLit(sharedKind) ? SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            checkLiteral(col, dest);
     }
 
     @Override protected void internIriPrefixDuringConversion(TermInfo t) {
@@ -997,14 +1011,14 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             return; // failed to intern
         t.setSharedAndSegment(t.stable, sh, t.localSeg, t.localU8,
                              t.localOff+sh.len,
-                             t.localLen-sh.len, false);
+                             t.localLen-sh.len, SharedKind.iriOrBlank(sh != EMPTY));
     }
 
     protected void putUninternable(int destCol, TermInfo t) {
         int fLen = (t.sharedLen + t.localLen)
-                 | (t.suffixShared ? SH_SUFF_MASK : 0);
+                 | (isLit(t.sharedKind) ? SH_SUFF_MASK : 0);
         int dest = allocTermMaybeChangeTail(destCol, EMPTY, fLen);
-        int first = t.suffixShared ? 0 : 1;
+        int first = isLit(t.sharedKind) ? 0 : 1;
         for (int i = 0, n; i < 2; i++, dest += n) {
             if (((first+i)&1) == 0)
                 MemorySegment.copy(t.localSeg, t.localOff, localsSeg, dest, n=t.localLen);

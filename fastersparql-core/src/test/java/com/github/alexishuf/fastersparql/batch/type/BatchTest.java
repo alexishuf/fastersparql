@@ -54,11 +54,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 class BatchTest {
+    private static final ScopedIdBatchType.WithScope SCOPED
+            = ScopedIdBatchType.WithoutScope.beginScope().takeOwnership(BatchTest.class);
     private static final List<BatchType<?>> TYPES = List.of(
             TERM,
             COMPRESSED,
             CA,
-            StoreBatchType.STORE
+            StoreBatchType.STORE,
+            SCOPED
     );
     private static StoreSparqlClient storeSparqlClient;
 
@@ -195,6 +198,7 @@ class BatchTest {
     @AfterAll static void afterAll() {
         storeSparqlClient.close();
         StoreBatch.TEST_DICT = 0;
+        SCOPED.recycle(BatchTest.class);
     }
 
 
@@ -497,10 +501,10 @@ class BatchTest {
                         b4.putTerm(c, t);
                         byte[] u8 = ("(" + (t == null ? "" : t.local()) + ")").getBytes(UTF_8);
                         FinalSegmentRope sh = t == null ? null : t.finalShared();
-                        boolean sharedSuffixed = t != null && t.sharedSuffixed();
+                        byte shKind = t == null ? SharedKind.WHOLE_UNKNOWN : t.sharedKind();
                         MemorySegment u8Seg = MemorySegment.ofArray(u8);
-                        b7.putTerm(c, sh, u8Seg, u8, 1, u8.length-2, sharedSuffixed);
-                        b8.putTerm(c, sh, u8Seg, u8, 1, u8.length-2, sharedSuffixed);
+                        b7.putTerm(c, sh, u8Seg, u8, 1, u8.length-2, shKind);
+                        b8.putTerm(c, sh, u8Seg, u8, 1, u8.length-2, shKind);
                     }
                     b1.commitPut();
                     for (int c = size.cols-1; c >= 0; c--) {
@@ -1372,15 +1376,15 @@ class BatchTest {
             byte[] uriLocalU = (byte[])uriLocalSeg.heapBase().orElse(null);
             var ex = g.create(0, type, 2);
             ex.beginPut();
-            ex.putTerm(0, FinalSegmentRope.EMPTY, name0Seg, name0U, 0, name.length(), false);
+            ex.putTerm(0, FinalSegmentRope.EMPTY, name0Seg, name0U, 0, name.length(), SharedKind.WHOLE_LIT);
             ex.putTerm(1, place);
             ex.commitPut();
 
             var ac = g.create(1, type, 2);
             ac.beginPut();
-            ac.putTerm(0, FinalSegmentRope.EMPTY, name2Seg, name2U, 2, name.length(), true);
+            ac.putTerm(0, FinalSegmentRope.EMPTY, name2Seg, name2U, 2, name.length(), SharedKind.WHOLE_LIT);
             ac.putTerm(1, asFinal("<http://sws.geonames.org/"),
-                        uriLocalSeg, uriLocalU, 0L, 9, false);
+                        uriLocalSeg, uriLocalU, 0L, 9, SharedKind.PREF_IRI_OR_BLANK);
             ac.commitPut();
 
             for (int c = 0; c < 2; c++) {

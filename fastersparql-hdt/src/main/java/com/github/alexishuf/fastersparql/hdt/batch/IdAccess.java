@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.hdt.batch;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.batch.type.TermInfo;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
@@ -216,7 +217,7 @@ public class IdAccess {
      * @param sourcedId an ID annotated with a role and dictId that need not correspond to the
      *                  {@code dict} and {@code role} arguments.
      * @return -1 If {@code sourcedId} does not appear in {@code dict} at the given {@code role},
-     *         0 iff {@code plain(sourcedId} == 0} else an id {@code > 0} such that
+     *         0 iff {@code plain(sourcedId == 0} else an id {@code > 0} such that
      *         {@code dict.idToString(id, role).equals(toString(sourcedId))}
      */
     public static long plainIn(Dictionary dict, TripleComponentRole role, long sourcedId) {
@@ -351,12 +352,12 @@ public class IdAccess {
             if (first == '"') {
                 var dt = SHARED_ROPES.internDatatypeOf(f);
                 return info.setSharedAndSegment(true, dt, f.segment, f.utf8,
-                        f.offset, f.len-dt.len, true);
+                        f.offset, f.len-dt.len, SharedKind.SUFF_LIT);
             } else if (INTERN_PREFIX && first == '<' && f.len > MIN_INTERNED_LEN) {
                 return info.setIri(f);
             }
             return info.setSharedAndSegment(true, EMPTY, f.segment, f.utf8,
-                                            f.offset, f.len, false);
+                                            f.offset, f.len, SharedKind.WHOLE_IRI_OR_BLANK);
         }
         str = str == null ? toString(sourcedId) : str;
         if (str == null)
@@ -364,7 +365,7 @@ public class IdAccess {
         byte[] u8 = peekU8(str);
         int len = str.length();
         FinalSegmentRope shared = EMPTY;
-        boolean suffixShared = false;
+        byte sharedKind;
         FinalSegmentRope nt = switch (str.charAt(0)) {
             case '"' -> {
                 int reqBytes = u8 == null ? escapedStringRequiredBytes(str)
@@ -379,13 +380,14 @@ public class IdAccess {
                 int endLex  = (int)(endLexAndDstPos>>>32);
                 if (r.len-endLex > MIN_INTERNED_LEN)
                     shared = SHARED_ROPES.internDatatype(r, endLex, r.len);
-                suffixShared = true;
+                sharedKind = SharedKind.lit(shared != EMPTY);
                 yield r;
             }
             case '_' -> {
                 var fac = RopeFactory.make(u8 == null ? requiredBytes(str) : len);
                 if (u8 ==  null) fac.add(str);
                 else             fac.add(u8, 0, len);
+                sharedKind = SharedKind.WHOLE_IRI_OR_BLANK;
                 yield fac.take();
             }
             default -> {
@@ -396,13 +398,14 @@ public class IdAccess {
                 var r = fac.add('>').take();
                 if (INTERN_PREFIX && bytes > MIN_INTERNED_LEN)
                     shared = SHARED_ROPES.internPrefixOf(r, 0, r.len);
+                sharedKind = SharedKind.iriOrBlank(shared != EMPTY);
                 yield r;
             }
         };
         offerCache(sourcedId, nt);
         return info.setSharedAndSegment(true, shared, nt.segment, nt.utf8,
-                nt.offset+(suffixShared ? 0 : shared.len),
-                nt.len-shared.len, suffixShared);
+                nt.offset+(SharedKind.isSuffix(sharedKind) ? 0 : shared.len),
+                nt.len-shared.len, sharedKind);
     }
 
     private static final boolean INTERN_PREFIX = !FSProperties.batchNoInternIri();
@@ -775,7 +778,7 @@ public class IdAccess {
      */
     public static void release(int dictId) {
         log.debug("Releasing dict {}", dictId);
-        // remove all cached entries refering to this dict
+        // remove all cached entries referring to this dict
         long shiftedDictId = (long)dictId << DICT_BIT;
         for (int i = 0; i < CACHE_SIZE; i++) {
             long sourcedId = (long)CACHE_ID.getAcquire(cachedSourcedIds, i);

@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -51,17 +52,23 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
     protected final Alloc<B> pool;
     /** A 0-based auto-increment id unique to this {@link BatchType} instance. */
     public final int id;
-    private final String name;
+    protected @MonotonicNonNull String toStringCache;
 
-    public BatchType(Class<B> cls, Supplier<B> primerFactory, Supplier<B> factory,
-                     int bytesPerBatch) {
+    protected BatchType(Class<B> cls, Supplier<B> primerFactory, Supplier<B> factory,
+                        int bytesPerBatch) {
         this.id = (int)NEXT_ID.getAndAddRelease(1);
         if (this.id > MAX_BATCH_TYPE_ID)
             throw new IllegalStateException("Too many BatchType instances");
-        this.name = getClass().getSimpleName().replaceAll("Type$", "");
         this.pool = new Alloc<>(cls, toString(), POOL_SHARED, factory, bytesPerBatch);
         Primer.INSTANCE.sched(() -> pool.prime(primerFactory, 2, PRIME_ADD));
     }
+
+    protected BatchType(BatchType<B> parent) {
+        this.id            = parent.id;
+        this.pool          = parent.pool;
+        this.toStringCache = null;
+    }
+
 
     /** Get the {@link Class} object of {@code B}. */
     @SuppressWarnings("unused") public final Class<B> batchClass() { return pool.itemClass(); }
@@ -286,7 +293,11 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
         return filter(vars, filter, null);
     }
 
-    @Override public String toString() { return name; }
+    @Override public String toString() {
+        if (toStringCache == null)
+            toStringCache = getClass().getSimpleName().replaceAll("Type$", "");
+        return toStringCache;
+    }
 
     @Override public boolean equals(Object o) {
         return o instanceof BatchType<?> && o.getClass().equals(getClass());

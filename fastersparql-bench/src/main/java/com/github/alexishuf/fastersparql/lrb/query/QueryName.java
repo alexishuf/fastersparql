@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
@@ -208,7 +209,7 @@ public enum QueryName {
                     }
                     var local = tmp.len == 0 ? view : tmp;
                     out.putTerm(c, in.shared(r, c), local.segment, local.utf8, local.offset,
-                                local.len, true);
+                                local.len, SharedKind.SUFF_LIT);
                 } else {
                     out.putTerm(c, in, r, c);
                 }
@@ -290,7 +291,7 @@ public enum QueryName {
                         }
                     }
                     out.putTerm(c, in.shared(r, c), tmp.segment, tmp.utf8, 0,
-                                tmp.len, true);
+                                tmp.len, SharedKind.SUFF_LIT);
                 }
             }
             out.commitPut();
@@ -321,7 +322,7 @@ public enum QueryName {
                             int dot = local.skipUntil(0, local.len, (byte)'.');
                             rope.clear().append(local, 0, dot);
                             amp.putTerm(c, tmp.finalShared(), rope.segment, rope.utf8, 0,
-                                        rope.len, true);
+                                        rope.len, SharedKind.SUFF_LIT);
                         } else {
                             amp.putTerm(c, node, r, c);
                         }

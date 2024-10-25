@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql.results;
 
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatchType;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
@@ -53,7 +54,7 @@ public final class WsBindingSeq {
             len = 10;
         }
         batch.putTerm(col, FinalSegmentRope.EMPTY, tmpSeg, tmp,
-                      0, len, true);
+                      0, len, SharedKind.WHOLE_LIT);
     }
 
     public Term toTerm(long seq) {

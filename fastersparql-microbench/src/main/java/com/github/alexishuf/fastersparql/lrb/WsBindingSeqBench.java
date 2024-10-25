@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.lrb;
 
 import com.github.alexishuf.fastersparql.batch.type.CompressedBatch;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.results.WsBindingSeq;
 import com.github.alexishuf.fastersparql.util.IOUtils;
@@ -43,7 +44,7 @@ public class WsBindingSeqBench {
             for (int i = 0; i < N_ROWS; i++) {
                 seedBatch.beginPut();
                 wbs.write(i, seedBatch, 0);
-                seedBatch.putTerm(1, null, filler.utf8, 0, filler.len, true);
+                seedBatch.putTerm(1, null, filler.utf8, 0, filler.len, SharedKind.WHOLE_LIT);
                 seedBatch.commitPut();
 
                 CompressedBatch tail = seedBatch.tail();

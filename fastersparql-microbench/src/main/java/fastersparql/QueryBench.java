@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.ScopedIdBatchType;
 import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
@@ -37,6 +38,7 @@ import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.concurrent.*;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.BenchmarkParams;
@@ -335,7 +337,7 @@ public class QueryBench {
         queryList = new QueryOptions(List.of(queries)).queries();
         if (queryList.isEmpty())
             throw new IllegalArgumentException("No queries selected");
-        batchType = batchKind.asType(srcKind);
+        batchType = batchKind.asType(srcKind, this);
         boundCounter   = new BoundCounter<>  (batchType);
         rowCounter     = new RowCounter<>    (batchType);
         ropeLenCounter = new RopeLenCounter<>(batchType);
@@ -427,6 +429,8 @@ public class QueryBench {
             //watchdog.join(Duration.ofSeconds(1));
         //} catch (InterruptedException ignored) {}
         fedHandle.close();
+        if (batchType instanceof Owned<?> o)
+            batchType = Owned.safeRecycle(o, this);
         SharedEventLoopGroupHolder.get().shutdownNowIfPossible(Integer.MAX_VALUE, SECONDS);
         NettySparqlServer.ACCEPT_ELG.shutdownNowIfPossible(Integer.MAX_VALUE, SECONDS);
         FS.shutdown();
@@ -516,6 +520,7 @@ public class QueryBench {
             sb.setLength(sb.length()-1);
             System.out.print(sb.append('\n'));
         }
+        resetBatchType(); // recycles Scope and creates a new one if ScopedIdBatchType
         ++iterationNumber;
         lastIterationMs = (System.nanoTime()-iterationStart)/1_000_000L;
     }
@@ -630,6 +635,14 @@ public class QueryBench {
         }
     }
 
+    private BatchType<?> resetBatchType() {
+        if (batchType instanceof ScopedIdBatchType.WithScope s) {
+            batchType = Owned.safeRecycle(s, this);
+            batchType = ScopedIdBatchType.beginScope().takeOwnership(this);
+        }
+        return batchType;
+    }
+
     private int execute(Blackhole bh, BatchConsumer<?, ?> consumer, IntSupplier resultGetter) {
         if (skip)
             return lastBenchResult;
@@ -641,7 +654,7 @@ public class QueryBench {
             switch (flowModel) {
                 case ITERATE -> {
                     for (Plan plan : plans) {
-                        var it = plan.execute(batchType);
+                        var it = plan.execute(resetBatchType());
                         armWatchdog(currentPlan=plan, streamNode=it);
                         QueryRunner.drainWild(it, consumer, drainTimeoutMs);
                         disarmWatchdog();
@@ -649,7 +662,7 @@ public class QueryBench {
                 }
                 case EMIT -> {
                     for (Plan plan : plans) {
-                        var em = plan.emit(batchType, Vars.EMPTY);
+                        var em = plan.emit(resetBatchType(), Vars.EMPTY);
                         armWatchdog(currentPlan=plan, streamNode=(StreamNode)em);
                         QueryRunner.drainWild(em, consumer, drainTimeoutMs);
                         disarmWatchdog();

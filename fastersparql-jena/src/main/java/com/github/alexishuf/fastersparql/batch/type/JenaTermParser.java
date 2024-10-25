@@ -18,6 +18,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.lang.foreign.MemorySegment;
 import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.RopeEncoder.MUTABLE_ROPE_APPENDER;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
@@ -46,7 +47,7 @@ public abstract sealed class JenaTermParser extends AbstractOwned<JenaTermParser
         return ALLOC.create().releaseOwnership(RECYCLED);
     }
     private JenaTermParser(int capacity) {
-        shared  = FinalSegmentRope.EMPTY;
+        shared  = EMPTY;
         tmp     = new MutableRope(capacity);
         writer = new W(tmp);
     }
@@ -115,16 +116,17 @@ public abstract sealed class JenaTermParser extends AbstractOwned<JenaTermParser
             jb.putTerm(col, node);
         } else  {
             parse(node);
-            dst.putTerm(col, shared, tmp.segment, tmp.utf8, localOff(), localLen(), isLit);
+            dst.putTerm(col, shared, tmp.segment, tmp.utf8, localOff(), localLen(), sharedKind());
         }
     }
 
-    public FinalSegmentRope      shared() { return shared; }
-    public boolean         suffixShared() { return isLit; }
-    public byte @NonNull[]    localUtf8() { return tmp.u8(); }
-    public MemorySegment   localSegment() { return tmp.segment; }
-    public int                 localOff() { return isLit ? 0 : shared.len; }
-    public int                 localLen() { return tmp.len-shared.len; }
+    public FinalSegmentRope      shared() {return shared;}
+    public boolean         suffixShared() {return isLit;}
+    public byte              sharedKind() {return SharedKind.make(shared!=EMPTY, isLit);}
+    public byte @NonNull[]    localUtf8() {return tmp.u8();}
+    public MemorySegment   localSegment() {return tmp.segment;}
+    public int                 localOff() {return isLit ? 0 : shared.len;}
+    public int                 localLen() {return tmp.len-shared.len;}
 
     public FinalSegmentRope   localCopy() {
         int len = tmp.len - shared.len;

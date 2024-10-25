@@ -3,7 +3,6 @@ package com.github.alexishuf.fastersparql.batch.type;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
-import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
@@ -39,25 +38,27 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         }
     }
 
-    public    final  long[] arr;
-    public    final short   termsCapacity;
-    protected       short   offerRowBase = -1;
+    public    final  long[]  arr;
+    public    final short    termsCapacity;
+    protected       short    offerRowBase = -1;
+    protected IdBatchType<B> type;
     @SuppressWarnings("unused") // access through CACHED_LOCK
     private boolean plainCachedLock;
     private short cachedAddr = -1;
     private FinalTerm cachedTerm;
 
-    protected IdBatch(long[] ids, short cols) {
+    protected IdBatch(long[] ids, short cols, IdBatchType<B> type) {
         super((short)0, cols);
         if (ids.length < cols)
             throw new IllegalArgumentException("ids.length < cols");
         this.arr           = ids;
         this.termsCapacity = (short)arr.length;
+        this.type = type;
         updateLeakDetectorRefCapacity();
     }
 
     @SuppressWarnings("unchecked") @Override public @Nullable B recycle(Object currentOwner) {
-        IdBatchType<B> type = idType();
+        IdBatchType<B> type = this.type;
         Object nodeOwner = currentOwner;
         for (B node = (B)this, next; node != null; nodeOwner=node, node=next) {
             node.internalMarkRecycled(nodeOwner);
@@ -65,6 +66,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             node.next = null;
             node.tail = node;
             BatchEvent.Pooled.record(node);
+            node.nodeCleanupBeforeRecycle();
             if (type.pool.offer(node) != null) {
                 try {
                     node.internalMarkGarbage(RECYCLED);
@@ -73,6 +75,8 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         }
         return null;
     }
+
+    protected void nodeCleanupBeforeRecycle() {}
 
     @Override protected @Nullable B internalMarkGarbage(Object currentOwner) {
         super.internalMarkGarbage(currentOwner);
@@ -98,9 +102,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     @Override public boolean hasCapacity(int terms, int local) { return terms <= termsCapacity; }
 
-    @Override public final BatchType<B> type() { return idType(); }
-
-    public abstract IdBatchType<B> idType();
+    @Override public final BatchType<B> type() { return type; }
 
     /* --- --- --- helpers --- --- --- */
 
@@ -125,7 +127,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
     }
 
 
-    protected B createTail() {return setTail(idType().create(cols));}
+    protected B createTail() {return setTail(type.create(cols));}
 
     /* --- --- --- term-level access --- --- --- */
 
@@ -185,6 +187,20 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         this.cachedAddr = -1;
         this.cachedTerm = null;
         this.tail       = (B)this;
+        return (B)this;
+    }
+
+    @SuppressWarnings("unchecked") protected final @This B clear(int cols, IdBatchType<B> type) {
+        if (cols > termsCapacity)
+            throw new IllegalArgumentException("cols too large");
+        if (next != null)
+            next = next.recycle(this);
+        this.cols       = (short)cols;
+        this.rows       =  0;
+        this.cachedAddr = -1;
+        this.cachedTerm = null;
+        this.tail       = (B)this;
+        this.type       = type;
         return (B)this;
     }
 
@@ -357,50 +373,6 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
             dstPos = 0;
         }
         dst.doPut(other, row*cols, dstPos, (short)1, cols);
-    }
-
-    public final void putConverting(Batch<?> other) {
-        if (other.type() == type()) {//noinspection unchecked
-            copy((B)other);
-            return;
-        }
-        short cols = this.cols;
-        if (other.cols != cols) throw new IllegalArgumentException("cols mismatch");
-        try (var t = PooledTermView.ofEmptyString()) {
-            for (short oRows; other != null; other = other.next) {
-                other.requireAlive();
-                if ((oRows = other.rows) <= 0)
-                    continue; // skip empty batches
-                for (int r = 0; r < oRows; r++) {
-                    beginPut();
-                    for (int c = 0; c < cols; c++) {
-                        if (other.getView(r, c, t))
-                            putTerm(c, t);
-                    }
-                    commitPut();
-                }
-            }
-        }
-    }
-
-    @Override public final void putRowConverting(Batch<?> other, int row) {
-        short cols = this.cols;
-        if (other.cols != cols)
-            throw new IllegalArgumentException("cols mismatch");
-        this .requireAlive();
-        other.requireAlive();
-
-        try (var t = PooledTermView.ofEmptyString()) {
-            beginPut();
-            for (int c = 0; c < cols; c++) {
-                if (other.getView(row, c, t))
-                    putTerm(c, t);
-            }
-            commitPut();
-        } catch (Throwable t) {
-            abortPut();
-            throw t;
-        }
     }
 
     /* --- --- --- operation objects --- --- --- */

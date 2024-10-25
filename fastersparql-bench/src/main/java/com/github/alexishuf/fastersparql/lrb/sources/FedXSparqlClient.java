@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.emit.Emitter;
@@ -230,7 +231,7 @@ public class FedXSparqlClient extends AbstractSparqlClient {
                                 shared = EMPTY;
                                 ntHelper.write(lit);
                             }
-                            dest.putTerm(col, shared, tmp, 0, tmp.len, true);
+                            dest.putTerm(col, shared, tmp, 0, tmp.len, SharedKind.SUFF_LIT);
                         }
                         case BNode bn -> {
                             String id = bn.getID();
@@ -238,13 +239,13 @@ public class FedXSparqlClient extends AbstractSparqlClient {
                                 tmp.append(ANON_BNODE_PREFIX).append(nextBNodeId++);
                             else
                                 tmp.append(BNODE_PREFIX).append(id);
-                            dest.putTerm(col, EMPTY, tmp, 0, tmp.len, false);
+                            dest.putTerm(col, EMPTY, tmp, 0, tmp.len, SharedKind.WHOLE_IRI_OR_BLANK);
                         }
                         case IRI iri -> {
                             tmp.clear().append('<').append(iri.getNamespace());
                             var shared = SHARED_ROPES.internPrefix(tmp, 0, tmp.len);
                             tmp.clear().append(iri.getLocalName()).append('>');
-                            dest.putTerm(col, shared, tmp, 0, tmp.len, false);
+                            dest.putTerm(col, shared, tmp, 0, tmp.len, SharedKind.iriOrBlank(shared != EMPTY));
                         }
                         case null -> { /* do nothing */ }
                         default -> throw new InvalidSparqlResultsException("unexpected RDF value type: "+value.getClass());

@@ -21,6 +21,7 @@ import java.util.List;
 import static com.github.alexishuf.fastersparql.batch.type.BatchType.PREFERRED_BATCH_TERMS;
 import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.WHOLE_UNKNOWN;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_SEGMENT;
@@ -88,18 +89,22 @@ public sealed class CABatch extends Batch<CABatch> {
     }
     private void setTerm(int termIdx, @Nullable FinalSegmentRope sh,
                          MemorySegment localSeg,
-                         long offset, int len, boolean suffixShared, int hash) {
+                         long offset, int len, byte sharedKind, int hash) {
         long md0 = ((long)hash<<32) | (len&0x7fffffffL);
-        if (suffixShared) {
+        if (SharedKind.isLit(sharedKind)
+                || (sharedKind == WHOLE_UNKNOWN && len != 0 && isLit(localSeg, offset))) {
             md0 |= 0x80000000L;
-            if (sh == EMPTY)
-                sh = null;
         }
+        if (sh == EMPTY)
+            sh = null;
         int i = termIdx<<1;
         md  [i  ] = md0;
         md  [i+1] = offset;
         objs[i+SHR_IDX] = sh;
         objs[i+SEG_IDX] = localSeg;
+    }
+    private static boolean isLit(MemorySegment localSeg, long offset) {
+        return localSeg.get(JAVA_BYTE, offset) == '"';
     }
     private void copyTerm(int dstTerm, CABatch o, int srcTerm) {
         int s = srcTerm<<1, d = dstTerm<<1;
@@ -412,7 +417,7 @@ public sealed class CABatch extends Batch<CABatch> {
                 lOff  = naked.begin();
             }
             tail.setTerm(dstTerm, FinalSegmentRope.asFinal(t.shared()),
-                         lSeg, lOff, lLen, t.sharedSuffixed(), t.cachedHash());
+                         lSeg, lOff, lLen, t.sharedKind(), t.cachedHash());
             if (naked != null)
                 naked.close();
         }
@@ -426,35 +431,37 @@ public sealed class CABatch extends Batch<CABatch> {
     @Override
     public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
                         byte @Nullable [] localU8, long localOff, int localLen,
-                        boolean sharedSuffix) {
+                        byte sharedKind) {
         var tail = tailForPutTerm(col);
         var nkd = ropeFac.alloc(localLen).add(local, localU8, localOff, localLen).naked();
         tail.setTerm(tail.offerRowBase + col, shared,
                       nkd.segment(),
-                nkd.begin(), nkd.len(), sharedSuffix, 0);
+                nkd.begin(), nkd.len(), sharedKind, 0);
         nkd.close();
     }
 
     @Override
     public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
-                        int localLen, boolean sharedSuffix) {
+                        int localLen, byte sharedKind) {
         if (local instanceof FinalSegmentRope f) {
-            putTermLocalByReference(col, shared, f.segment, f.utf8, f.offset, f.len, sharedSuffix);
+            putTermLocalByReference(col, shared, f.segment, f.utf8, f.offset, f.len, sharedKind);
         } else {
             var tail = tailForPutTerm(col);
             var nkd = ropeFac.alloc(localLen).add(local, localOff, localLen).naked();
             tail.setTerm(tail.offerRowBase+col, shared,
                          nkd.segment(), nkd.begin(), nkd.len(),
-                         sharedSuffix, 0);
+                         sharedKind, 0);
             nkd.close();
         }
     }
 
     @Override
-    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local, byte @Nullable [] localU8, long localOff, int localLen, boolean sharedSuffix) {
+    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
+                                        byte @Nullable [] localU8, long localOff, int localLen,
+                                        byte sharedKind) {
         var tail = tailForPutTerm(col);
         tail.setTerm(tail.offerRowBase+col, shared,
-                     local, localOff, localLen, sharedSuffix, 0);
+                     local, localOff, localLen, sharedKind, 0);
     }
 
     @Override public void putNullTerm(int col) {
@@ -465,7 +472,7 @@ public sealed class CABatch extends Batch<CABatch> {
     @Override protected void putUninternable(int destCol, TermInfo info) {
         var tail = tailForPutTerm(destCol);
         var fac = ropeFac.alloc(info.sharedLen + info.localLen);
-        int first = info.suffixShared ? 0 : 1;
+        int first = SharedKind.isSuffix(info.sharedKind)? 0 : 1;
         for (int i = 0; i < 2; i++) {
             if (((first+i)&1) == 0)
                 fac.add(info.localSeg,  info.localU8,  info.localOff,  info.localLen);
@@ -474,7 +481,8 @@ public sealed class CABatch extends Batch<CABatch> {
         }
         try (var n = fac.naked()) {
             tail.setTerm(tail.offerRowBase+destCol, EMPTY,
-                         n.segment(), n.begin(), n.len(), info.suffixShared, 0);
+                         n.segment(), n.begin(), n.len(),
+                         SharedKind.whole(SharedKind.isLit(info.sharedKind)), 0);
         }
     }
 
@@ -592,8 +600,10 @@ public sealed class CABatch extends Batch<CABatch> {
     @Override public TermInfo.Type get(@NonNegative int row, @NonNegative int col,
                                        TermInfo info) {
         int i = termIdx(row, col);
-        return info.setSharedAndSegment(true, sh(i), seg(i), utf8(i),
-                                        off(i), len(i), isSuff(i));
+        var sh = sh(i);
+        byte shKind = SharedKind.make(sh != null, isSuff(i));
+        return info.setSharedAndSegment(true, sh, seg(i), utf8(i),
+                                        off(i), len(i), shKind);
     }
 
     @Override public boolean getView(@NonNegative int row, @NonNegative int col, TermView dest) {

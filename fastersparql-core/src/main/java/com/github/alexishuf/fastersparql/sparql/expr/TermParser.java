@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql.expr;
 
 import com.github.alexishuf.fastersparql.FSProperties;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.parser.PrefixMap;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
@@ -292,6 +293,12 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
     public boolean sharedSuffixed() {
         if (localBegin == -1) postParse();
         return sharedSuffixed;
+    }
+
+    /** Equivalent to {@link Term#sharedKind()} of {@link #asTerm()}. */
+    public byte sharedKind() {
+        if (localBegin == -1) postParse();
+        return SharedKind.make(shared != EMPTY, sharedSuffixed);
     }
 
     /** Sets {@code flaggedId}, {@code localBegin} and {@code localEnd} after

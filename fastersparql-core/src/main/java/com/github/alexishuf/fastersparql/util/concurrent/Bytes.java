@@ -14,6 +14,7 @@ import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED
 import static java.lang.System.arraycopy;
 
 public abstract sealed class Bytes extends AbstractOwned<Bytes> {
+    public static final int BYTES = 16 + 4+4+4;
     private static final byte[]        EMPTY_ARRAY   = new byte[0];
     private static final MemorySegment EMPTY_SEGMENT = MemorySegment.ofArray(EMPTY_ARRAY);
 

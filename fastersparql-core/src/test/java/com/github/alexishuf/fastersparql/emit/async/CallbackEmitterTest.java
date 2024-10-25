@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.PREF_IRI_OR_BLANK;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal.journal;
 import static java.lang.Integer.MAX_VALUE;
@@ -160,7 +161,7 @@ class CallbackEmitterTest {
                 for (int r = 0, n = Math.min(height, Math.min(failAt, cancelAt)); r < n; r++) {
                     expected.beginPut();
                     local.clear().append(r).append('>');
-                    expected.putTerm(0, PREFIX, local.utf8, 0, local.len, false);
+                    expected.putTerm(0, PREFIX, local.utf8, 0, local.len, PREF_IRI_OR_BLANK);
                     expected.commitPut();
                 }
                 cb = cbGuard.set(Cb.create(expected.dup(), failAt <= height));

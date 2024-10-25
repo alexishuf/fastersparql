@@ -8,10 +8,7 @@ import com.github.alexishuf.fastersparql.batch.SingletonBIt;
 import com.github.alexishuf.fastersparql.batch.base.AbstractBIt;
 import com.github.alexishuf.fastersparql.batch.base.UnitaryBIt;
 import com.github.alexishuf.fastersparql.batch.operators.EmptyBindingBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchFilter;
-import com.github.alexishuf.fastersparql.batch.type.BatchMerger;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.client.AbstractSparqlClient;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
 import com.github.alexishuf.fastersparql.client.ItBindQuery;
@@ -53,7 +50,10 @@ import com.github.alexishuf.fastersparql.store.index.dict.LexIt;
 import com.github.alexishuf.fastersparql.store.index.dict.LocalityCompositeDict;
 import com.github.alexishuf.fastersparql.store.index.triples.Triples;
 import com.github.alexishuf.fastersparql.util.StreamNode;
-import com.github.alexishuf.fastersparql.util.concurrent.*;
+import com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc;
+import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
+import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -1325,11 +1325,13 @@ public class StoreSparqlClient extends AbstractSparqlClient
             case '"' -> {
                 var sh = t.fstLen == 0
                        ? FinalSegmentRope.EMPTY
-                       : new FinalSegmentRope(t.snd, t.sndU8, t.sndOff, t.sndLen);
-                dst.putTerm(col, sh, t, 0, t.len-sh.len, true);
+                       : FinalSegmentRope.asFinal(t.snd, t.sndU8, t.sndOff, t.sndLen);
+                dst.putTerm(col, sh, t, 0, t.len-sh.len,
+                            SharedKind.lit(sh != FinalSegmentRope.EMPTY));
             }
             case '_', '<' ->
-                dst.putTerm(col, FinalSegmentRope.EMPTY, t, 0, t.len, false);
+                dst.putTerm(col, FinalSegmentRope.EMPTY, t, 0, t.len,
+                            SharedKind.WHOLE_IRI_OR_BLANK);
             default -> throw new IllegalArgumentException("Not an RDF term");
         }
     }
@@ -1345,7 +1347,6 @@ public class StoreSparqlClient extends AbstractSparqlClient
             return;
         }
         byte fst         = t.get(0);
-        boolean shSuff   = fst == '"';
         var localSeg     = t.snd;
         var localOff     = t.sndOff;
         var localLen     = t.sndLen;
@@ -1363,13 +1364,14 @@ public class StoreSparqlClient extends AbstractSparqlClient
             case '_' -> FinalSegmentRope.EMPTY;
             default -> throw new IllegalArgumentException("Not an RDF term");
         };
+        byte shKind = SharedKind.make(sh != FinalSegmentRope.EMPTY, fst == '"');
         if (sh.len+localLen == t.len) {
             dst.putTermLocalByReference(col, sh, localSeg, null,
-                                        localOff, localLen, shSuff);
+                                        localOff, localLen, shKind);
         } else {
             // split at dictionary is not compatible with split at batch,
             // causing local part to be sourced from two segments in t
-            dst.putTerm(col, FinalSegmentRope.EMPTY, t, 0, t.len, shSuff);
+            dst.putTerm(col, FinalSegmentRope.EMPTY, t, 0, t.len, shKind);
         }
     }
 

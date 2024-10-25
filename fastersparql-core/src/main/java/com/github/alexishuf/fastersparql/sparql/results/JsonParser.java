@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.TerminatedException;
 import com.github.alexishuf.fastersparql.batch.CompletableBatchQueue;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
+import com.github.alexishuf.fastersparql.batch.type.SharedKind;
 import com.github.alexishuf.fastersparql.model.SparqlResultFormat;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.*;
@@ -325,7 +326,7 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                             var prefix = SHARED_ROPES.internPrefixOf(v, 0, v.len);
                             int prefixLen = prefix == null ? 0 : prefix.len;
                             rb.putTerm(col, prefix, v.segment, v.u8(), prefixLen,
-                                       v.len-prefixLen, false);
+                                       v.len-prefixLen, SharedKind.iriOrBlank(prefix!=FinalSegmentRope.EMPTY));
                         }
                         case LIT -> {
                             byte[] u8 = v.u8();
@@ -349,13 +350,13 @@ public final class JsonParser<B extends Batch<B>> extends ResultsParser<B> {
                                 localLen = sh == null ? v.len : v.len-1;
                             }
                             rb.putTerm(col, sh, v.segment, v.u8(), 0,
-                                       localLen, true);
+                                       localLen, SharedKind.SUFF_LIT);
                         }
                         case BLANK -> {
                             p.dtSuffix.clear().append('_').append(':')
                                       .append(v, 1, v.len-1);
                             rb.putTerm(col, null, p.dtSuffix.segment, p.dtSuffix.u8(),
-                                       0, p.dtSuffix.len, false);
+                                       0, p.dtSuffix.len, SharedKind.WHOLE_IRI_OR_BLANK);
                         }
                         default -> throw new UnsupportedOperationException();
                     }

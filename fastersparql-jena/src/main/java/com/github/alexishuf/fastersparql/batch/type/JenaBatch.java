@@ -59,7 +59,7 @@ public class JenaBatch extends ObjBatch<JenaBatch, Node> {
             p.parse(node);
             return info.setSharedAndSegment(false, p.shared(),
                     p.localSegment(), p.localUtf8(),
-                    p.localOff(), p.localLen(), p.suffixShared());
+                    p.localOff(), p.localLen(), p.sharedKind());
         } finally { p.recycle(this); }
     }
 

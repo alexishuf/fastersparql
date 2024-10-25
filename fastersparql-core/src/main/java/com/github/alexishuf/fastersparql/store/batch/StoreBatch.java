@@ -2,10 +2,7 @@ package com.github.alexishuf.fastersparql.store.batch;
 
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.BatchEvent;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.IdBatch;
-import com.github.alexishuf.fastersparql.batch.type.IdHashCache;
-import com.github.alexishuf.fastersparql.batch.type.TermInfo;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
@@ -22,6 +19,7 @@ import org.checkerframework.checker.nullness.qual.PolyNull;
 
 import java.lang.foreign.MemorySegment;
 
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.*;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.Rope.FNV_BASIS;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.compareNumbers;
@@ -39,7 +37,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
     /* --- --- --- lifecycle --- --- -- */
 
     StoreBatch(long[] ids, short cols) {
-        super(ids, cols);
+        super(ids, cols, STORE);
         BatchEvent.Created.record(this);
     }
 
@@ -51,8 +49,6 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
     }
 
     /* --- --- --- batch accessors --- --- --- */
-
-    @Override public StoreBatchType idType() { return STORE; }
 
     @Override public Orphan<StoreBatch> dup() {return dup((int)currentThread().threadId());}
     @Override public Orphan<StoreBatch> dup(int threadId) {
@@ -209,13 +205,17 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         try {
             var tmp = lookup.get(unsource(id));
             boolean localFst = lookup.lastGetSharedSuffixed();
+            byte sharedKind;
             FinalSegmentRope sh;
             if (localFst) {
                 sh = lookup.lastGetLitSuffixElse(EMPTY);
+                sharedKind = SUFF_LIT;
             } else if (WASTE) {
+                sharedKind = WHOLE_UNKNOWN;
                 sh = EMPTY;
             } else {
                 sh = lookup.lastGetIriPrefix();
+                sharedKind = sh == EMPTY ? WHOLE_UNKNOWN : PREF_IRI_OR_BLANK;
             }
             int lLen = localFst ? tmp.fstLen : tmp.sndLen;
             if (lLen + sh.len != tmp.len)
@@ -223,7 +223,7 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             return info.setSharedAndSegment(true, sh,
                     localFst ? tmp.fst    : tmp.snd,
                     localFst ? tmp.fstU8  : tmp.sndU8,
-                    localFst ? tmp.fstOff : tmp.sndOff, lLen, localFst);
+                    localFst ? tmp.fstOff : tmp.sndOff, lLen, sharedKind);
         } finally {
             lookup.recycle(this);
         }
