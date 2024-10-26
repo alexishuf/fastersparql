@@ -40,6 +40,10 @@ public abstract class ScopedIdBatchType extends IdBatchType<ScopedIdBatch> {
         return new WithScope(ScopedIds.allocScope()).sidecar;
     }
 
+    @Override public boolean accepts(BatchType<?> other) {
+        return other instanceof ScopedIdBatchType;
+    }
+
     public static final class WithoutScope extends ScopedIdBatchType {
         public static final WithoutScope WITHOUT_SCOPE = new WithoutScope();
     }
@@ -66,6 +70,17 @@ public abstract class ScopedIdBatchType extends IdBatchType<ScopedIdBatch> {
             this.scope   = scope.takeOwnership(sidecar);
         }
         @Override public Sidecar<WithScope> internalOwnedSidecar() {return sidecar;}
+
+        @Override public <T extends BatchType<ScopedIdBatch>> T unscoped() {
+            //noinspection unchecked
+            return (T)WithoutScope.WITHOUT_SCOPE;
+        }
+
+        @Override public <T extends BatchType<ScopedIdBatch>> T reset(Object ownerIfOwned) {
+            Owned.safeRecycle(this, ownerIfOwned);
+            //noinspection unchecked
+            return (T)beginScope().takeOwnership(ownerIfOwned);
+        }
 
         @Override public String toString() {
             String cache = toStringCache;

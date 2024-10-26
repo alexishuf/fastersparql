@@ -293,10 +293,24 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
         return filter(vars, filter, null);
     }
 
+    public <T extends BatchType<B>> T unscoped() {
+        //noinspection unchecked
+        return (T)this;
+    }
+
+    public <T extends BatchType<B>> T reset(Object ownerIfOwned) {
+        //noinspection unchecked
+        return (T)this;
+    }
+
     @Override public String toString() {
         if (toStringCache == null)
             toStringCache = getClass().getSimpleName().replaceAll("Type$", "");
         return toStringCache;
+    }
+
+    public boolean accepts(BatchType<?> other) {
+        return equals(other);
     }
 
     @Override public boolean equals(Object o) {

@@ -51,11 +51,18 @@ public final class QueryRunner {
     public abstract static class BatchConsumer<B extends Batch<B>, C extends BatchConsumer<B, C>>
             extends AbstractOwned<C>
             implements Receiver<B> {
-        protected final BatchType<B> batchType;
+        protected BatchType<B> batchType;
         protected @Nullable StreamNode upstreamNode;
 
         public BatchConsumer(BatchType<B> batchType) {
             this.batchType = batchType;
+        }
+
+        public void updateBatchType(BatchType<?> type) {
+            if (!batchType.unscoped().accepts(type))
+                throw new IllegalArgumentException("Attempting to change batch class");
+            //noinspection unchecked
+            batchType = (BatchType<B>)type;
         }
 
         @Override public @Nullable C recycle(Object currentOwner) {
@@ -171,7 +178,7 @@ public final class QueryRunner {
     @SuppressWarnings("unchecked")
     public static <B extends Batch<B>> void drainWild(BIt<?> it, BatchConsumer<?, ?> consumer,
                                                       long timeoutMs) {
-        if (it.batchType() != consumer.batchType)
+        if (!consumer.batchType.accepts(it.batchType()))
             throw new IllegalArgumentException("consumer.batchType != it.batchType");
         drain((BIt<B>)it, (BatchConsumer<B, ?>)consumer, timeoutMs);
     }

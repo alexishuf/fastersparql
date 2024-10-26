@@ -636,10 +636,8 @@ public class QueryBench {
     }
 
     private BatchType<?> resetBatchType() {
-        if (batchType instanceof ScopedIdBatchType.WithScope s) {
-            batchType = Owned.safeRecycle(s, this);
-            batchType = ScopedIdBatchType.beginScope().takeOwnership(this);
-        }
+        if (batchType instanceof ScopedIdBatchType.WithScope s)
+            batchType = s.reset(this);
         return batchType;
     }
 

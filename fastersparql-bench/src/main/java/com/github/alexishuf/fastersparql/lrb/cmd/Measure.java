@@ -326,6 +326,7 @@ public class Measure implements Callable<Void>{
             log.error("Error during rep {} of task={}:", rep, task, t);
         } finally {
             stopAsyncProfilerIfActive();
+            batchType = batchType.reset(this);
         }
         if (results instanceof Stateful<?> s && s.stateName().contains("FAILED"))
             spec(query, rep, "", currentPlan, results).run();
@@ -380,13 +381,14 @@ public class Measure implements Callable<Void>{
     }
 
     private BatchConsumer<?, ?> consumer(MeasureTask task, int rep) {
-        if (currTask != null) throw new IllegalStateException("Concurrent measure()");
+        if (currTask != null)
+            throw new IllegalStateException("Concurrent measure()");
         currTask = task;
         currentPlan = null;
         currRep = rep;
         planMetrics = null;
         fedMetrics = null;
-        return consumer = switch (msrOp.consumer) {
+        var cons = consumer = switch (msrOp.consumer) {
             case COUNT -> consumer == null ? new Counter<>(batchType) : (Counter<?>)consumer;
             case SAVE,SAVE_FIRST -> {
                 var s = consumer == null ? new Serializer<>(batchType, null, TSV, true)
@@ -405,9 +407,11 @@ public class Measure implements Callable<Void>{
                 yield s;
             }
             case CHECK ->
-                checkerConsumers.computeIfAbsent(currTask.query(),
-                                                 k -> new Checker<>(batchType, k));
+                    checkerConsumers.computeIfAbsent(currTask.query(),
+                            k -> new Checker<>(batchType, k));
         };
+        cons.updateBatchType(batchType);
+        return cons;
     }
 
     private static final class NullOutputStream extends OutputStream  {
