@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.sparql.PrefixAssigner;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
@@ -9,6 +10,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.BS;
 import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import com.github.alexishuf.fastersparql.util.concurrent.LIFOPool;
+import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -47,6 +49,10 @@ public class ScopedIds {
     private static final int MAX_SEG_ID        = (1 <<    SEG_ID_BITS)-1;
     private static final int MAX_SEG_OFF       = (1 <<   SEG_OFF_BITS)-1;
     private static final int MAX_SEG_LEN       = (1 <<   SEG_LEN_BITS)-1;
+    private static final int POOLED_SEG_LEN    = MAX_SEG_LEN+1;
+    static {//noinspection ConstantValue
+        assert POOLED_SEG_LEN != MAX_SEG_LEN : "POOLED_SEG_LEN must be != MAX_SEG_LEN";
+    }
     private static final long IS_LIT_MASK      =  1 << 20;
     private static final int MAX_SEG_OFF_MUL   = MAX_SEG_OFF<<2;
     private static final long EMPTY_MASK = 0x00f80000000fffffL;
@@ -189,15 +195,46 @@ public class ScopedIds {
     }
 
     private static final class Scope0 {
-        private static final int UNPOOLED_SEG_COUNT = 1;
+        private static final int KEEP_SEGMENTS_ON_RELEASE = 1;
         private static final int HASH_CACHE_MASK = (1<<10)-1;
         private static final int GEN_INACTIVE_MASK = 0x8000;
         private static final LIFOPool<Bytes> SEG_POOL;
+        @SuppressWarnings("unused") private static int plainPooledSegPermits;
+        @SuppressWarnings("unused") private static int plainUnpooledSegments;
+        private static final VarHandle POOLED_SEG_PERMITS, UNPOOLED_SEGS;
         static {
             // spend at most 5% of max heap with this pool
-            int segCap = (int)(Runtime.getRuntime().maxMemory()/20/MAX_SEG_LEN);
             int segBytes = Bytes.BYTES + MAX_SEG_LEN;
+            int segCap = (int)(Runtime.getRuntime().maxMemory()/20/segBytes);
             SEG_POOL = new LIFOPool<>(Bytes.class, "ScopedIds.SEG_POOL", segCap, segBytes);
+            try {
+                POOLED_SEG_PERMITS = MethodHandles.lookup().findStaticVarHandle(Scope0.class, "plainPooledSegPermits", int.class);
+                UNPOOLED_SEGS      = MethodHandles.lookup().findStaticVarHandle(Scope0.class, "plainUnpooledSegments", int.class);
+            } catch (NoSuchFieldException|IllegalAccessException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+            POOLED_SEG_PERMITS.setRelease(segCap);
+            FS.addShutdownHook(() -> {
+                int permits  = (int)POOLED_SEG_PERMITS.getOpaque();
+                int unpooled = (int) UNPOOLED_SEGS.getOpaque();
+                if (permits < segCap || unpooled > 0) {
+                    System.err.printf("""
+                            ScopedIds   pooled segments created: %,d
+                            ScopedIds unpooled segments created: %,d
+                            """, segCap-Math.max(0, permits), unpooled);
+                }
+            });
+            Primer.INSTANCE.sched(() -> {
+                int upperBound = Math.max(8, Runtime.getRuntime().availableProcessors());
+                int freeCapacity = segCap-SEG_POOL.sharedObjects();
+                int n = Math.min(upperBound, freeCapacity);
+                for (int i = 0; i < n; i++) {
+                    if ((int)POOLED_SEG_PERMITS.getAndAddRelease(-1) <= 0)
+                        break; // no more permits
+                    byte[] arr = new byte[POOLED_SEG_LEN];
+                    SEG_POOL.offer(Bytes.createUnpooled(arr).takeOwnership(SEG_POOL));
+                }
+            });
         }
         private final FinalSegmentRope[] shared   = new FinalSegmentRope[MAX_SHARED_ID+1];
         private final  byte[]         [] arrays   = new byte            [MAX_SEG_ID+1][];
@@ -218,10 +255,14 @@ public class ScopedIds {
 
         short addSegment(int segCount) {
             Bytes b = SEG_POOL.get();
-            if (b == null)
-                b = Bytes.createUnpooled(new byte[MAX_SEG_LEN+1]).takeOwnership(this);
-            else
+            if (b == null) {
+                int size = plainPooledSegPermits > 0
+                                && (int)POOLED_SEG_PERMITS.getAndAddRelease(-1) > 0
+                         ? POOLED_SEG_LEN : MAX_SEG_LEN;
+                b = Bytes.createUnpooled(new byte[size]).takeOwnership(this);
+            } else {
                 b.transferOwnership(SEG_POOL, this);
+            }
             setSegment(segCount, b);
             return (short)segCount;
         }
@@ -270,17 +311,25 @@ public class ScopedIds {
             internAuthority = false;
             Arrays.fill(shared, 1, shared.length, null);
             Arrays.fill(hashCache, 0L);
-            for (int i = UNPOOLED_SEG_COUNT; i < segments.length; i++) {
-                var handle = bytes[i];
-                if (handle == null)
+            int unpooledSegments = 0;
+            for (int i = KEEP_SEGMENTS_ON_RELEASE; i < segments.length; i++) {
+                var h = bytes[i];
+                if (h == null)
                     break;
                 arrays  [i] = null;
                 segments[i] = null;
                 ropes   [i] = null;
                 bytes   [i] = null;
-                if (SEG_POOL.offer(handle.transferOwnership(this, SEG_POOL)) != null)
-                    handle.recycle(SEG_POOL);
+                if (h.arr.length == POOLED_SEG_LEN) {
+                    h.transferOwnership(this, SEG_POOL);
+                    if (SEG_POOL.offer(h) != null)
+                        h.recycle(SEG_POOL);
+                } else {
+                    unpooledSegments++;
+                    h.recycle(this);
+                }
             }
+            UNPOOLED_SEGS.getAndAddRelease(unpooledSegments);
             generation |= (short)GEN_INACTIVE_MASK;
         }
     }
