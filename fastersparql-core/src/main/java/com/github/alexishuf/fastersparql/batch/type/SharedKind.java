@@ -38,4 +38,18 @@ public class SharedKind {
     public static boolean isLit(byte sharedKind) { return (sharedKind&IS_LIT) != 0; }
     public static boolean isSuffix(byte sharedKind) { return sharedKind == SUFF_LIT; }
     public static boolean isPrefix(byte sharedKind) { return (sharedKind& PREF_IRI_OR_BLANK) != 0; }
+
+    public static String toString(byte sharedKind) {
+        if ((sharedKind&IS_SHARED) == 0) {
+            if      ((sharedKind&IS_LIT) != 0)          return "WHOLE_LIT";
+            else if ((sharedKind&IS_IRI_OR_BLANK) != 0) return "WHOLE_IRI_OR_BLANK";
+            else                                        return "WHOLE_UNKNOWN";
+        } else if ((sharedKind&IS_LIT) != 0) {
+            return "SUFF_LIT";
+        } else if ((sharedKind&IS_IRI_OR_BLANK) != 0) {
+            return "PREF_IRI_OR_BLANK";
+        }  else {
+            return "SHARED_UNKNOWN";
+        }
+    }
 }

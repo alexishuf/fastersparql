@@ -17,10 +17,10 @@ import java.lang.foreign.MemorySegment;
 
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.RowFilter.Decision.*;
-import static com.github.alexishuf.fastersparql.batch.type.SharedKind.WHOLE_UNKNOWN;
-import static com.github.alexishuf.fastersparql.batch.type.SharedKind.isLit;
+import static com.github.alexishuf.fastersparql.batch.type.SharedKind.*;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.EMPTY;
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.*;
+import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTERNED_LEN;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.HAS_UNSAFE;
@@ -944,57 +944,87 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     @Override
     public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
                         byte @Nullable[] localU8, long localOff, int localLen, byte sharedKind) {
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            sharedKind = wholeSharedKind(local, localU8, localOff);
+        if (SharedKind.isLit(sharedKind) && shared == EMPTY && localLen > MIN_INTERNED_LEN)
+            localLen -= (shared = internDatatypeOf(local, localU8, localOff, localLen)).len;
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen | (isLit(sharedKind) ? SH_SUFF_MASK : 0));
         if (localU8 != null)
             arraycopy(localU8, (int)(localOff+local.address()), tail.locals, dest, localLen);
         else
             MemorySegment.copy(local, JAVA_BYTE, localOff, tail.locals, dest, localLen);
-        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
-            checkLiteral(col, dest);
     }
 
-    private void checkLiteral(int destCol, int dest) {
-        if (tail.locals[dest] == '"')
-            tail.slices[((tail.rows*tail.cols + destCol)<<1) + SL_LEN] |= SH_SUFF_MASK;
+    private static FinalSegmentRope internDatatypeOf(MemorySegment local, byte @Nullable[] localU8,
+                                                     long localOff, int localLen) {
+        try (var view = PooledSegmentRopeView.of(local, localU8, localOff, localLen)) {
+            return SHARED_ROPES.internDatatypeOf(view);
+        }
+    }
+    private static FinalSegmentRope internDatatypeOf(byte[] localU8, int localOff, int localLen) {
+        try (var view = PooledSegmentRopeView.of(MemorySegment.ofArray(localU8),
+                                                 localU8, localOff, localLen)) {
+            return SHARED_ROPES.internDatatypeOf(view);
+        }
+    }
 
+    private static byte wholeSharedKind(MemorySegment local, byte @Nullable [] localU8, long localOff) {
+        byte sharedKind;
+        byte f = localU8 != null ? localU8[(int) localOff] : local.get(JAVA_BYTE, localOff);
+        sharedKind = f == '"' ? WHOLE_LIT : WHOLE_IRI_OR_BLANK;
+        return sharedKind;
     }
 
     @Override
     public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
                         int localLen, byte sharedKind) {
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            sharedKind = local.get(localOff) == '"' ? WHOLE_LIT : WHOLE_IRI_OR_BLANK;
+        if (SharedKind.isLit(sharedKind) && shared == EMPTY && localLen > MIN_INTERNED_LEN) {
+            shared = SHARED_ROPES.internDatatypeOf(local, localOff, localOff+localLen);
+            localLen -= shared.len;
+        }
         int dest = allocTermMaybeChangeTail(col, shared,
                               localLen|(isLit(sharedKind)?SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, tail.locals, dest);
-        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
-            checkLiteral(col, dest);
     }
 
     public void putTerm(int col, FinalSegmentRope shared, byte[] local, int localOff,
                         int localLen, byte sharedKind) {
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            sharedKind = local[localOff] == '"' ? WHOLE_LIT : WHOLE_IRI_OR_BLANK;
+        if (SharedKind.isLit(sharedKind) && shared == EMPTY && localLen > MIN_INTERNED_LEN)
+            localLen -= (shared = internDatatypeOf(local, localOff, localLen)).len;
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen | (isLit(sharedKind) ? SH_SUFF_MASK : 0));
         arraycopy(local, localOff, tail.locals, dest, localLen);
-        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
-            checkLiteral(col, dest);
     }
 
     public void putTerm(int col, FinalSegmentRope shared, SegmentRope local, int localOff,
                         int localLen, byte sharedKind) {
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            sharedKind = local.get(localOff) == '"' ? WHOLE_LIT : WHOLE_IRI_OR_BLANK;
+        if (SharedKind.isLit(sharedKind) && shared == EMPTY && localLen > MIN_INTERNED_LEN) {
+            shared = SHARED_ROPES.internDatatypeOf(local, localOff, localOff+localLen);
+            localLen -= shared.len;
+        }
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen|(isLit(sharedKind) ? SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
-        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
-            checkLiteral(col, dest);
     }
 
     public void putTerm(int col, FinalSegmentRope shared, TwoSegmentRope local, int localOff,
                         int localLen, byte sharedKind) {
+        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
+            sharedKind = local.get(localOff) == '"' ? WHOLE_LIT : WHOLE_IRI_OR_BLANK;
+        if (SharedKind.isLit(sharedKind) && shared == EMPTY && localLen > MIN_INTERNED_LEN) {
+            shared = SHARED_ROPES.internDatatypeOf(local, localOff, localOff+localLen);
+            localLen -= shared.len;
+        }
         int dest = allocTermMaybeChangeTail(col, shared,
                              localLen|(isLit(sharedKind) ? SH_SUFF_MASK : 0));
         local.copy(localOff, localOff+localLen, this.tail.locals, dest);
-        if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
-            checkLiteral(col, dest);
     }
 
     @Override protected void internIriPrefixDuringConversion(TermInfo t) {
