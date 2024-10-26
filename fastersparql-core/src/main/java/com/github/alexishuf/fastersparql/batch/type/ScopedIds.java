@@ -361,20 +361,28 @@ public class ScopedIds {
      * {@link OutOfScopeIds} exceptions</p>
      */
     public static sealed class Scope extends AbstractOwned<Scope> {
-        private static final VarHandle LOCK;
+        private static long raceWaste;
+        private static final VarHandle SH = MethodHandles.arrayElementVarHandle(FinalSegmentRope[].class);
+        private static final VarHandle NEXT_OFF, SEG_LOCK;
         static {
             try {
-                LOCK = MethodHandles.lookup().findVarHandle(Scope.class, "plainLock", int.class);
+                NEXT_OFF = MethodHandles.lookup().findVarHandle(Scope.class, "plainNextOff", int.class);
+                SEG_LOCK = MethodHandles.lookup().findVarHandle(Scope.class, "plainSegLock", int.class);
             } catch (NoSuchFieldException | IllegalAccessException e) {
                 throw new ExceptionInInitializerError(e);
             }
+            FS.addShutdownHook(() -> {
+                long w = raceWaste;
+                if (w > 0)
+                    System.err.printf("%d bytes in ScopedIds segments wasted by races\n", w);
+            });
+
         }
         private final Scope0 inner;
         public final int generation;
         private int segId;
-        private int nextOff;
-        private byte[] segU8;
-        @SuppressWarnings("unused") private int plainLock;
+        @SuppressWarnings("unused") private int plainNextOff;
+        @SuppressWarnings("unused") private int plainSegLock;
 
         /* --- --- --- Lifecycle --- --- --- */
         public Scope() {
@@ -383,7 +391,6 @@ public class ScopedIds {
             if (inner == null)
                 scopes[scopeId] = inner = new Scope0(scopeId);
             this.generation = inner.acquire();
-            this.segU8 = inner.arrays[0];
             this.inner      = inner;
             this.segId      = 0;
         }
@@ -410,25 +417,79 @@ public class ScopedIds {
 
         /* --- --- --- helpers --- --- --- */
 
-        private void lock() {
-            while ((int)LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
-        }
-        private void unlock() {LOCK.setRelease(this, 0);}
-
-        private int reserveBytes(int n) {
-            int off = nextOff;
-            if (off+n > MAX_SEG_LEN) {
-                if (n > MAX_SEG_LEN)
-                    throw new StringTooLarge();
-                segId = inner.addSegment(segId+1);
-                segU8 = inner.arrays[segId];
-                off = 0;
+        private long put0(FinalSegmentRope sh, short shId, boolean isLit, int copyShLen,
+                          MemorySegment localSeg, byte @Nullable[] localU8, long localOff,
+                          int localLen) {
+            int reqLen = localLen+copyShLen;
+            int alignedReqLen = reqLen + ((4-(reqLen&3))&3);
+            if (alignedReqLen > MAX_SEG_LEN)
+                throw new StringTooLarge();
+            while (true) {
+                int segId = this.segId, off = (int)NEXT_OFF.getAndAdd(this, alignedReqLen);
+                if (off+reqLen >= MAX_SEG_LEN)  {
+                    put0SegmentOverflown(segId);
+                } else if (segId == this.segId) {
+                    // off refers to seg/segU8
+                    var segU8 = inner.arrays[segId];
+                    int dst = off;
+                    if (copyShLen > 0) {
+                        sh.copy(sh.len-copyShLen, sh.len, segU8, isLit ? off+localLen : off);
+                        if (!isLit)
+                            dst += copyShLen;
+                    }
+                    if (localU8 != null)
+                        System.arraycopy(localU8, (int)localOff, segU8, dst, localLen);
+                    else
+                        MemorySegment.copy(localSeg, JAVA_BYTE, localOff, segU8, dst, localLen);
+                    return make(inner.scopeId, shId, segId, off, reqLen, isLit);
+                } else {
+                    // else: another thread bumped segId, off might not refer to seg/segU8
+                    // allow lost writes in exchange for small compiled code
+                    raceWaste += alignedReqLen;
+                }
             }
-            nextOff = ((off+n)&~3) + 4;
-            return off;
+        }
+        private void put0SegmentOverflown(int segId) {
+            while ((int)SEG_LOCK.compareAndExchangeAcquire(this, 0, 1) != 0) onSpinWait();
+            try {
+                // else: lost race, another thread bumped segId
+                if (this.segId == segId) {
+                    this.segId = inner.addSegment(segId +1);
+                    NEXT_OFF.setRelease(this, 0);
+                }
+            } finally { SEG_LOCK.setRelease(this, 0); }
+        }
+        private long put0(FinalSegmentRope sh, short shId, boolean isLit,
+                          TwoSegmentRope nt) {
+            int reqLen = nt.len, localBegin, localEnd;
+            if (isLit) {
+                localBegin = 0;
+                localEnd   = reqLen-sh.len;
+            } else {
+                localBegin = sh.len;
+                localEnd   = reqLen;
+            }
+            int alignedReqLen = reqLen + ((4-(reqLen&3))&3);
+            if (alignedReqLen > MAX_SEG_LEN)
+                throw new StringTooLarge();
+            while (true) {
+                int segId = this.segId;
+                int off   = (int)NEXT_OFF.getAndAdd(this, alignedReqLen);
+                if (off+reqLen >= MAX_SEG_LEN)  {
+                    put0SegmentOverflown(segId);
+                } else if (segId == this.segId) {
+                    // off refers to seg/segU8
+                    nt.copy(localBegin, localEnd, inner.arrays[segId], off);
+                    return make(inner.scopeId, shId, segId, off, reqLen, isLit);
+                } else {
+                    // else: another thread bumped segId, off might not refer to seg/segU8
+                    // allow lost writes in exchange for small compiled code
+                    raceWaste += alignedReqLen;
+                }
+            }
         }
 
-        private int findSharedPrefixByRef(FinalSegmentRope sh) {
+        private short findSharedPrefixByRef(FinalSegmentRope sh) {
             if (sh == null || sh.len == 0)
                 return 0;
             int i;
@@ -444,18 +505,14 @@ public class ScopedIds {
                 inner.internAuthority = true;
             if (inner.internAuthority)
                 return findSharedPrefix(sh);
-            lock();
-            if (inner.shared[i] == null)
-                inner.shared[i] = sh;
-            else
+            if (SH.compareAndExchangeRelease(inner.shared, i, null, sh) != null)
                 i = 0; // lost race
-            unlock();
-            return i;
+            return (short)i;
         }
 
         private static final FinalSegmentRope RESERVED_SLOT
                 = FinalSegmentRope.asFinal("~x-fastersparql-reserved");
-        private int findSharedPrefix(PlainRope nt) {
+        private short findSharedPrefix(PlainRope nt) {
             if (nt.len == 0)
                 return 0;
             int i;
@@ -470,7 +527,7 @@ public class ScopedIds {
                 if (sh.len >= nt.len)
                     continue; // sh is not a prefix
                 if (nt.has(0, sh))
-                    return i; // found a match
+                    return (short)i; // found a match
             }
 
             // no match, select a prefix of the given input
@@ -484,16 +541,12 @@ public class ScopedIds {
             if (shLen >= nt.len-1 || shLen < 12)
                 return 0; // prefix too short or too long/specific
 
-            // i points to a free slot, attempt to reserve it
-            lock();
-            if (inner.shared[i] == null)
-                inner.shared[i] = RESERVED_SLOT; // reserve slot
+            // try reserving slot at i, only create a new FSR if this thread wins the race
+            if (SH.compareAndExchangeRelease(inner.shared, i, null, RESERVED_SLOT) == null)
+                inner.shared[i] = FinalSegmentRope.asFinal(nt, 0, shLen);
             else
                 i = 0; // lost race
-            unlock();
-            if (i != 0)  // owns the slot at i, create a shared prefix
-                inner.shared[i] = FinalSegmentRope.asFinal(nt, 0, shLen);
-            return i;
+            return (short)i;
         }
 
 
@@ -504,7 +557,7 @@ public class ScopedIds {
         private static final int END_PREFIX = MAX_SHARED_ID-2;
         private static final int BEGIN_DT = (MAX_SHARED_ID+1)>>1;
 
-        private int findDatatypeSuffix(FinalSegmentRope dtSuffix) {
+        private short findDatatypeSuffix(FinalSegmentRope dtSuffix) {
             if (dtSuffix == null || dtSuffix.len == 0)
                 return 0;
             int i;
@@ -516,13 +569,9 @@ public class ScopedIds {
             }
             if (i < BEGIN_DT)
                 return 0; // full
-            lock();
-            if (inner.shared[i] == null)
-                inner.shared[i] = dtSuffix; // reserve slot
-            else
+            if (SH.compareAndExchangeRelease(inner.shared, i, null, dtSuffix) != null)
                 i = 0; // lost race
-            unlock();
-            return i;
+            return (short)i;
         }
 
         /* --- --- --- Minting --- --- --- */
@@ -533,25 +582,15 @@ public class ScopedIds {
             if (nt == null || nt.len == 0)
                 return 0;
             check();
-            short shId = 0;
             boolean isLit = nt.get(0) == '"';
-            if (isLit) {
-                shId  = (short)findDatatypeSuffix(SHARED_ROPES.internDatatypeOf(nt));
-            } else if (nt.len >= MIN_INTERNED_LEN) {
-                shId = (short)findSharedPrefix(nt);
-            }
-            int shLen = inner.shared[shId].len, localBegin = isLit ? 0 : shLen;
-            int localLen = nt.len - shLen;
-            final int    off, segId;
-            final byte[] segU8;
-            lock();
-            try {
-                off   = reserveBytes(localLen);
-                segU8 = this.segU8;
-                segId = this.segId;
-            } finally { unlock(); }
-            nt.copy(localBegin, localBegin+localLen, segU8, off);
-            return make(inner.scopeId, shId, segId, off, localLen, isLit);
+            short shId = 0;
+            if (isLit)
+                shId = findDatatypeSuffix(SHARED_ROPES.internDatatypeOf(nt));
+            else if (nt.len >= MIN_INTERNED_LEN)
+                shId = findSharedPrefix(nt);
+            var sh = inner.shared[shId];
+            return put0(sh, shId, isLit, 0, nt.segment, nt.utf8,
+                        nt.segment.address()+nt.offset, nt.len-sh.len);
         }
         /** Turn an N-Triples string into an ID */
         public long put(@Nullable PlainRope nt) {
@@ -565,20 +604,10 @@ public class ScopedIds {
             short shId = 0;
             boolean isLit = nt.get(0) == '"';
             if (isLit)
-                shId = (short)findDatatypeSuffix(SHARED_ROPES.internDatatypeOf(nt));
+                shId = findDatatypeSuffix(SHARED_ROPES.internDatatypeOf(nt));
             else if (nt.fstLen >= MIN_INTERNED_LEN)
-                shId = (short)findSharedPrefix(nt);
-            int shLen = inner.shared[shId].len, localBegin = isLit ? 0 : shLen;
-            int localLen = nt.len - shLen;
-            final int    off, segId;
-            final byte[] segU8;
-            try {
-                off   = reserveBytes(localLen);
-                segId = this.segId;
-                segU8 = this.segU8;
-            } finally { unlock(); }
-            nt.copy(localBegin, localBegin+localLen, segU8, off);
-            return make(inner.scopeId, shId, segId, off, localLen, isLit);
+                shId = findSharedPrefix(nt);
+            return put0(inner.shared[shId], shId, isLit, nt);
         }
 
         /**
@@ -603,28 +632,10 @@ public class ScopedIds {
             boolean isLit = sharedKind == SharedKind.WHOLE_UNKNOWN
                           ? localSeg.get(JAVA_BYTE, localOff) == '"'
                           : SharedKind.isLit(sharedKind);
-            int shId = SharedKind.isLit(sharedKind) ? findDatatypeSuffix(shared)
-                                                    : findSharedPrefixByRef(shared);
+            short shId = SharedKind.isLit(sharedKind) ? findDatatypeSuffix(shared)
+                                                      : findSharedPrefixByRef(shared);
             int copyShLen = shared.len-inner.shared[shId].len;
-            final int    dst, segId;
-            final byte[] segU8;
-            lock();
-            try {
-                dst   = reserveBytes(localLen + copyShLen);
-                segU8 = this.segU8;
-                segId = this.segId;
-            } finally { unlock(); }
-            int localDst  = dst + (isLit ? 0 : copyShLen);
-            if (copyShLen > 0) {
-                shared.copy(shared.len-copyShLen, shared.len, segU8,
-                        dst+(isLit ? localLen : 0));
-            }
-            if (localU8 != null)
-                System.arraycopy(localU8, (int)localOff, segU8, localDst, localLen);
-            else
-                MemorySegment.copy(localSeg, JAVA_BYTE, localOff, segU8, localDst, localLen);
-            return make(inner.scopeId, shId, segId, dst, localLen+copyShLen, isLit);
-
+            return put0(shared, shId, isLit, copyShLen, localSeg, localU8, localOff, localLen);
         }
 
         /** Turns {@code shared+local} (or {@code local+shared}, if {@code isLit}) into an ID.
