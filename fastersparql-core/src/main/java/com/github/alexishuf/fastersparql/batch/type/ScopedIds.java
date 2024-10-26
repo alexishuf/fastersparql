@@ -27,6 +27,7 @@ import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.MIN_INTER
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.isNumericDatatype;
 import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U;
+import static com.github.alexishuf.fastersparql.util.LowLevelHelper.U8_BASE;
 import static java.lang.Thread.onSpinWait;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
@@ -437,10 +438,12 @@ public class ScopedIds {
                         if (!isLit)
                             dst += copyShLen;
                     }
-                    if (localU8 != null)
-                        System.arraycopy(localU8, (int)localOff, segU8, dst, localLen);
-                    else
+                    if (U != null) {
+                        long srcOff = localSeg.address() + localOff + (localU8!=null?U8_BASE:0);
+                        U.copyMemory(localU8, srcOff, segU8, dst+U8_BASE, localLen);
+                    } else {
                         MemorySegment.copy(localSeg, JAVA_BYTE, localOff, segU8, dst, localLen);
+                    }
                     return make(inner.scopeId, shId, segId, off, reqLen, isLit);
                 } else {
                     // else: another thread bumped segId, off might not refer to seg/segU8
