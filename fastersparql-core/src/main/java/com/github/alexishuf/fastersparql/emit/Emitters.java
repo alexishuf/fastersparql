@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.emit;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.model.Vars;
+import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -82,7 +83,10 @@ public class Emitters {
                                        Throwable emitError,
                                        @Nullable Batch<?> batch,
                                        @Nullable Object batchOwner) {
-        if (ENABLED) journal("deliver failed, rcv=", downstream, ", on", upstream);
+        if (emitError instanceof OutOfMemoryError e)
+            OOMHandler.notifyOOM(e);
+        if (ENABLED)
+            journal("deliver failed, rcv=", downstream, ", on", upstream);
         if (upstream.isTerminated()) {
             log.debug("{}.onBatch() failed, will not cancel {}: terminated or terminating",
                     downstream, upstream, emitError);
