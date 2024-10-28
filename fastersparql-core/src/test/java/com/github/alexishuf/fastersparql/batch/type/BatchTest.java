@@ -45,6 +45,7 @@ import static com.github.alexishuf.fastersparql.batch.type.Batch.quickAppend;
 import static com.github.alexishuf.fastersparql.batch.type.CABatchType.CA;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 import static com.github.alexishuf.fastersparql.batch.type.TermBatchType.TERM;
+import static com.github.alexishuf.fastersparql.batch.type.UnitBatchType.UNIT;
 import static com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope.asFinal;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.DT_integer;
 import static com.github.alexishuf.fastersparql.model.rope.SharedRopes.SHARED_ROPES;
@@ -61,7 +62,8 @@ class BatchTest {
             COMPRESSED,
             CA,
             StoreBatchType.STORE,
-            SCOPED
+            SCOPED,
+            UNIT
     );
     private static StoreSparqlClient storeSparqlClient;
 
@@ -574,9 +576,12 @@ class BatchTest {
             @Override public <B extends Batch<B>> void run(BatchType<B> type, Size size, String ctx) {
                 B full = fill(0, size, type);
                 B left = create(1, type, 0);
-                left.rows = 2;
+                for (int i = 0; i < 2; i++) {
+                    left.beginPut();
+                    left.commitPut();
+                }
                 var merger = merger(type.merger(size.vars(), Vars.EMPTY, size.vars()));
-                B merged = set(2, merger.merge(null, left, 1, full));
+                B merged = set(2, merger.linkedMerge(null, left, 1, full));
                 assertBatchesEquals(size, full, ctx);
                 assertBatchesEquals(size, merged, ctx);
             }
@@ -590,7 +595,10 @@ class BatchTest {
                 B tmp      = create(1, type, size.cols);
                 B expected = create(2, type, size.cols);
                 B right    = create(3, type, 0);
-                right.rows = 2;
+                for (int i = 0; i < 2; i++) {
+                    right.beginPut();
+                    right.commitPut();
+                }
                 var merger = merger(type.merger(size.vars(), size.vars(), Vars.EMPTY));
                 for (var node = full; node != null; node = node.next) {
                     for (int r = 0; r < node.rows; r++) {
@@ -598,7 +606,7 @@ class BatchTest {
                         expected.putRow(node, r);
                         expected.putRow(node, r);
                         tmp.clear(size.cols);
-                        B merged = set(4, merger.merge(take(1, type), node, r, right));
+                        B merged = set(4, merger.linkedMerge(take(1, type), node, r, right));
                         assertSame(tmp, merged);
                         assertBatchesEquals(expected, merged, ctx);
                         set(1, take(4, type));
@@ -619,30 +627,30 @@ class BatchTest {
                 Vars exVars = rightVars.union(Vars.of("c", "z", "a", "b"));
                 if (right.rows == 0) {
                     expected.beginPut();
-                    expected.putTerm(size.cols, left, 1, 2);
-                    expected.putTerm(size.cols+2, left, 1, 0);
-                    expected.putTerm(size.cols+3, left, 1, 1);
+                    expected.linkedPutTerm(size.cols, left, 1, 2);
+                    expected.linkedPutTerm(size.cols+2, left, 1, 0);
+                    expected.linkedPutTerm(size.cols+3, left, 1, 1);
                     expected.commitPut();
                 }
                 for (var node = right; node != null; node = node.next) {
                     for (int r = 0; r < node.rows; r++) {
                         expected.beginPut();
                         for (int c = 0; c < size.cols; c++)
-                            expected.putTerm(c, node, r, c);
-                        expected.putTerm(size.cols, left, 1, 2);
-                        expected.putTerm(size.cols+2, left, 1, 0);
-                        expected.putTerm(size.cols+3, left, 1, 1);
+                            expected.linkedPutTerm(c, node, r, c);
+                        expected.linkedPutTerm(size.cols, left, 1, 2);
+                        expected.linkedPutTerm(size.cols+2, left, 1, 0);
+                        expected.linkedPutTerm(size.cols+3, left, 1, 1);
                         expected.commitPut();
                     }
                 }
                 var merger = merger(type.merger(exVars, leftVars, rightVars));
                 assertNotNull(merger);
-                B actual = set(3, merger.merge(null, left, 1, right));
+                B actual = set(3, merger.linkedMerge(null, left, 1, right));
                 assertBatchesEquals(expected, actual, ctx);
 
                 var expected2 = set(4, expected.dup());
                 expected2.copy(expected);
-                B actual2 = set(5, merger.merge(take(3, type), left, 1, right));
+                B actual2 = set(5, merger.linkedMerge(take(3, type), left, 1, right));
                 assertSame(actual, actual2);
                 assertBatchesEquals(expected2, actual2, ctx);
             }
@@ -1191,7 +1199,7 @@ class BatchTest {
                 var b = g.set(0, type.create(3));
                 b.putRow(DUMMY_ROW);
                 b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
-                assertEquals(term == null ? 0 : term.len, b.len(1, 1));
+                assertEquals(term == null ? 0 : term.len, b.linkedLen(1, 1));
             }
         }
     }
@@ -1220,7 +1228,7 @@ class BatchTest {
                 var b = g.set(0, type.create(3));
                 b.putRow(DUMMY_ROW);
                 b.putRow(new Term[]{DUMMY_ROW[2], term, DUMMY_ROW[2]});
-                assertEquals(expected, b.lexEnd(1, 1));
+                assertEquals(expected, b.linkedLexEnd(1, 1));
             }
         }
     }

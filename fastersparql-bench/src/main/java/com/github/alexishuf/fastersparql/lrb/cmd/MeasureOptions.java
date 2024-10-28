@@ -47,13 +47,15 @@ public class MeasureOptions {
         COMPRESSED,
         CA,
         SCOPED,
-        NATIVE;
+        NATIVE,
+        UNIT;
 
         public BatchType<?> asType(SourceKind src, Object ownerIfTypeIsOwned) {
             return switch (this) {
                 case TERM, TERM_NI -> TermBatchType.TERM;
-                case COMPRESSED -> CompressedBatchType.COMPRESSED;
-                case CA -> CABatchType.CA;
+                case COMPRESSED    -> CompressedBatchType.COMPRESSED;
+                case CA            -> CABatchType.CA;
+                case UNIT          -> UnitBatchType.UNIT;
                 case SCOPED -> ScopedIdBatchType.beginScope().takeOwnership(ownerIfTypeIsOwned);
                 case NATIVE -> {
                     if (src.isServer())  yield CompressedBatchType.COMPRESSED;

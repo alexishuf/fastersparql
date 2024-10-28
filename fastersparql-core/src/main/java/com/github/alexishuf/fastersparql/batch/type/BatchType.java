@@ -54,13 +54,14 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
     public final int id;
     protected @MonotonicNonNull String toStringCache;
 
-    protected BatchType(Class<B> cls, Supplier<B> primerFactory, Supplier<B> factory,
+    protected BatchType(Class<B> cls, @Nullable Supplier<B> primerFactory, Supplier<B> factory,
                         int bytesPerBatch) {
         this.id = (int)NEXT_ID.getAndAddRelease(1);
         if (this.id > MAX_BATCH_TYPE_ID)
             throw new IllegalStateException("Too many BatchType instances");
         this.pool = new Alloc<>(cls, toString(), POOL_SHARED, factory, bytesPerBatch);
-        Primer.INSTANCE.sched(() -> pool.prime(primerFactory, 2, PRIME_ADD));
+        if (primerFactory != null)
+            Primer.INSTANCE.sched(() -> pool.prime(primerFactory, 2, PRIME_ADD));
     }
 
     protected BatchType(BatchType<B> parent) {

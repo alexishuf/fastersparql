@@ -142,4 +142,14 @@ public abstract class BatchMerger<B extends Batch<B>, P extends BatchMerger<B, P
      * @return {@code dest}, if not null, else a new {@link Batch}.
      */
     public abstract Orphan<B> merge(@Nullable Orphan<B> dest, B left, int leftRow, @Nullable B right);
+
+    public final Orphan<B> linkedMerge(@Nullable Orphan<B> dest,
+                                       B left, int leftRow, @Nullable B right) {
+        int rel = leftRow;
+        for (; left != null && rel >= left.rows; left = left.next) rel -= left.rows;
+        if (left == null)
+            throw new IndexOutOfBoundsException(leftRow);
+        return merge(dest, left, rel, right);
+    }
+
 }
