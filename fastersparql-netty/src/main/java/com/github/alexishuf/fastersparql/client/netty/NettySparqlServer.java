@@ -1522,8 +1522,13 @@ public class NettySparqlServer implements SparqlServer {
         private boolean lastSeqSentDone() {
             while ((int)Q.compareAndExchangeAcquire(this, 0, 1) != 0) Thread.onSpinWait();
             CompressedBatch q = sendQueue;
-            boolean done = q != null && q.rows > 0 && q.localView(0, 0, tmpView)
-                    && WsBindingSeq.parse(tmpView, 0, tmpView.len) > lastSeqSent;
+            boolean done;
+            if (q == null)
+                done = true;
+            else if (q.rows > 0 && q.localView(0, 0, tmpView))
+                done = WsBindingSeq.parse(tmpView, 0, tmpView.len) > lastSeqSent;
+            else
+                done = false; // corrupted queue
             Q.setRelease(this, 0);
             return done;
         }
