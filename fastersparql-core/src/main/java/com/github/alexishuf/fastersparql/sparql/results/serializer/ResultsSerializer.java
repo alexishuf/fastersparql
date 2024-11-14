@@ -201,7 +201,7 @@ public abstract class ResultsSerializer<S extends ResultsSerializer<S>>
         @Override public void close() { Orphan.recycle(take()); }
 
         @Override public void onSerializedNode(Orphan<B> b) {
-            head = Batch.quickAppend(head, this, b);
+            head = Batch.quickAppendTrusted(head, this, b);
         }
     }
 

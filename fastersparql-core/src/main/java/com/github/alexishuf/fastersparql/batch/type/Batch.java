@@ -350,11 +350,16 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
             n.tail = newTail;
             ++len;
         }
-        if (len > LONG_LIST)
+        if ((len&DEFRAG_MASK) == DEFRAG_MASK)
             deFragmentMiddleNodes();
         return newTail;
     }
-    private static final int LONG_LIST = Math.max(emitReqChunkBatches(), itQueueBatches());
+    private static final int DEFRAG_MASK;
+    static {
+        int n = Math.max(emitReqChunkBatches(), itQueueBatches());
+        DEFRAG_MASK = (1<<(32-Integer.numberOfLeadingZeros(n-1)))-1;
+        assert Integer.bitCount(DEFRAG_MASK+1) == 1;
+    }
 
     /**
      * Detaches the first node of {@code other} and copy its contents to {@code this},
