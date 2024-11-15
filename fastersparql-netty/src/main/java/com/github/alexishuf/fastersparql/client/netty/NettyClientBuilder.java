@@ -20,6 +20,8 @@ import java.net.URI;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.nettyEventLoopThreads;
+import static com.github.alexishuf.fastersparql.client.netty.util.FSNettyProperties.sharedEventLoopGroupPhysAffnity;
 import static io.netty.handler.ssl.SslContextBuilder.forClient;
 
 @SuppressWarnings("unused")
@@ -54,7 +56,8 @@ public final class NettyClientBuilder {
         } else {
             String name = "NettyClientBuilder@"+Integer.toHexString(System.identityHashCode(this));
             return new EventLoopGroupHolder(name, null, 0, TimeUnit.SECONDS,
-                                            FSNettyProperties.nettyEventLoopThreads(), null);
+                                            nettyEventLoopThreads(),
+                                            sharedEventLoopGroupPhysAffnity());
         }
     }
 

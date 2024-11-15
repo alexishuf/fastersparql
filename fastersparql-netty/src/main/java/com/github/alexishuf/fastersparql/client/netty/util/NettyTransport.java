@@ -16,13 +16,12 @@ import io.netty.incubator.channel.uring.IOUringEventLoopGroup;
 import io.netty.incubator.channel.uring.IOUringSocketChannel;
 import io.netty.util.concurrent.DefaultThreadFactory;
 
-import java.util.BitSet;
-
 public enum NettyTransport {
     NIO {
         @Override public boolean isAvailable() { return true; }
-        @Override public EventLoopGroup createGroup(int threads, BitSet affinity) {
-            return new NioEventLoopGroup(threads, new AffinityFac(affinity));
+        @Override public EventLoopGroup createGroup(int threads,
+                                                    DefaultThreadFactory threadFactory) {
+            return new NioEventLoopGroup(threads, threadFactory);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return NioSocketChannel.class;
@@ -35,8 +34,9 @@ public enum NettyTransport {
                 return IOUring.isAvailable();
             } catch (ClassNotFoundException e) { return false; }
         }
-        @Override public EventLoopGroup createGroup(int threads, BitSet cpuAffinity) {
-            return new IOUringEventLoopGroup(threads, new AffinityFac(cpuAffinity));
+        @Override public EventLoopGroup createGroup(int threads,
+                                                    DefaultThreadFactory threadFactory) {
+            return new IOUringEventLoopGroup(threads, threadFactory);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return IOUringSocketChannel.class;
@@ -49,8 +49,9 @@ public enum NettyTransport {
                 return KQueue.isAvailable();
             } catch (ClassNotFoundException e) {return false;}
         }
-        @Override public EventLoopGroup createGroup(int threads, BitSet cpuAffinity) {
-            return new KQueueEventLoopGroup(threads, new AffinityFac(cpuAffinity));
+        @Override public EventLoopGroup createGroup(int threads,
+                                                    DefaultThreadFactory threadFactory) {
+            return new KQueueEventLoopGroup(threads, threadFactory);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return KQueueSocketChannel.class;
@@ -63,8 +64,9 @@ public enum NettyTransport {
                 return Epoll.isAvailable();
             } catch (ClassNotFoundException e) {return false;}
         }
-        @Override public EventLoopGroup createGroup(int threads, BitSet cpuAffinity) {
-            return new EpollEventLoopGroup(threads, new AffinityFac(cpuAffinity));
+        @Override public EventLoopGroup createGroup(int threads,
+                                                    DefaultThreadFactory threadFactory) {
+            return new EpollEventLoopGroup(threads, threadFactory);
         }
         @Override public Class<? extends SocketChannel> channelClass() {
             return EpollSocketChannel.class;
@@ -72,23 +74,25 @@ public enum NettyTransport {
     };
 
     abstract public boolean isAvailable();
-    abstract public EventLoopGroup createGroup(int threads, BitSet affinity);
+    public EventLoopGroup createGroup(int threads, boolean physCoreAffinity) {
+        var fac = physCoreAffinity ? new AffinityFac()
+                                   : new DefaultThreadFactory("NettyELG", true);
+        return createGroup(threads, fac);
+    }
+    abstract public EventLoopGroup createGroup(int threads,
+                                               DefaultThreadFactory threadFactory);
     abstract public Class<? extends SocketChannel>  channelClass();
 
-
     private static final class AffinityFac extends DefaultThreadFactory {
-        private final BitSet cpuAffinity;
-        public AffinityFac(BitSet cpuAffinity) {
-            super("NettyELG", true);
-            this.cpuAffinity = cpuAffinity;
-        }
+        private int threadsCount;
+        public AffinityFac() {super("NettyAffELG", true);}
 
         @Override public Thread newThread(Runnable r) {
-            return super.newThread(new CpuAffinityRunnable(r, cpuAffinity));
+            return super.newThread(new CpuAffinityRunnable(r, threadsCount++));
         }
 
         @Override protected Thread newThread(Runnable r, String name) {
-            return super.newThread(new CpuAffinityRunnable(r, cpuAffinity), name);
+            return super.newThread(new CpuAffinityRunnable(r, threadsCount++), name);
         }
     }
 

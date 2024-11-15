@@ -10,7 +10,6 @@ import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.Receiver;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
-import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
 import com.github.alexishuf.fastersparql.fed.selectors.AskSelector;
 import com.github.alexishuf.fastersparql.operators.reorder.AvoidCartesianJoinReorderStrategy;
 import com.github.alexishuf.fastersparql.operators.reorder.JoinReorderStrategy;
@@ -81,7 +80,6 @@ public class FSProperties {
     public static final String COUNT_SUBQUERIES          = "fastersparql.subqueries.count";
     public static final String STORE_CLIENT_VALIDATE     = "fastersparql.store.client.validate";
     public static final String SAME_SOURCE_IDS           = "fastersparql.same-source-ids";
-    public static final String NETTY_EVLOOP_THREADS      = "io.netty.eventLoopThreads";
 
     /* --- --- --- default values --- --- --- */
     public static final int     DEF_CLIENT_MAX_QUERY_GET      = 1024;
@@ -131,7 +129,6 @@ public class FSProperties {
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static int CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
-    private static int CACHE_NETTY_EVLOOP_THREADS      = -1;
     private static long CACHE_WS_IMPLICIT_REQUEST      = -1;
     private static double CACHE_BATCH_MIN_SIZE         = -1;
     private static Boolean CACHE_OP_WEAKEN_DISTINCT     = null;
@@ -259,7 +256,6 @@ public class FSProperties {
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
         CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
-        CACHE_NETTY_EVLOOP_THREADS      = -1;
         CACHE_OP_WEAKEN_DISTINCT        = null;
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
@@ -335,7 +331,7 @@ public class FSProperties {
      *
      * <p>Note that {@link Emitter} implementations query this via a {@code static final}
      * field, so that code pertaining to this logging (including the check) is eliminated by the
-     * JIT compiler. Therefore changes at runtime may be ignored and this should be set with
+     * JIT compiler. Therefore, changes at runtime may be ignored and this should be set with
      * {@code -D} on the command-line. </p>
      *
      * @return {@code true} if {@link Emitter} should log statistics upon termination.
@@ -400,7 +396,7 @@ public class FSProperties {
      *
      * <p>Note that {@link Emitter} implementations query this via a {@code static final}
      * field, so that code pertaining to this logging (including the check) is eliminated by the
-     * JIT compiler. Therefore changes at runtime may be ignored and this should be set with
+     * JIT compiler. Therefore, changes at runtime may be ignored and this should be set with
      * {@code -D} on the command-line. </p>
      *
      * @return Whether {@link Emitter}s should print statistics when released
@@ -553,8 +549,9 @@ public class FSProperties {
      *
      * <p>This is enabled by default when assertions are enabled and helps detect unintended
      * sharing (leading to races) and use-after-free bugs. Without assertions the default is
-     * {@code false} because each ownership change triggers a write, which increases cache line
-     * invalidations on other cores, specially when the {@link Owned} object is pooled.</p>
+     * {@code false} because each ownership change triggers a write operation, which increases
+     * cache line invalidations on other cores, specially when the
+     * {@link Owned} object is pooled.</p>
      */
     public static boolean ownedMark() {
         Boolean v = CACHE_OWNED_MARK;
@@ -1050,23 +1047,4 @@ public class FSProperties {
         return v;
     }
 
-    /**
-     * How many threads a netty event loop should have by default. This is controlled by the
-     * same property used by netty itself ({@code io.netty.eventLoopThreads}). If the property
-     * is unset the default will be {@link Runtime#availableProcessors()} instead of the actual
-     * netty default that would be double that. If the property is set to 0, the netty default
-     * behavior will remain.
-     *
-     * @return How many threads should a netty {@code EventLoopGroup} have.
-     */
-    public static int nettyEventLoopThreads() {
-        int i = CACHE_NETTY_EVLOOP_THREADS;
-        if (i < 0) {
-            i = readNonNegativeInteger(NETTY_EVLOOP_THREADS, Integer.MAX_VALUE);
-            if (i == Integer.MAX_VALUE)
-                i = 2*ThreadPoolsPartitioner.partitionSize();
-            CACHE_NETTY_EVLOOP_THREADS = i;
-        }
-        return i;
-    }
 }

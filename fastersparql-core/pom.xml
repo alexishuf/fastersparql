@@ -35,6 +35,10 @@
       <artifactId>affinity</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.github.oshi</groupId>
+      <artifactId>oshi-core</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.jctools</groupId>
       <artifactId>jctools-core</artifactId>
     </dependency>

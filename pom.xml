@@ -98,6 +98,13 @@
         <artifactId>checker</artifactId>
         <version>3.21.0</version>
       </dependency>
+      <dependency> <!-- Hardware Information, used in fastersparql-core, but may need to
+                        be imported directly by some modules due to multiple versions of
+                        JNA. See https://github.com/oshi/oshi/blob/master/src/site/markdown/FAQ.md#how-do-i-resolve-jna-noclassdeffounderror-or-nosuchmethoderror-issues -->
+        <groupId>com.github.oshi</groupId>
+        <artifactId>oshi-core</artifactId>
+        <version>6.6.1</version>
+      </dependency>
       <dependency> <!-- reactive streams (not Flow, since we target JDK>=8) -->
         <groupId>org.reactivestreams</groupId>
         <artifactId>reactive-streams</artifactId>

@@ -35,8 +35,10 @@ public class FSNettyProperties extends FSProperties {
     public static final String OCSP                       = "fastersparql.netty.ssl.ocsp";
     public static final String POOL_ENABLE                = "fastersparql.netty.pool.enable";
     public static final String POOL_FIFO                  = "fastersparql.netty.pool.fifo";
+    public static final String NETTY_EVLOOP_THREADS       = "io.netty.eventLoopThreads";
     public static final String ELG_SHARED                 = "fastersparql.netty.eventloopgroup.shared";
     public static final String ELG_KEEPALIVE              = "fastersparql.netty.eventloopgroup.keepalive-seconds";
+    public static final String ELG_PHYS_AFFINITY          = "fastersparql.netty.eventloopgroup.physAffinity";
     public static final String WS_MAX_HTTP                = "fastersparql.netty.ws.max-http";
     public static final String CHANNEL_DEBUG_CLIENT       = "fastersparql.netty.channel.debug.client";
     public static final String CHANNEL_DEBUG_SERVER       = "fastersparql.netty.channel.debug.server";
@@ -53,6 +55,7 @@ public class FSNettyProperties extends FSProperties {
     public static final boolean DEF_ELG_SHARED              = true;
     public static final boolean DEF_CHANNEL_DEBUG_CLIENT    = false;
     public static final boolean DEF_CHANNEL_DEBUG_SERVER    = false;
+    public static final boolean DEF_ELG_PHYS_AFFINItY       = false;
     public static final boolean DEF_CHANNEL_INFO            = FSNettyProperties.class.desiredAssertionStatus();
     public static final int     DEF_ELG_KEEPALIVE           = 15;
     public static final int     DEF_WS_MAX_HTTP             = 8192;
@@ -129,6 +132,22 @@ public class FSNettyProperties extends FSProperties {
     @SuppressWarnings("unused") public static boolean poolFIFO() { return readBoolean(POOL_FIFO, DEF_POOL_FIFO); }
 
     /**
+     * How many threads a netty event loop should have by default. This is controlled by the
+     * same property used by netty itself ({@code io.netty.eventLoopThreads}). If the property
+     * is unset the default will be {@link Runtime#availableProcessors()} instead of the actual
+     * netty default that would be double that. If the property is set to 0, the netty default
+     * behavior will remain.
+     *
+     * @return How many threads should a netty {@code EventLoopGroup} have.
+     */
+    public static int nettyEventLoopThreads() {
+        int i = readNonNegativeInteger(NETTY_EVLOOP_THREADS, Integer.MAX_VALUE);
+        if (i == Integer.MAX_VALUE)
+            i = Runtime.getRuntime().availableProcessors();
+        return i;
+    }
+
+    /**
      * If {@code true} (the default), all {@link NettySparqlClient}s will share one single
      * {@link EventLoopGroup}. If false, each client will create its own.
      * <p>
@@ -161,6 +180,19 @@ public class FSNettyProperties extends FSProperties {
      */
     public static int sharedEventLoopGroupKeepAliveSeconds() {
         return readPositiveInt(ELG_KEEPALIVE, DEF_ELG_KEEPALIVE);
+    }
+
+    /**
+     * If this is set to {@code true}, all Netty event loop threads will have their affinity
+     * restricted to all (2) logical cores in a single physical CPU core. Note that such affinity
+     * is strict in Linux: if neither of the two logical cores are available the thread will
+     * not run. The default is {@code false}.
+     *
+     * @return Whether each netty event loop thread should have its affinity restricted to a
+     *         single physical core
+     */
+    public static boolean sharedEventLoopGroupPhysAffnity() {
+        return readBoolean(ELG_PHYS_AFFINITY, DEF_ELG_PHYS_AFFINItY);
     }
 
     /**

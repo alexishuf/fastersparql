@@ -11,7 +11,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.BitSet;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -52,8 +51,7 @@ public class EventLoopGroupHolder {
 
     @SuppressWarnings("unused") public int threads() { return threads; }
     private final int threads;
-
-    private final BitSet affinity;
+    private final boolean physCoreAffinity;
 
     /**
      * The current alvie {@link EventLoopGroup}. This field must be set to null before
@@ -82,21 +80,15 @@ public class EventLoopGroupHolder {
 
     public EventLoopGroupHolder(String name, @Nullable NettyTransport transport, int keepAlive,
                                 @Nullable TimeUnit keepAliveTimeUnit, int threads,
-                                @Nullable BitSet affinity) {
+                                boolean physCoreAffinity) {
         this.name = name;
         this.transport = transport == null ? chooseTransport() : transport;
         if (keepAlive < 0)
             throw new IllegalArgumentException("Negative keepAlive="+keepAlive);
-        this.keepAlive     = keepAlive;
-        this.keepAliveUnit = keepAliveTimeUnit == null ? MILLISECONDS : keepAliveTimeUnit;
-        this.threads       = Math.max(0, threads);
-        if (affinity == null) {
-            int logicalCores = Runtime.getRuntime().availableProcessors();
-            int usedCores = threads == 0 ? logicalCores : threads;
-            affinity = new BitSet();
-            affinity.set(logicalCores-usedCores, logicalCores);
-        }
-        this.affinity = affinity;
+        this.keepAlive        = keepAlive;
+        this.keepAliveUnit    = keepAliveTimeUnit == null ? MILLISECONDS : keepAliveTimeUnit;
+        this.threads          = Math.max(0, threads);
+        this.physCoreAffinity = physCoreAffinity;
         if (keepAlive > 0)
             FS.addShutdownHook(() -> shutdownNowIfPossible(1, SECONDS));
     }
@@ -138,7 +130,7 @@ public class EventLoopGroupHolder {
                     log.error("Null {}.group with references={}", this, references);
                     assert false : "group==null with references != 1";
                 }
-                group = transport.createGroup(threads, affinity);
+                group = transport.createGroup(threads, physCoreAffinity);
             }
             return group;
         } finally {

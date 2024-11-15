@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.client.netty;
 
-import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.BatchQueue.CancelledException;
@@ -91,7 +90,7 @@ public class NettySparqlServer implements SparqlServer {
     public static final EventLoopGroupHolder ACCEPT_ELG
             = new EventLoopGroupHolder("NettySparqlServer.ACCEPT_ELG", null,
                                        sharedEventLoopGroupKeepAliveSeconds(),
-                                       SECONDS, 1, null);
+                                       SECONDS, 1, false);
     private static final int HANDLER_POOL_SIZE = FSNettyProperties.serverHandlerPool();
 
     private static final String SP_PATH = "/sparql";
@@ -130,7 +129,7 @@ public class NettySparqlServer implements SparqlServer {
         } else {
             workerELGHolder = null;
             acceptGroup     = new NioEventLoopGroup(1);
-            workerGroup     = new NioEventLoopGroup(FSProperties.nettyEventLoopThreads());
+            workerGroup     = new NioEventLoopGroup(FSNettyProperties.nettyEventLoopThreads());
         }
         server = new ServerBootstrap().group(acceptGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)

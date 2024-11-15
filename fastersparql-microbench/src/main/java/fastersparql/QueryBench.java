@@ -13,8 +13,6 @@ import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
-import com.github.alexishuf.fastersparql.emit.async.EmitterService;
-import com.github.alexishuf.fastersparql.emit.async.ThreadPoolsPartitioner;
 import com.github.alexishuf.fastersparql.lrb.BenchmarkEvent;
 import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.BatchKind;
 import com.github.alexishuf.fastersparql.lrb.cmd.QueryOptions;
@@ -54,7 +52,6 @@ import java.lang.invoke.VarHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntSupplier;
@@ -289,12 +286,6 @@ public class QueryBench {
             System.setProperty(FSProperties.SAME_SOURCE_IDS, "false");
         if (batchKind == BatchKind.TERM_NI)
             System.setProperty(FSProperties.BATCH_NO_INTERN_IRI, "true");
-        if (srcKind.isFsServer())
-            ThreadPoolsPartitioner.registerPartition(SharedEventLoopGroupHolder.class.getSimpleName());
-        if (flowModel == FlowModel.EMIT
-                || srcKind.serverFlowModel().equals(Optional.of(FlowModel.EMIT))) {
-            ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
-        }
         String forkTimeoutStr = System.getProperty("fastersparql.fork-timeout-secs");
         if (forkTimeoutStr == null || forkTimeoutStr.isEmpty()) // typo:
             forkTimeoutStr = System.getProperty("fastersparql.fastersparql.fork-timeout-secs");

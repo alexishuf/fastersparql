@@ -2,7 +2,6 @@ package com.github.alexishuf.fastersparql.emit.async;
 
 import com.github.alexishuf.fastersparql.util.OOMHandler;
 import com.github.alexishuf.fastersparql.util.concurrent.Timestamp;
-import net.openhft.affinity.Affinity;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jetbrains.annotations.Async;
 import org.slf4j.Logger;
@@ -10,7 +9,6 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
-import java.util.BitSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.locks.LockSupport;
 
@@ -31,9 +29,6 @@ import static java.lang.Thread.currentThread;
  * </ul>
  */
 public final class EmitterService {
-    static {
-        ThreadPoolsPartitioner.registerPartition(EmitterService.class.getSimpleName());
-    }
     private static final Logger log = LoggerFactory.getLogger(EmitterService.class);
 
     /**
@@ -235,7 +230,7 @@ public final class EmitterService {
         @Override public void run() {
             if (currentThread() != this)
                 throw new IllegalStateException("wrong thread");
-            Affinity.setAffinity(svc.cpuAffinity);
+            AffinityHelper.setCurrentThreadPhysicalCoreAffinity(workerId);
             //noinspection InfiniteLoopStatement
             while (true) {
                 Task<?> task = svc.queue.take(this);
@@ -278,13 +273,12 @@ public final class EmitterService {
 
     @SuppressWarnings("FieldCanBeLocal")
     private final EmitterService.Worker[] workers;
-    private final BitSet cpuAffinity;
     private final TaskQueue queue;
 
     private EmitterService() {
-        int nWorkers = ThreadPoolsPartitioner.partitionSize();
-        cpuAffinity  = ThreadPoolsPartitioner.nextLogicalCoreSet();
-        workers      = new EmitterService.Worker[nWorkers];
+        int processors = Runtime.getRuntime().availableProcessors();
+        int nWorkers   = 1<<(32-Integer.numberOfLeadingZeros(processors-1));
+        workers        = new EmitterService.Worker[nWorkers];
         var grp = new ThreadGroup("EmitterService");
         for (int i = 0; i < workers.length; i++)
             workers[i] = new Worker(grp, this, i);
