@@ -49,7 +49,7 @@ public sealed abstract class StrongDedup<B extends Batch<B>> extends Dedup<B, St
     private int bucketsMask;
     /** Quick non-membership test. Bit {@code i} will be set if a row with
      * {@code hash&bitMask == i} was added.*/
-    private long[] bitset = HashBitset.get();
+    private long[] bitset = BigHashBitset.get();
     /** Array of buckets. An empty bucket is represented by {@code null} */
     private Bucket<B>[] buckets;
     /** When tableSize reaches this, perform a rehash */
@@ -92,7 +92,7 @@ public sealed abstract class StrongDedup<B extends Batch<B>> extends Dedup<B, St
         buckets    = emptyBuckets();
         tableSize  = 0;
         nextRehash = 0;
-        bitset     = HashBitset.recycle(bitset);
+        bitset     = BigHashBitset.recycle(bitset);
         return null;
     }
 

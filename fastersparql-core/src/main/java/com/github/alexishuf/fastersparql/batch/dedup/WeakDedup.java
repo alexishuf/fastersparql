@@ -14,7 +14,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static com.github.alexishuf.fastersparql.batch.dedup.HashBitset.HASH_MASK;
+import static com.github.alexishuf.fastersparql.batch.dedup.SmallHashBitset.HASH_MASK;
 import static com.github.alexishuf.fastersparql.sparql.DistinctType.compareTo;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.Integer.toHexString;
@@ -26,7 +26,7 @@ public abstract sealed class WeakDedup<B extends Batch<B>> extends Dedup<B, Weak
     /** Value such that {@code hash & mask} yields the bucket index for a given hash value */
     private final int capacity;
     /** If bit {@code hash(r) & bitsetMask} is set, r MAY be present, else it certainly is not. */
-    private long[] bitset = HashBitset.get();
+    private long[] bitset = SmallHashBitset.get();
 
     private static final BucketPools SMALL_BUCKETS, BIG_BUCKETS;
     static {
@@ -94,8 +94,6 @@ public abstract sealed class WeakDedup<B extends Batch<B>> extends Dedup<B, Weak
                 .createBucket(batchType, cols)
                 .takeOwnership(this);
         this.capacity = rows.capacity();
-        if (this.capacity > HashBitset.BS_BITS)
-            throw new AssertionError("bucket capacity > HashBitset.BS_BITS");
     }
 
     protected static final class Concrete<B extends Batch<B>> extends WeakDedup<B>
@@ -109,7 +107,7 @@ public abstract sealed class WeakDedup<B extends Batch<B>> extends Dedup<B, Weak
     @Override public @Nullable WeakDedup<B> recycle(Object currentOwner) {
         internalMarkGarbage(currentOwner);
         rows = rows.recycle(this);
-        bitset = HashBitset.recycle(bitset);
+        bitset = SmallHashBitset.recycle(bitset);
         return null;
     }
 
@@ -122,11 +120,7 @@ public abstract sealed class WeakDedup<B extends Batch<B>> extends Dedup<B, Weak
     @Override public void clear(int cols) {
         requireAlive();
         Arrays.fill(bitset, 0L);
-        if (rows.cols() != cols)
-            rows.clear(rows.capacity(), cols);
-        // since constructor asserts bitset has more bits than rows.capacity() and bitset
-        // is always checked before this.rows, clear() can be skipped if the number of
-        // columns is not changed.
+        rows.clear(rows.capacity(), cols);
     }
 
     @Override public int capacity() { return capacity; }
