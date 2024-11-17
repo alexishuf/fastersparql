@@ -368,7 +368,7 @@ public abstract sealed class UnitBatch extends Batch<UnitBatch> {
                 Orphan.safeRecycle(dstOffer);
                 throw new IllegalArgumentException("dstOffer.cols != outColumns");
             }
-            if (leftRow != 0 || left.rows != 1) {
+            if (leftRow < 0 || leftRow >= left.rows) {
                 Orphan.safeRecycle(dstOffer);
                 throw new IndexOutOfBoundsException("leftRow not in [0, left.rows)");
             }
