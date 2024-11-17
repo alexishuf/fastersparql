@@ -100,7 +100,14 @@ public abstract sealed class UnitBucket extends AbstractOwned<UnitBucket>
         if (row < 0 || row >= rows.length)
             throw new IndexOutOfBoundsException();
         var b = rows[row];
-        return b != null && b.rows != 0 && b.equals(0, other, otherRow);
+        if (b == null || b.rows == 0)
+            return false;
+        try {
+            return b.equals(0, other, otherRow);
+        } catch (IndexOutOfBoundsException ignored) {
+            // may happen if b is modified concurrently (WeakCrossSourceDedup+ITERATOR)
+            return false;
+        }
     }
 
     @Override public @NonNull Iterator<UnitBatch> iterator() {
