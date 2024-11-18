@@ -57,13 +57,18 @@ public class JenaBIt<B extends Batch<B>> extends UnitaryBIt<B> {
     }
 
     private void start() {
-        started = true;
-        if (ask) {
-            askResult = exec.ask();
-        } else {
-            rs = exec.select();
-            jVars = rs.getResultVars().toArray(new Var[0]);
-        }
+        lock();
+        try {
+            if (!plainState.isTerminated()) {
+                started = true;
+                if (ask) {
+                    askResult = exec.ask();
+                } else {
+                    rs = exec.select();
+                    jVars = rs.getResultVars().toArray(new Var[0]);
+                }
+            }
+        } finally { unlock(); }
     }
 
     @Override protected B fetch(B dst) {
