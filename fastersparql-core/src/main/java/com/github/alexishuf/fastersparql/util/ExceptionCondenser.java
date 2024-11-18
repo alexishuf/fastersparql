@@ -3,10 +3,7 @@ package com.github.alexishuf.fastersparql.util;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.locks.ReentrantLock;
@@ -77,14 +74,16 @@ public final class ExceptionCondenser<T extends Throwable> {
                   Iterator<? extends AutoCloseable> it) throws T {
         T acc = null;
         while (it.hasNext()) {
-            var o = it.next();
             try {
-                o.close();
-            } catch (Throwable t) {
-                if (acc == null) //noinspection unchecked
-                    acc = tClass.isInstance(t) ? (T)t : factory.apply(t);
-                else acc.addSuppressed(t);
-            }
+                var o = it.next();
+                try {
+                    o.close();
+                } catch (Throwable t) {
+                    if (acc == null) //noinspection unchecked
+                        acc = tClass.isInstance(t) ? (T)t : factory.apply(t);
+                    else acc.addSuppressed(t);
+                }
+            } catch (NoSuchElementException ignored) {}
         }
         if (acc != null)
             throw acc;
@@ -97,18 +96,20 @@ public final class ExceptionCondenser<T extends Throwable> {
         var lock = new ReentrantLock();
         List<Thread> threads = new ArrayList<>();
         while (it.hasNext()) {
-            var o = it.next();
-            threads.add(Thread.startVirtualThread(() -> {
-                try {
-                    o.close();
-                } catch (Throwable t) {
-                    lock.lock();
+            try {
+                var o = it.next();
+                threads.add(Thread.startVirtualThread(() -> {
                     try {
-                        if (acc[0] == null) acc[0] = tClass.isInstance(t) ? t : factory.apply(t);
-                        else                acc[0].addSuppressed(t);
-                    } finally { lock.unlock(); }
-                }
-            }));
+                        o.close();
+                    } catch (Throwable t) {
+                        lock.lock();
+                        try {
+                            if (acc[0] == null) acc[0] = tClass.isInstance(t) ? t : factory.apply(t);
+                            else                acc[0].addSuppressed(t);
+                        } finally { lock.unlock(); }
+                    }
+                }));
+            } catch (NoSuchElementException ignored) {}
         }
         for (Thread thread : threads)
             Async.uninterruptibleJoin(thread);

@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.util.ExceptionCondenser;
 import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,13 +42,8 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         } catch (Throwable t) {
             log.error("inner.close() failed on nextSource() this={}, inner={}", this, inner, t);
         }
-        if (processor != null) {
-            try {
-                processor = processor.recycle(this);
-            } catch (Throwable t) {
-                log.error("recycle() failed for processor={}, this={}", processor, this, t);
-            }
-        }
+        if (processor != null)
+            processor = Owned.safeRecycle(processor, this);
         if (sourcesIt.hasNext()) {
             var source = sourcesIt.next().minBatch(minBatch()).maxBatch(maxBatch())
                                          .minWait(minWait(NANOSECONDS), NANOSECONDS);
@@ -70,10 +66,9 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
     @Override protected void cleanup(@Nullable Throwable cause) {
         super.cleanup(cause);
         if (processor != null) {
-            try {
-                processor.recycle(this);
-            } catch (Throwable t) { reportCleanupError(t); }
+            var p = processor;
             processor = null;
+            Owned.safeRecycle(p, this);
         }
         ExceptionCondenser.closeAll(sourcesIt);
     }
@@ -88,7 +83,7 @@ public class ConcatBIt<B extends Batch<B>> extends AbstractFlatMapBIt<B> {
         try (var g = new Guard.BatchGuard<B>(this)) {
             g.set(offer);
             do {
-                BatchProcessor<B, ?> p = processor;
+                var p = processor;
                 while (g.nextBatch(inner) != null) {
                     lock();
                     try {
