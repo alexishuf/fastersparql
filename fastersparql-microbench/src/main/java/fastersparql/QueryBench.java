@@ -6,12 +6,14 @@ package fastersparql;
 import com.github.alexishuf.fastersparql.FS;
 import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.FlowModel;
+import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.ScopedIdBatchType;
 import com.github.alexishuf.fastersparql.client.SubqueriesStats;
 import com.github.alexishuf.fastersparql.client.netty.NettySparqlServer;
 import com.github.alexishuf.fastersparql.client.netty.util.SharedEventLoopGroupHolder;
+import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.lrb.BenchmarkEvent;
 import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.BatchKind;
@@ -535,13 +537,13 @@ public class QueryBench {
     @SuppressWarnings("unused") private static int plainNextWatchdogId;
     private volatile long watchdogData = 0x7fffffff00000000L;
     private @Nullable Plan watchdogPlan;
-    private @Nullable StreamNode dbgExecution;
+    private @Nullable StreamNode watchdogExecution;
     private String benchmarkId;
     private Thread watchdog;
 
     private void armWatchdog(Plan plan, StreamNode execution) {
         Watchdog.reset();
-        dbgExecution = execution;
+        watchdogExecution = execution;
         watchdogPlan = plan;
         //noinspection NonAtomicOperationOnVolatileField
         watchdogData = ((long)drainTimeoutMs << 32)
@@ -550,7 +552,7 @@ public class QueryBench {
     }
     private void disarmWatchdog() {
         watchdogPlan = null;
-        dbgExecution = null;
+        watchdogExecution = null;
         //noinspection NonAtomicOperationOnVolatileField
         watchdogData = 0x7fffffff00000000L | ((watchdogData+1) & 0xffffffffL);
     }
@@ -601,11 +603,11 @@ public class QueryBench {
             if (timeoutMs == Integer.MAX_VALUE)
                 continue; // not armed
 
-            // dump execution state if watchdog ws nto disarmed/re-armed
+            // dump execution state if watchdog was not disarmed/re-armed
             if (watchdogData != data)
                 continue; // disarmWatchdog()/armWatchdog()
             var plan      = watchdogPlan;
-            var execution = this.dbgExecution;
+            var execution = watchdogExecution;
             if (watchdogData != data)
                 continue; // disarmWatchdog()/armWatchdog()
             log.info("{}s/{}s elapsed for drainer timeout", dumpMs/1_000, timeoutMs/1_000);
@@ -618,9 +620,24 @@ public class QueryBench {
             while (watchdogData == data && (rem=deadline-System.nanoTime()) > 0)
                 LockSupport.parkNanos(rem);
 
+            if (watchdogData != data)
+                continue; // disarmWatchdog()/armWatchdog()
+
+            // retry cancel()
+            log.info("Reissuing cancel() 1min after first cancel()..., execution={}", execution);
+            if (execution instanceof BIt<?> i)
+                i.tryCancel();
+            else if (execution instanceof Emitter<?,?> e)
+                e.cancel();
+
+            // allow a few more seconds for cancel() to be done
+            deadline = System.nanoTime() + NANOSECONDS.convert(30, SECONDS);
+            while (watchdogData == data && (rem=deadline-System.nanoTime()) > 0)
+                LockSupport.parkNanos(rem);
+
             // kill JVM if watchdog was not disarmed/re-armed
             if (watchdogData == data) {
-                log.error("Unresponsive drainer for 1min after cancel(), calling exit(27)");
+                log.error("Unresponsive drainer for 1min30s after first cancel(), calling exit(27)");
                 System.exit(27);
             } // else: disarmWatchdog()/armWatchdog()
         }
