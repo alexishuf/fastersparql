@@ -75,7 +75,6 @@ import java.util.stream.Stream;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.EMPTY;
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.*;
 import static com.github.alexishuf.fastersparql.operators.plan.Operator.*;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 import static com.github.alexishuf.fastersparql.store.batch.IdTranslator.*;
 import static com.github.alexishuf.fastersparql.store.index.dict.Dict.NOT_FOUND;
 import static com.github.alexishuf.fastersparql.util.concurrent.ArrayAlloc.longsAtLeast;
@@ -268,9 +267,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
             var vars = binding == null ? t.freeRoles() : t.freeRoles(binding);
             var lookup = dict.lookup().takeOwnership(this);
             try {
-                s = t.s.type() == VAR ? 0 : lookup.find(t.s);
-                p = t.p.type() == VAR ? 0 : lookup.find(t.p);
-                o = t.o.type() == VAR ? 0 : lookup.find(t.o);
+                s = t.s.isVar() ? 0 : lookup.find(t.s);
+                p = t.p.isVar() ? 0 : lookup.find(t.p);
+                o = t.o.isVar() ? 0 : lookup.find(t.o);
                 if (vars == EMPTY)
                     return 1; // short circuit for ask queries
             } finally {
@@ -403,9 +402,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
                 Modifier m = plan instanceof Modifier mod ? mod : null;
                 // if possible, push projection to when turning Triple.* iterators into batches
                 Vars tpVars = m != null && m.filters.isEmpty() ? m.publicVars() : tp.publicVars();
-                storeIt = queryTP(tpVars, tp, tp.s.type() == VAR ? NOT_FOUND : l.find(tp.s),
-                        tp.p.type() == VAR ? NOT_FOUND : l.find(tp.p),
-                        tp.o.type() == VAR ? NOT_FOUND : l.find(tp.o),
+                storeIt = queryTP(tpVars, tp, tp.s.isVar() ? NOT_FOUND : l.find(tp.s),
+                        tp.p.isVar() ? NOT_FOUND : l.find(tp.p),
+                        tp.o.isVar() ? NOT_FOUND : l.find(tp.o),
                         tp.freeRoles());
                 if (m != null) // apply the modifier. executeFor() detects a no-op
                     storeIt = m.executeFor(storeIt, null, false);
@@ -456,9 +455,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
         var tp = (r.type == MODIFIER ? r.left : r) instanceof TriplePattern t ? t : null;
         if (tp != null) {
             long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
-            boolean empty = (tp.s.type() != VAR && (s = lookup.find(tp.s)) == NOT_FOUND)
-                         || (tp.p.type() != VAR && (p = lookup.find(tp.p)) == NOT_FOUND)
-                         || (tp.o.type() != VAR && (o = lookup.find(tp.o)) == NOT_FOUND);
+            boolean empty = (tp.s.isGround() && (s = lookup.find(tp.s)) == NOT_FOUND)
+                         || (tp.p.isGround() && (p = lookup.find(tp.p)) == NOT_FOUND)
+                         || (tp.o.isGround() && (o = lookup.find(tp.o)) == NOT_FOUND);
             if (empty)
                 return new EmptyBIt<>(TYPE, outVars, metrics);
             var notifier = new BindingNotifier(bq);
@@ -574,9 +573,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
                    ? t : null;
             if (tp != null) {
                 long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
-                boolean empty = (tp.s.type() != VAR && (s = l.find(tp.s)) == NOT_FOUND)
-                        || (tp.p.type() != VAR && (p = l.find(tp.p)) == NOT_FOUND)
-                        || (tp.o.type() != VAR && (o = l.find(tp.o)) == NOT_FOUND);
+                boolean empty = (tp.s.isGround() && (s = l.find(tp.s)) == NOT_FOUND)
+                             || (tp.p.isGround() && (p = l.find(tp.p)) == NOT_FOUND)
+                             || (tp.o.isGround() && (o = l.find(tp.o)) == NOT_FOUND);
                 if (empty) {
                     it = new EmptyBindingBIt<>(bq, outVars);
                 } else {
@@ -658,9 +657,9 @@ public class StoreSparqlClient extends AbstractSparqlClient
             var op = join.op(i);
             var tp = op instanceof TriplePattern t ? t : (TriplePattern)op.left();
             long s = NOT_FOUND, p = NOT_FOUND, o = NOT_FOUND;
-            boolean empty = (tp.s.type() != VAR && (s = lookup.find(tp.s)) == NOT_FOUND)
-                         || (tp.p.type() != VAR && (p = lookup.find(tp.p)) == NOT_FOUND)
-                         || (tp.o.type() != VAR && (o = lookup.find(tp.o)) == NOT_FOUND);
+            boolean empty = (tp.s.isGround() && (s = lookup.find(tp.s)) == NOT_FOUND)
+                         || (tp.p.isGround() && (p = lookup.find(tp.p)) == NOT_FOUND)
+                         || (tp.o.isGround() && (o = lookup.find(tp.o)) == NOT_FOUND);
             if (empty)
                 return new EmptyBIt<>(left.batchType(), outVars, bq.metrics);
             Vars vars = BindType.JOIN.resultVars(left.vars(), tp.publicVars());

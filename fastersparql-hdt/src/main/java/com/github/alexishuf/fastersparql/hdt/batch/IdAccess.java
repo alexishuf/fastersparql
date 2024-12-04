@@ -631,7 +631,7 @@ public class IdAccess {
         var string = toHdtString(term);
         if (string == null) return 0;
         var role = SUBJECT;
-        boolean isLit = term.type() == Term.Type.LIT;
+        boolean isLit = term.isLit();
         long id = isLit ? 0 : dict.getShared().locate(string);
         if (id == 0) {
             if (isLit || (id = dict.getSubjects().locate(string)) == 0) {

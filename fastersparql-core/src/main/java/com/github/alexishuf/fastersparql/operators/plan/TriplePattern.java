@@ -14,7 +14,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.Objects;
 
 import static com.github.alexishuf.fastersparql.model.TripleRoleSet.fromBitset;
-import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.VAR;
 
 
 public final class TriplePattern extends Plan {
@@ -38,39 +37,39 @@ public final class TriplePattern extends Plan {
     }
 
     private Vars initVars() {
-        if (s.type() != VAR && p.type() != VAR && o.type() != VAR) return Vars.EMPTY;
+        if (s.isGround() && p.isGround() && o.isGround()) return Vars.EMPTY;
         var vars = new Vars.Mutable(3);
-        if (s.type() == VAR) vars.add(s);
-        if (p.type() == VAR) vars.add(p);
-        if (o.type() == VAR) vars.add(o);
+        if (s.isVar()) vars.add(s);
+        if (p.isVar()) vars.add(p);
+        if (o.isVar()) vars.add(o);
         return vars;
     }
 
     @SuppressWarnings("unused")
     public TripleRoleSet groundRoles() {
-        return fromBitset((s.type() == VAR ? 0x0 : 0x4) |
-                          (p.type() == VAR ? 0x0 : 0x2) |
-                          (o.type() == VAR ? 0x0 : 0x1));
+        return fromBitset((s.isVar() ? 0x0 : 0x4) |
+                          (p.isVar() ? 0x0 : 0x2) |
+                          (o.isVar() ? 0x0 : 0x1));
     }
 
     public TripleRoleSet freeRoles() {
-        return fromBitset((s.type() == VAR ? 0x4 : 0x0) |
-                          (p.type() == VAR ? 0x2 : 0x0) |
-                          (o.type() == VAR ? 0x1 : 0x0));
+        return fromBitset((s.isVar() ? 0x4 : 0x0) |
+                          (p.isVar() ? 0x2 : 0x0) |
+                          (o.isVar() ? 0x1 : 0x0));
     }
 
 
     @SuppressWarnings("unused")
     public TripleRoleSet groundRoles(Binding binding) {
-        return fromBitset((s.type() != VAR || binding.has(s) ? 0x4 : 0x0) |
-                          (p.type() != VAR || binding.has(p) ? 0x2 : 0x0) |
-                          (o.type() != VAR || binding.has(o) ? 0x1 : 0x0));
+        return fromBitset((s.isGround() || binding.has(s) ? 0x4 : 0x0) |
+                          (p.isGround() || binding.has(p) ? 0x2 : 0x0) |
+                          (o.isGround() || binding.has(o) ? 0x1 : 0x0));
     }
 
     public TripleRoleSet freeRoles(Binding binding) {
-        return fromBitset((s.type() == VAR && !binding.has(s) ? 0x4 : 0x0) |
-                          (p.type() == VAR && !binding.has(p) ? 0x2 : 0x0) |
-                          (o.type() == VAR && !binding.has(o) ? 0x1 : 0x0));
+        return fromBitset((s.isVar() && !binding.has(s) ? 0x4 : 0x0) |
+                          (p.isVar() && !binding.has(p) ? 0x2 : 0x0) |
+                          (o.isVar() && !binding.has(o) ? 0x1 : 0x0));
     }
 
     public TripleRoleSet dummyRoles(@Nullable Binding b) {

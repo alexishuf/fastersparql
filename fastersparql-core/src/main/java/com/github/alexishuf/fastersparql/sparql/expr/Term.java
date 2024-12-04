@@ -62,6 +62,11 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     private static final byte  TYPE_BLANK = (byte)(Type.BLANK.ordinal() << TYPE_BIT);
     private static final byte    TYPE_IRI = (byte)(Type.IRI.ordinal() << TYPE_BIT);
 
+    private static final int TYPE_LIT_BIT = Integer.numberOfTrailingZeros(TYPE_LIT);
+    static {
+        assert Integer.bitCount(TYPE_LIT) == 1 : "maskIfLit() requires single-bit TYPE_LIT";
+        assert Integer.bitCount(TYPE_VAR) == 1 : "isVar() requires single-bit TYPE_VAR";
+    }
 
     public static final FinalTerm FALSE = new FinalTerm(DT_BOOLEAN, "\"false", true);
     public static final FinalTerm TRUE = new FinalTerm(DT_BOOLEAN, "\"true", true);
@@ -1091,7 +1096,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     @Override public Expr bound(Binding binding) { return binding.getIf(this); }
 
     @Override public ExprEvaluator evaluator(Vars vars) {
-        if (type() == Type.VAR) {
+        if (isVar()) {
             int col = vars.indexOf(this);
             return col < 0 ? UnboundEvalautor.INSTANCE : new VarEvalautor(col);
         }
@@ -1200,9 +1205,20 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
     /* --- --- --- term methods --- --- --- */
 
 
-    public boolean isIri() { return       (flags & TYPE_MASK) == TYPE_IRI; }
-    public boolean isVar() { return       (flags & TYPE_MASK) == TYPE_VAR; }
-    public Type    type()  { return TYPES[(flags & TYPE_MASK) >>> TYPE_BIT]; }
+    public boolean        isLit() { return       (flags&TYPE_MASK) == TYPE_LIT; }
+    public boolean        isIri() { return       (flags&TYPE_MASK) == TYPE_IRI; }
+    public boolean        isVar() { return       (flags&TYPE_MASK) == TYPE_VAR; }
+    public boolean     isGround() { return       (flags&TYPE_MASK) != TYPE_VAR; }
+    public Type            type() { return TYPES[(flags&TYPE_MASK) >>> TYPE_BIT]; }
+
+    public static int maskIfLitMagicCookie(int bitIndex) {
+        if (bitIndex < TYPE_LIT_BIT)
+            throw new IllegalArgumentException("bitIndex too small");
+        return bitIndex-TYPE_LIT_BIT;
+    }
+    public int maskIfLit(int magicCookie0, int magicCookie1) {
+        return ((flags&TYPE_LIT)<<magicCookie0) & ~(flags<<magicCookie1);
+    }
 
     public SegmentRope            first() { return first; }
     public SegmentRope           second() { return second; }
@@ -1217,7 +1233,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     /** If this is a var, gets its name (without leading '?'/'$'). Else, return {@code null}. */
     public @Nullable FinalSegmentRope name() {
-        return type() == Type.VAR ? FinalSegmentRope.asFinal(second, 1, len) : null;
+        return isVar() ? FinalSegmentRope.asFinal(second, 1, len) : null;
     }
 
     /** {@code lang} if this is a literal tagged with {@code @lang}, else {@code null}. */
@@ -1229,7 +1245,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     /** Index of closing {@code "} if this is a literal, else {@code -1} */
     public int endLex() {
-        if (type() != Type.LIT) return -1;
+        if (!isLit()) return -1;
         int endLex = 0xff&cachedEndLex;
         if (endLex == 0) {
             if (first.len > 0 && second.len > 0) {
@@ -1288,7 +1304,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
 
     public @Nullable FinalSegmentRope asDatatypeSuff() {
         var suff = asKnownDatatypeSuff();
-        return suff == null && type() == Type.IRI ? asDatatypeSuffCold() : suff;
+        return suff == null && isIri() ? asDatatypeSuffCold() : suff;
     }
 
     private @Nullable FinalSegmentRope asDatatypeSuffCold() {
@@ -1416,7 +1432,7 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
                 var fac = make(w.extraBytes() + lex.len + (len-tail));
                 nLocal = w.append(fac, lex).add(first, tail, len).take();
             }
-        } else if (type() == Type.LIT) {
+        } else if (isLit()) {
             RopeWrapper w = forOpenLit(lex);
             nLocal = w.append(make(w.extraBytes()+lex.len), lex).take();
         } else {

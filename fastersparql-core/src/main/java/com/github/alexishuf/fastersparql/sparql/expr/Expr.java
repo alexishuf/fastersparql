@@ -50,13 +50,9 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     Expr bound(Binding binding);
 
     /** Whether this is an RDF value (a non-variable {@link Term}). */
-    default boolean isGround() {
-        return this instanceof Term t && t.type() != Type.VAR;
-    }
+    default boolean isGround() {return false;}
 
-    @SuppressWarnings("unused") default boolean isVar() {
-        return this instanceof Term t && t.type() == Type.VAR;
-    }
+    @SuppressWarnings("unused") default boolean isVar() {return false;}
 
     /** Write this {@link Expr} in SPARQL syntax to {@code out} */
     int toSparql(ByteSink<?, ?> out, PrefixAssigner prefixAssigner);
@@ -72,7 +68,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
      *  effectively added (i.e., not already present in {@code out}). */
     static int addVars(Vars out, Expr e) {
         if (e instanceof Term t)
-            return t.type() == Type.VAR && out.add(t) ? 1 : 0;
+            return t.isVar() && out.add(t) ? 1 : 0;
         int added = 0;
         for (int i = 0, n = e.argCount(); i < n; i++)
             added += addVars(out, e.arg(i));
@@ -157,13 +153,13 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     }
 
     private static Term requireLiteral(Expr expr, Term value) {
-        if (value == null || value.type() != Type.LIT)
+        if (value == null || !value.isLit())
             throw new InvalidExprTypeException(expr, value, "literal");
         return value;
     }
     private static Term requireLiteral(Expr expr, Binding binding) {
         Term term = expr.eval(binding);
-        if (term.type() != Type.LIT)
+        if (!term.isLit())
             throw new InvalidExprTypeException(expr, term, "literal");
         return term;
     }
@@ -791,7 +787,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Bound extends UnaryFunction {
         public Bound(Expr in) { super(in); }
         @Override public Term eval(Term term) {
-            return term != null && term.type() != Type.VAR ? TRUE : FALSE;
+            return term != null && term.isGround() ? TRUE : FALSE;
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -1716,7 +1712,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class Strdt extends BinaryFunction {
         public Strdt(Expr l, Expr r) { super(l, r); }
         @Override public Term eval(Term string, Term dtTerm) {
-            boolean isIRI = dtTerm.type() == Type.IRI;
+            boolean isIRI = dtTerm.isIri();
             PooledTwoSegmentRope dtLex = null;
             try (var stringLex = PooledTwoSegmentRope.ofEmpty();
                  var tmp = PooledMutableRope.get()) {
@@ -1748,7 +1744,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
             @Override public Term evaluate(Batch<?> batch, int row) {
                 l.evaluate(batch, row).escapedLexical(stringLex);
                 Term dtTerm = r.evaluate(batch, row);
-                boolean isIRI = dtTerm.type() == Type.IRI;
+                boolean isIRI = dtTerm.isIri();
                 if (isIRI)
                     dtTerm.escapedLexical(dtLex);
                 tmp.append(FinalSegmentRope.DQ).append(stringLex);
@@ -1781,7 +1777,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class IsIRI extends UnaryFunction {
         public IsIRI(Expr in) { super(in); }
         @Override public Term eval(Term term) {
-            return term != null && term.type() == Type.IRI ? TRUE : FALSE;
+            return term != null && term.isIri() ? TRUE : FALSE;
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
@@ -1803,7 +1799,7 @@ public sealed interface Expr permits Term, Expr.Exists, Expr.Function {
     class IsLit extends UnaryFunction {
         public IsLit(Expr in) { super(in); }
         @Override public Term eval(Term term) {
-            return term != null && term.type() == Type.LIT ? TRUE : FALSE;
+            return term != null && term.isLit() ? TRUE : FALSE;
         }
         @Override public Expr bound(Binding binding) {
             Expr b = in.bound(binding);
