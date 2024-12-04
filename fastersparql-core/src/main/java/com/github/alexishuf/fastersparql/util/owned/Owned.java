@@ -167,7 +167,7 @@ public interface Owned<O extends Owned<O>> extends JournalNamed {
     static <O> @Nullable O safeRecycle(@Nullable Owned<?> owned, Object currentOwner) {
         if (owned != null) {
             try {
-                    owned.recycle(currentOwner);
+                owned.recycle(currentOwner);
             } catch (Throwable t) {
                 OwnedSupport.handleRecycleError(OWNED_LOG, "", owned, t);
             }

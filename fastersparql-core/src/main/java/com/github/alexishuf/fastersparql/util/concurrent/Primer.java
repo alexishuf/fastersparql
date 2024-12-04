@@ -32,6 +32,13 @@ public class Primer
         INSTANCE.sync();
     }
 
+    public void schedOnce(Runnable runnable) {
+        sched(new RunOnce(runnable));
+    }
+    private record RunOnce(Runnable runnable) implements Runnable {
+        @Override public void run() {runnable.run();}
+    }
+
     @Override public void sched(Runnable item) {
         if (item == null)
             return;
@@ -46,7 +53,7 @@ public class Primer
 
     @Override protected void handle(Runnable work) {
         work.run();
-        if (work != all)
+        if (!(work instanceof RunOnce) && work != all)
             tasks.add(work);
     }
 }

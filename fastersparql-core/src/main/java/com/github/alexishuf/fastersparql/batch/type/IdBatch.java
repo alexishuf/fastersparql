@@ -129,6 +129,16 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
 
     protected B createTail() {return setTail(type.create(cols));}
 
+    /* --- --- --- row-level access --- --- --- */
+
+    public void copyIds(int row, long[] dst, int dstPos) {
+        requireAlive();
+        if (row >= rows || (CHK_NEG_IDX && row < 0))
+            throw new IndexOutOfBoundsException("(row, col) out of bounds");
+        int cols = this.cols;
+        arraycopy(arr, row*cols, dst, dstPos, cols);
+    }
+
     /* --- --- --- term-level access --- --- --- */
 
     public long id(int row, int col) {

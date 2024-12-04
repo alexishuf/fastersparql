@@ -72,6 +72,10 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
     /** Maximum number of objects a thread-affinity queue can hold */
     public int perThreadCapacity() { return md[mdb(0)+MD_CAP]; }
 
+    /** Sum of all thread-affinity queues capacities. An {@link Alloc} instance can
+     * hold in total {@link #sharedCapacity()} plus this number. */
+    public int allThreadsLocalCapacity() { return THREADS*perThreadCapacity(); }
+
     public Class<T> itemClass() { return cls; }
 
     //@SuppressWarnings("BooleanMethodIsAlwaysInverted")

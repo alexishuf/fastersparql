@@ -16,6 +16,7 @@ import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_SEG
 import static com.github.alexishuf.fastersparql.model.rope.SegmentRope.EMPTY_UTF8;
 
 public final class TermInfo {
+    public static final int BYTES = 16 + 13*4;
     private static final TwoSegmentRope TSR_EMPTY = new TwoSegmentRope();
 
     public Type type;
