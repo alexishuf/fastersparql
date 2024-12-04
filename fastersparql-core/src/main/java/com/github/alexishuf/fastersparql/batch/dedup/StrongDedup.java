@@ -77,6 +77,17 @@ public sealed abstract class StrongDedup<B extends Batch<B>> extends Dedup<B, St
         nextRehash     = nextRehash(nBuckets, bucketCapacity);
     }
 
+
+    public static <B extends Batch<B>>
+    Orphan<StrongDedup<B>> createUntil(BatchType<B> bt, int strongCapacity, int cols) {
+        return new Concrete<>(bt, Math.max(512, strongCapacity>>10), strongCapacity, cols);
+    }
+
+    public static <B extends Batch<B>>
+    Orphan<StrongDedup<B>> createForever(BatchType<B> bt, int initialCapacity, int cols) {
+        return new Concrete<>(bt, initialCapacity, MAX_VALUE, cols);
+    }
+
     protected static final class Concrete<B extends Batch<B>> extends StrongDedup<B>
             implements Orphan<StrongDedup<B>> {
         public Concrete(BatchType<B> bt, int initialCapacity, int weakenAt, int cols) {

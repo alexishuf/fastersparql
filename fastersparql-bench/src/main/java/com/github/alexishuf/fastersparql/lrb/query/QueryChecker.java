@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import static com.github.alexishuf.fastersparql.batch.dedup.Dedup.strongForever;
 import static com.github.alexishuf.fastersparql.batch.type.CompressedBatchType.COMPRESSED;
 
 public abstract class QueryChecker<B extends Batch<B>>
@@ -208,7 +207,7 @@ public abstract class QueryChecker<B extends Batch<B>>
                     initExpected(original);
                 int exRows = original.totalRows();
                 if (observed == null)
-                    observed = strongForever(COMPRESSED, exRows, cols).takeOwnership(this);
+                    observed = StrongDedup.createForever(COMPRESSED, exRows, cols).takeOwnership(this);
                 else
                     observed.clear(cols);
             } else {
@@ -222,7 +221,7 @@ public abstract class QueryChecker<B extends Batch<B>>
         var sanitized = queryName.isAmputateNumberNoOp() ? original
                 : queryName.amputateNumbers(original.dup()).takeOwnership(this);
         assert expectedRows == original.totalRows();
-        expected = strongForever(COMPRESSED, rows, sanitized.cols).takeOwnership(this);
+        expected = StrongDedup.createForever(COMPRESSED, rows, sanitized.cols).takeOwnership(this);
         for (var n = sanitized; n != null; n = n.next) {
             for (int r = 0, nRows = n.rows; r < nRows; r++)
                 expected.add(n, r);

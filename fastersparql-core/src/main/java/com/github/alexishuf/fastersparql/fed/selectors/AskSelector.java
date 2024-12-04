@@ -1,7 +1,7 @@
 package com.github.alexishuf.fastersparql.fed.selectors;
 
+import com.github.alexishuf.fastersparql.batch.dedup.BTreeDedup;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.TermBatch;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.emit.Emitters;
@@ -55,7 +55,7 @@ public class AskSelector extends Selector {
 
     private final SparqlClient client;
     private final SparqlClient.Guard clientGuard;
-    private final StrongDedup<TermBatch> positive, negative;
+    private final BTreeDedup<TermBatch> positive, negative;
 
     private static final byte[] POSITIVE_HDR = "@POSITIVE cap=".getBytes(UTF_8);
     private static final byte[] NEGATIVE_HDR = "@NEGATIVE cap=".getBytes(UTF_8);
@@ -91,8 +91,8 @@ public class AskSelector extends Selector {
                 var termParser = termParserGuard.set(TermParser.create());
                 if (!r.clear().readLine(in) || !r.trim().toString().equalsIgnoreCase(NAME))
                     throw new BadSerializationException.SelectorTypeMismatch(NAME, r.toString());
-                Orphan<StrongDedup<TermBatch>> positive = null, negative = null;
-                StrongDedup<TermBatch> current = null;
+                Orphan<BTreeDedup<TermBatch>> positive = null, negative = null;
+                BTreeDedup<TermBatch> current = null;
                 while (r.clear().readLine(in)) {
                     if (r.get(0) == '@') {
                         current = parseHeader(r).takeOwnership(this);
@@ -112,7 +112,7 @@ public class AskSelector extends Selector {
             }
         }
 
-        private static void parseRow(StrongDedup<TermBatch> dedup,
+        private static void parseRow(BTreeDedup<TermBatch> dedup,
                                      TermParser termParser, MutableRope r) {
             int len = r.len;
             var t = triple(termParser.parseTerm(r, 0, len),
@@ -124,7 +124,7 @@ public class AskSelector extends Selector {
         }
         private static final StaticMethodOwner PARSE_ROW = new StaticMethodOwner("AskSelector.parseRow");
 
-        private static Orphan<StrongDedup<TermBatch>> parseHeader(MutableRope r) {
+        private static Orphan<BTreeDedup<TermBatch>> parseHeader(MutableRope r) {
             if (!r.has(0, POSITIVE_HDR) && !r.has(0, NEGATIVE_HDR))
                 throw new BadSerializationException("Unexpected header");
             try {
@@ -146,8 +146,8 @@ public class AskSelector extends Selector {
     }
 
     public AskSelector(SparqlClient client, Spec spec,
-                       Orphan<StrongDedup<TermBatch>> positive,
-                       Orphan<StrongDedup<TermBatch>> negative) {
+                       Orphan<BTreeDedup<TermBatch>> positive,
+                       Orphan<BTreeDedup<TermBatch>> negative) {
         super(client.endpoint(), spec);
         this.client = client;
         this.clientGuard = client.retain();

@@ -13,8 +13,6 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.concurrent.locks.ReentrantLock;
 
-import static java.lang.Integer.MAX_VALUE;
-
 public abstract class Dedup<B extends Batch<B>, D extends Dedup<B, D>>
         extends AbstractOwned<D>
         implements RowFilter<B, D> {
@@ -39,13 +37,15 @@ public abstract class Dedup<B extends Batch<B>, D extends Dedup<B, D>>
     }
 
     public static <B extends Batch<B>>
-    Orphan<StrongDedup<B>> strongUntil(BatchType<B> bt, int strongCapacity, int cols) {
-        return new StrongDedup.Concrete<>(bt, Math.max(512, strongCapacity>>10), strongCapacity, cols);
+    Orphan<BTreeDedup<B>> strongUntil(BatchType<B> bt, int strongCapacity, int cols) {
+        return BTreeDedup.create(bt, cols, strongCapacity);
     }
 
     public static <B extends Batch<B>>
-    Orphan<StrongDedup<B>> strongForever(BatchType<B> bt, int initialCapacity, int cols) {
-        return new StrongDedup.Concrete<>(bt, Math.max(512, initialCapacity), MAX_VALUE, cols);
+    Orphan<BTreeDedup<B>> strongForever(BatchType<B> bt,
+                                        @SuppressWarnings("unused") int initialCapacity,
+                                        int cols) {
+        return BTreeDedup.create(bt, cols);
     }
 
     protected void lock() {

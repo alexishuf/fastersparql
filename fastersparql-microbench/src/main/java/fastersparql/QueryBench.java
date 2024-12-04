@@ -94,7 +94,7 @@ public class QueryBench {
     SelectorKindType selKind = SelectorKindType.PREFERRED;
     boolean builtinPlans = true;
     boolean crossSourceDedup = true;
-    boolean weakenDistinct = true;
+    boolean weakenDistinct = false;
     boolean thermalCooldown = true;
 //    @Param({"false","true"}) boolean alt;
 

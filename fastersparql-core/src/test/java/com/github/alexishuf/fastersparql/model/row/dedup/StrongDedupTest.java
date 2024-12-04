@@ -1,6 +1,5 @@
 package com.github.alexishuf.fastersparql.model.row.dedup;
 
-import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.dedup.StrongDedup;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
@@ -31,7 +30,7 @@ class StrongDedupTest {
         for (int i = 0; i < 2*strongUntil; i++)
             rows.add(TermBatch.of(List.of(Term.valueOf("\""+i+"\""))).takeOwnership(this));
         try (var dedupGuard = new Guard<StrongDedup<TermBatch>>(this)) {
-            var dedup = dedupGuard.set(Dedup.strongUntil(TERM, strongUntil, 1));
+            var dedup = dedupGuard.set(StrongDedup.createUntil(TERM, strongUntil, 1));
             for (int i = 0; i < strongUntil; i++) {
                 for (int j = 0; j < i; j++)
                     assertTrue(dedup.contains(rows.get(j), 0), "i="+i+", j="+j);
@@ -77,7 +76,7 @@ class StrongDedupTest {
             b0.putRow(Term.array("\"R0C0\"", EX+"R0C1>"));
             b1.putRow(Term.array(EX+"R0C0>", "\"R0C1\""));
             b1.putRow(Term.array("\"R1C0\"", EX+"R1C1>"));
-            var dedup = dedupGuard.set(Dedup.strongUntil(bt, strongUntil, 2));
+            var dedup = dedupGuard.set(StrongDedup.createUntil(bt, strongUntil, 2));
             assertFalse(dedup.isDuplicate(b0, 0, 0));
             assertFalse(dedup.isDuplicate(b1, 1, 0));
             assertTrue (dedup.isDuplicate(b0, 0, 0));
