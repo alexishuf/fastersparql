@@ -82,6 +82,12 @@ public class IdAccess {
         }
     }
 
+    public static final class NotFoundException extends IllegalArgumentException {
+        public NotFoundException() {
+            super("Attempt to get string obtained from a failed string lookup");
+        }
+    }
+
     public static final class PlainIdException extends IllegalArgumentException {
         public PlainIdException(long id) {
             super("id="+id+" was not produced by IdAccess.encode()");
@@ -541,7 +547,10 @@ public class IdAccess {
 
     /** Equivalent to {@code dict(sourcedId).idToString(plain(sourcedId), role(sourcedId))}. */
     public static CharSequence toString(long sourcedId) {
-        if (sourcedId == 0) return null;
+        if (sourcedId == 0)
+            return null;
+        if (sourcedId == NOT_FOUND)
+            throw new NotFoundException();
         var role = switch ((int)(sourcedId >>> ROLE_BIT)) {
             case 1 -> SUBJECT;
             case 2 -> PREDICATE;
