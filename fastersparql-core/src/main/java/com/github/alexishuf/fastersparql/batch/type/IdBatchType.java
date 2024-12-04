@@ -4,6 +4,7 @@ import com.github.alexishuf.fastersparql.batch.type.IdBatch.Filter;
 import com.github.alexishuf.fastersparql.batch.type.IdBatch.Merger;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -77,6 +78,7 @@ public abstract class IdBatchType<B extends IdBatch<B>> extends BatchType<B> {
         return new Filter.Concrete<>(this, vars, null, filter, before);
     }
 
+    public abstract boolean view(long id, TermView view);
     public abstract int hashId(long id);
     public abstract boolean equals(long lId, long rId);
     public abstract ByteSink<?, ?> appendNT(ByteSink<?, ?> sink, long id, byte[] nullValue);

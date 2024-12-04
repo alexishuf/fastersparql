@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 import java.util.function.Supplier;
@@ -107,6 +108,16 @@ public class HdtBatchType extends IdBatchType<HdtBatch> {
                 downstream.onBatch(dst.releaseOwnership(this));
             }
         }
+    }
+
+    @Override public boolean view(long id, TermView view) {
+        if (id == 0 || id == IdAccess.NOT_FOUND)
+            return false;
+        var t = IdAccess.toTerm(id);
+        if (t == null)
+            return false; // not found
+        view.wrap(t);
+        return true;
     }
 
     @Override public int hashId(long id) {

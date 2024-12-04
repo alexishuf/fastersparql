@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.batch.type.ScopedIds.Scope;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import com.github.alexishuf.fastersparql.util.owned.SidecarOwned;
@@ -99,6 +100,8 @@ public abstract class ScopedIdBatchType extends IdBatchType<ScopedIdBatch> {
             return scope;
         }
     }
+
+    @Override public boolean view(long id, TermView view) { return ScopedIds.view(id, view); }
 
     @Override public int hashId(long id) { return ScopedIds.hash(id); }
 

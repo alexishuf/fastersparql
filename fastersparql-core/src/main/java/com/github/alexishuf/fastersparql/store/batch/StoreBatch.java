@@ -253,10 +253,16 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
         if (cachedTerm != null) {
             dest.wrap(cachedTerm);
             return true;
+        } else { // load from dict
+            return view(id, dest);
         }
+    }
 
+    public static boolean view(long id, TermView view) {
+        if (id == 0)
+            return false;
         // load from dict
-        var lookup = dict(dictId(id)).lookup().takeOwnership(this);
+        var lookup = dict(dictId(id)).lookup().takeOwnership(VIEW);
         try {
             TwoSegmentRope tmp = lookup.get(unsource(id));
             if (tmp == null || tmp.len <= 0)
@@ -272,17 +278,18 @@ public abstract sealed class StoreBatch extends IdBatch<StoreBatch> {
             }
             int lLen = localFst ? tmp.fstLen : tmp.sndLen;
             if (lLen + sh.len == tmp.len) {
-                dest.wrap(sh, localFst ? tmp.fst    : tmp.snd,
-                              localFst ? tmp.fstU8  : tmp.sndU8,
-                              localFst ? tmp.fstOff : tmp.sndOff, lLen, localFst);
+                view.wrap(sh, localFst ? tmp.fst    : tmp.snd,
+                        localFst ? tmp.fstU8  : tmp.sndU8,
+                        localFst ? tmp.fstOff : tmp.sndOff, lLen, localFst);
             } else { //cold
-                getViewCold(dest, tmp, localFst);
+                getViewCold(view, tmp, localFst);
             }
-            return true;
         } finally {
-            lookup.recycle(this);
+            lookup.recycle(VIEW);
         }
+        return true;
     }
+    private static final StaticMethodOwner VIEW = new StaticMethodOwner("StoreBatch.view()");
 
     private static void getViewCold(TermView dest, TwoSegmentRope tmp, boolean lit) {
         dest.wrap(EMPTY, RopeFactory.make(tmp.len).add(tmp).take(), lit);

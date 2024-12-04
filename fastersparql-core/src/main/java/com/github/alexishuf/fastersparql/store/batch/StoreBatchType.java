@@ -10,6 +10,7 @@ import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.stages.ConverterStage;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 
 import java.util.function.Supplier;
@@ -113,6 +114,8 @@ public class StoreBatchType extends IdBatchType<StoreBatch> {
             }
         }
     }
+
+    @Override public boolean view(long id, TermView view) { return StoreBatch.view(id, view); }
 
     @Override public int hashId(long id) {return StoreBatch.hashId(id);}
 
