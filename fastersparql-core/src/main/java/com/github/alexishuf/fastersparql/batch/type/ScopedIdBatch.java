@@ -164,7 +164,7 @@ public class ScopedIdBatch extends IdBatch<ScopedIdBatch> {
     }
 
     @Override
-    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTermLocalByReference(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                                         byte @Nullable [] localU8, long localOff, int localLen,
                                         byte sharedKind) {
         if (!(type instanceof ScopedIdBatchType.WithScope scoped))
@@ -173,7 +173,7 @@ public class ScopedIdBatch extends IdBatch<ScopedIdBatch> {
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, PlainRope local, int localOff,
                         int localLen, byte sharedKind) {
         if (!(type instanceof ScopedIdBatchType.WithScope scoped))
             throw new IllegalStateException("No scope attached to this batch");

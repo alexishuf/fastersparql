@@ -942,7 +942,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                         byte @Nullable[] localU8, long localOff, int localLen, byte sharedKind) {
         if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
             sharedKind = wholeSharedKind(local, localU8, localOff);
@@ -977,7 +977,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, PlainRope local, int localOff,
                         int localLen, byte sharedKind) {
         if (sharedKind == WHOLE_UNKNOWN && localLen != 0)
             sharedKind = local.get(localOff) == '"' ? WHOLE_LIT : WHOLE_IRI_OR_BLANK;

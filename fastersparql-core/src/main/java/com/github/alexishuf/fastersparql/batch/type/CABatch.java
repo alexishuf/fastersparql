@@ -429,7 +429,7 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                         byte @Nullable [] localU8, long localOff, int localLen,
                         byte sharedKind) {
         var tail = tailForPutTerm(col);
@@ -441,7 +441,7 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     @Override
-    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, PlainRope local, int localOff,
                         int localLen, byte sharedKind) {
         if (local instanceof FinalSegmentRope f) {
             putTermLocalByReference(col, shared, f.segment, f.utf8, f.offset, f.len, sharedKind);
@@ -456,7 +456,7 @@ public sealed class CABatch extends Batch<CABatch> {
     }
 
     @Override
-    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTermLocalByReference(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                                         byte @Nullable [] localU8, long localOff, int localLen,
                                         byte sharedKind) {
         var tail = tailForPutTerm(col);

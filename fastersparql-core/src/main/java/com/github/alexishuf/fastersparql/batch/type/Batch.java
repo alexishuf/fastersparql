@@ -1373,7 +1373,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      * @param localLen number of bytes in {@code local} that constitute the local segment.
      * @param sharedKind A value from {@link SharedKind}
      */
-    public void putTerm(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                         byte @Nullable [] localU8,
                         long localOff, int localLen, byte sharedKind) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedKind));
@@ -1387,7 +1387,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      * <p><strong>Attention:</strong> {@code local} MUST remain valid for as long as the batch
      * is alive.</p>
      */
-    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTermLocalByReference(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                         byte @Nullable [] localU8,
                         long localOff, int localLen, byte sharedKind) {
         putTerm(col, shared, local, localU8, localOff, localLen, sharedKind);
@@ -1408,12 +1408,12 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      * @param sharedKind a values from {@link SharedKind} describing whether shared is a suffix
      *                   or prefix and whether the term is known to be a literal
      */
-    public void putTerm(int col, FinalSegmentRope shared, PlainRope local, int localOff,
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, PlainRope local, int localOff,
                         int localLen, byte sharedKind) {
         putTerm(col, makeTerm(shared, local, localOff, localLen, sharedKind));
     }
 
-    private Term makeTerm(FinalSegmentRope shared, MemorySegment local,
+    private Term makeTerm(@Nullable FinalSegmentRope shared, MemorySegment local,
                           long localOff, int localLen, byte sharedKind) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
@@ -1422,7 +1422,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         var localRope = RopeFactory.make(localLen).add(local, localOff, localLen).take();
         SegmentRope fst, snd;
         if (SharedKind.isLit(sharedKind)) { fst = localRope; snd =    shared; }
-        else                                 { fst =    shared; snd = localRope; }
+        else                              { fst =    shared; snd = localRope; }
         return Term.wrap(fst, snd);
     }
 
@@ -1437,7 +1437,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
         return new FinalTerm(EMPTY, rope, false);
     }
 
-    private Term makeTerm(SegmentRope shared, PlainRope local, int localOff,
+    private Term makeTerm(@Nullable SegmentRope shared, PlainRope local, int localOff,
                           int localLen, byte sharedKind) {
         if ((shared == null || shared.len == 0) && localLen == 0)
             return null;
@@ -1447,11 +1447,11 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
                                    .add(local, localOff, localOff+localLen).take();
         SegmentRope fst, snd;
         if (SharedKind.isLit(sharedKind)) { fst = localRope; snd =    shared; }
-        else                                 { fst =    shared; snd = localRope; }
+        else                              { fst =    shared; snd = localRope; }
         return Term.wrap(fst, snd);
     }
 
-    private Term makeTermNoInternIri(SegmentRope shared, PlainRope local,
+    private Term makeTermNoInternIri(@Nullable SegmentRope shared, PlainRope local,
                                      int localOff, int localLen) {
         int shLen = shared == null ? 0 : shared.len;
         byte[] copy = new byte[shLen + localLen];

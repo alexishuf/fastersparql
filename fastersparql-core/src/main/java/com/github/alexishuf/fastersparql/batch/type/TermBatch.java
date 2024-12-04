@@ -153,7 +153,7 @@ public abstract sealed class TermBatch extends ObjBatch<TermBatch, FinalTerm> {
     }
 
     @Override
-    public void putTermLocalByReference(int col, FinalSegmentRope shared, MemorySegment local,
+    public void putTermLocalByReference(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
                                         byte @Nullable [] localU8, long localOff,
                                         int localLen, byte sharedKind) {
         var tail = this.tail;
