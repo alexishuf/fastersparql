@@ -31,6 +31,8 @@ public class HdtBatchType extends IdBatchType<HdtBatch> {
         super(HdtBatch.class, new HdtBatchFac());
     }
 
+    @Override public boolean isId2StrSlow() {return true;}
+
     public static final class Converter implements BatchConverter<HdtBatch> {
         private final int dictId;
         public Converter(int dictId) {this.dictId = dictId;}

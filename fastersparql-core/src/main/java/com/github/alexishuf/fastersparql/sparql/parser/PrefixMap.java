@@ -89,7 +89,7 @@ public abstract sealed class PrefixMap extends AbstractOwned<PrefixMap> {
     public void add(Rope name, Rope iri) {
         //sanitize iri
         if (iri instanceof Term t) {
-            if (t.type() != Term.Type.IRI)
+            if (!t.isIri())
                 throw new IllegalArgumentException("iri is a non-IRI Term");
         } else if (iri.len == 0) {
             iri = Term.EMPTY_IRI;
@@ -105,7 +105,7 @@ public abstract sealed class PrefixMap extends AbstractOwned<PrefixMap> {
 
     /** Analogous to {@link #add(Rope, Rope)} but will not copy {@code name} nor {@code iri}. */
     public void addRef(FinalSegmentRope name, Term iri) {
-        if (iri.type() != Term.Type.IRI)
+        if (!iri.isIri())
             throw new IllegalArgumentException("iri is a non-IRI Term");
         map.put(name, iri);
     }

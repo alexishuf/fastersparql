@@ -24,6 +24,8 @@ public abstract class IdBatchType<B extends IdBatch<B>> extends BatchType<B> {
         super(cls, factory, factory, IdBatch.BYTES);
     }
 
+    public boolean isId2StrSlow() { return false; }
+
     @Override public final Orphan<B> createForThread(int threadId, int cols) {
         return createForThread0(threadId).clear(cols, this).releaseOwnership(RECYCLED);
     }
