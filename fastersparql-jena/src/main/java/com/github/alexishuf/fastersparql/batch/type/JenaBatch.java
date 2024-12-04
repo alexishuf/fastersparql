@@ -1,8 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
-import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
-import com.github.alexishuf.fastersparql.model.rope.SegmentRopeView;
-import com.github.alexishuf.fastersparql.model.rope.TwoSegmentRope;
+import com.github.alexishuf.fastersparql.model.rope.*;
 import com.github.alexishuf.fastersparql.org.apache.jena.datatypes.xsd.XSDDatatype;
 import com.github.alexishuf.fastersparql.org.apache.jena.datatypes.xsd.impl.RDFLangString;
 import com.github.alexishuf.fastersparql.org.apache.jena.datatypes.xsd.impl.RDFhtml;
@@ -12,10 +10,14 @@ import com.github.alexishuf.fastersparql.org.apache.jena.graph.Node;
 import com.github.alexishuf.fastersparql.sparql.expr.FinalTerm;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.lang.foreign.MemorySegment;
 
 
 public class JenaBatch extends ObjBatch<JenaBatch, Node> {
@@ -222,6 +224,63 @@ public class JenaBatch extends ObjBatch<JenaBatch, Node> {
                 }
             }
         } finally { parser.recycle(this); }
+    }
+
+    @Override
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, MemorySegment local,
+                        byte @Nullable [] localU8, long localOff, int localLen, byte sharedKind) {
+        shared = shared == null ? FinalSegmentRope.EMPTY : shared;
+        MemorySegment fst    = shared.segment, snd    = local;
+        byte[]        fstU8  = shared.utf8,    sndU8  = localU8;
+        long          fstOff = shared.offset,  sndOff = localOff;
+        int           fstLen = shared.len,     sndLen = localLen;
+        if (SharedKind.isSuffix(sharedKind)) {
+            snd = fst;   sndU8 = fstU8;   sndOff = fstOff;   sndLen = fstLen;
+            fst = local; fstU8 = localU8; fstOff = localOff; fstLen = localLen;
+        }
+        putTerm(col, JenaNodeParser.asNode(fst, fstU8, fstOff, fstLen, snd, sndU8, sndOff, sndLen));
+    }
+
+    @Override
+    public void putTerm(int col, @Nullable FinalSegmentRope shared, PlainRope local,
+                        int localOff, int localLen, byte sharedKind) {
+        Bytes tmp = null;
+        try (var nt = PooledTwoSegmentRope.ofEmpty()) {
+            if (shared != null)
+                nt.wrapFirst(shared);
+            if (local instanceof SegmentRope sr) {
+                nt.wrapSecond(sr);
+            } else {
+                var tsr = (TwoSegmentRope)local;
+                if (tsr.fstLen == 0) {
+                    nt.wrapSecond(tsr.snd, tsr.sndU8, tsr.sndOff, tsr.sndLen);
+                } else if (tsr.sndLen == 0) {
+                    nt.wrapSecond(tsr.fst, tsr.fstU8, tsr.fstOff, tsr.fstLen);
+                } else {
+                    tmp = Bytes.atLeast(tsr.len).takeOwnership(this);
+                    tsr.copy(0, tsr.len, tmp.arr, 0);
+                    nt.wrapSecond(tmp.segment, tmp.arr, 0, tsr.len);
+                }
+            }
+            if (SharedKind.isSuffix(sharedKind))
+                nt.flipSegments();
+            putTerm(col, JenaNodeParser.asNode(nt));
+        } finally {
+            if (tmp != null)
+                Owned.safeRecycle(tmp, this);
+        }
+    }
+
+    @Override protected void putUninternable(int col, TermInfo t) {
+        MemorySegment fst    = t.sharedSeg, snd    = t.localSeg;
+        byte[]        fstU8  = t.sharedU8,  sndU8  = t.localU8;
+        long          fstOff = t.sharedOff, sndOff = t.localOff;
+        int           fstLen = t.sharedLen, sndLen = t.localLen;
+        if (SharedKind.isSuffix(t.sharedKind)) {
+            snd = fst;        sndU8 = fstU8;     sndOff = fstOff;     sndLen = fstLen;
+            fst = t.localSeg; fstU8 = t.localU8; fstOff = t.localOff; fstLen = t.localLen;
+        }
+        putTerm(col, JenaNodeParser.asNode(fst, fstU8, fstOff, fstLen, snd, sndU8, sndOff, sndLen));
     }
 
     @Override public void putTerm(int col, Term t) {
