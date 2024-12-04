@@ -1336,6 +1336,32 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     /** Equivalent to {@link #putTerm(int, Term)} with {@code null}. */
     public abstract void putNullTerm(int col);
 
+    /** Calls most efficient {@code putTerm(int, ...)} overload for {@code info}. */
+    public void putTerm(int c, TermInfo info) {
+        switch (info.type) {
+            case EMPTY:
+                break;
+            case TERM:
+                putTerm(c, info.term);
+                break;
+            case IRI:
+                internIriPrefixDuringConversion(info);
+                // fallthrough
+            case SHARED_AND_SEGMENT:
+                if (info.stable) {
+                    putTermLocalByReference(c, info.shared, info.localSeg, info.localU8,
+                            info.localOff, info.localLen, info.sharedKind);
+                } else {
+                    putTerm(c, info.shared, info.localSeg, info.localU8, info.localOff,
+                            info.localLen, info.sharedKind);
+                }
+                break;
+            case UNINTERNABLE:
+                putUninternable(c, info);
+                break;
+        }
+    }
+
     /** Efficient alternative to {@link #putTerm(int, Term)} using {@code batch.get(row, col)} */
     public void putTerm(int destCol, B batch, int row, int col) {
         putTerm(destCol, batch.get(row, col));
@@ -1616,29 +1642,8 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
     protected final void putRowConverting(Batch<?> other, short row, short cols, TermInfo info) {
         beginPut();
         for (short c = 0; c < cols; c++) {
-            var type = other.get(row, c, info);
-            switch (type) {
-                case EMPTY:
-                    break;
-                case TERM:
-                    putTerm(c, info.term);
-                    break;
-                case IRI:
-                    internIriPrefixDuringConversion(info);
-                    // fallthrough
-                case SHARED_AND_SEGMENT:
-                    if (info.stable) {
-                        putTermLocalByReference(c, info.shared, info.localSeg, info.localU8,
-                                info.localOff, info.localLen, info.sharedKind);
-                    } else {
-                        putTerm(c, info.shared, info.localSeg, info.localU8, info.localOff,
-                                info.localLen, info.sharedKind);
-                    }
-                    break;
-                case UNINTERNABLE:
-                    putUninternable(c, info);
-                    break;
-            }
+            other.get(row, c, info);
+            putTerm(c, info);
         }
         commitPut();
     }
