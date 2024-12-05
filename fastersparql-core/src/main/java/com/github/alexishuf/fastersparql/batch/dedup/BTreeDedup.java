@@ -775,7 +775,8 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                         required += src.slices[i]&LEN_MASK;
                     required += required/cols;
                 }
-                dst.growData(required);
+                if (required > dst.data.length)
+                    dst.growData(required);
             }
         }
 
