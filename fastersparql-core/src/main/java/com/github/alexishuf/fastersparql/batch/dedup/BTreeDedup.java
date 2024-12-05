@@ -940,10 +940,35 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             return sb.append(']').toString();
         }
 
-        public int compareTo(Node node, int key) {
-            int cols = node.cols, tb = key*cols;
+        private int compareToId(Node n, int key) {
+            int cols   = n.cols;
+            int tb     = n.cols*key;
+            var idt    = requireNonNull(n.idType);
+            long[] ids = n.ids;
             for (int c = 0; c < cols; c++) {
-                int diff = term[c].compareTo(nodeView(node, tb+c));
+                if (!idt.view(ids[tb+c], nodeView))
+                    nodeView.wrap(Term.EMPTY_STRING);
+                int diff = term[c].compareTo(nodeView);
+                if (diff != 0)
+                    return diff;
+            }
+            return 0;
+        }
+        public int compareTo(Node n, int key) {
+            if ((n.flags&Node.COPY_BOTH) == Node.COPY_ID)
+                return compareToId(n, key);
+            var seg   = n.dataSegment;
+            var u8    = n.data;
+            byte cols = n.cols;
+            short shb = (short)(n.sharedBegin + cols *  key);
+            short slb = (short)(n.slicesBegin + cols * (key<<1));
+            for (int c = 0; c < cols; c++) {
+                int sli = slb+(c<<1);
+                short len = n.slices[sli+Node.SL_LEN];
+                int diff = term[c].compareTo(n.shared[shb+c], seg, u8,
+                                             n.slices[sli+Node.SL_OFF],
+                                             len&Node.LEN_MASK,
+                                             (len&Node.LIT_MASK) != 0);
                 if (diff != 0)
                     return diff;
             }

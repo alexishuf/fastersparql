@@ -1538,6 +1538,54 @@ public abstract sealed class Term extends Rope implements Expr, ExprEvaluator, J
         return diff;
     }
 
+    public int compareTo(FinalSegmentRope shared, MemorySegment localSeg,
+                         byte @Nullable[] localU8, long localOff, int localLen,
+                         boolean suffixShared) {
+        if (isNumeric() && suffixShared && isNumericDatatype(shared))
+            return compareNumeric(localSeg, localU8, localOff, localLen);
+        SegmentRope fst = this.first, snd = this.second;
+        MemorySegment l0seg, l1seg, r0seg, r1seg;
+        long          l0off, l1off, r0off, r1off;
+        int           l0len, l1len, r0len, r1len;
+        l0seg = fst.segment;  l1seg = snd.segment;
+        l0off = fst.offset;   l1off = snd.offset;
+        l0len = fst.len;      l1len = snd.len;
+        if (suffixShared) {
+            r0seg = localSeg; r1seg = shared.segment;
+            r0off = localOff; r1off = shared.offset;
+            r0len = localLen; r1len = shared.len;
+
+        } else {
+            r0seg = shared.segment; r1seg = localSeg;
+            r0off = shared.offset;  r1off = localOff;
+            r0len = shared.len;     r1len = localLen;
+        }
+        if (U == null) {
+            return compare2_2(l0seg, l0off, l0len, l1seg, l1off, l1len,
+                              r0seg, r0off, r0len, r1seg, r1off, r1len);
+        } else {
+            l0off += l0seg.address();
+            l1off += l1seg.address();
+            r0off += r0seg.address();
+            r1off += r1seg.address();
+            byte[] r0u8, r1u8;
+            if (suffixShared) {
+                r0u8 = localU8;     r1u8 = shared.utf8;
+            } else {
+                r0u8 = shared.utf8; r1u8 = localU8;
+            }
+            return compare2_2(fst.utf8, l0off, l0len, snd.utf8, l1off, l1len,
+                              r0u8,     r0off, r0len, r1u8,     r1off, r1len);
+        }
+    }
+
+    private int compareNumeric(MemorySegment localSeg, byte @Nullable [] localU8,
+                               long localOff, int localLen) {
+        SegmentRope l = local();
+        return compareNumbers(l.segment, l.utf8, l.offset + 1, l.len - 1,
+                localSeg, localU8, localOff + 1, localLen - 1);
+    }
+
     public int compareNumeric(Term rhs) {
         SegmentRope l = first, r = rhs.first;
         return compareNumbers(l, 1, l.len-1, r, 1, r.len-1);

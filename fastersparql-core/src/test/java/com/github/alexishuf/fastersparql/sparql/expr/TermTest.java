@@ -125,8 +125,12 @@ class TermTest {
 
     @SuppressWarnings("SimplifiableAssertion") @ParameterizedTest @MethodSource
     void testCompare(int expected, Term left, Term right) {
-        assertEquals(expected, left.compareTo(right));
-        assertEquals(-1 * expected, right.compareTo(left));
+        assertEquals( expected, left.compareTo(right));
+        assertEquals(-expected, right.compareTo(left));
+        SegmentRope rLocal = right.local();
+        SegmentRope lLocal = left.local();
+        assertEquals( expected, left.compareTo(right.finalShared(), rLocal.segment, rLocal.utf8, rLocal.offset, rLocal.len, right.sharedSuffixed()));
+        assertEquals(-expected, right.compareTo(left.finalShared(), lLocal.segment, lLocal.utf8, lLocal.offset, lLocal.len, right.sharedSuffixed()));
         if (expected == 0) {
             assertTrue(left.equals(right));
             assertTrue(right.equals(left));
