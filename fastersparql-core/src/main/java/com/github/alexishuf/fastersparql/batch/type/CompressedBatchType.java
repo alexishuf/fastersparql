@@ -19,7 +19,7 @@ import static java.lang.Thread.currentThread;
 public final class CompressedBatchType extends BatchType<CompressedBatch> {
     private static final class CompressedBatchFac implements Supplier<CompressedBatch> {
         @Override public CompressedBatch get() {
-            var locals = Bytes.createPooled(new byte[PREFERRED_BATCH_TERMS << 5]);
+            var locals = Bytes.createUnpooled(new byte[PREFERRED_BATCH_TERMS << 5]);
             var slices = new short[PREFERRED_BATCH_TERMS << 1];
             var shared = new FinalSegmentRope[PREFERRED_BATCH_TERMS];
             var b = new CompressedBatch.Concrete(locals, slices, shared, (short) 1);

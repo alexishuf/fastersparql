@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.function.IntFunction;
 
 import static com.github.alexishuf.fastersparql.util.concurrent.PoolStackSupport.THREADS;
+import static com.github.alexishuf.fastersparql.util.concurrent.PoolStackSupport.localCapacity;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.CONSTANT;
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 import static java.lang.System.arraycopy;
@@ -22,12 +23,7 @@ public abstract sealed class Bytes extends AbstractOwned<Bytes> {
     public final MemorySegment segment;
     private final @Nullable LevelAlloc<Bytes> pool;
 
-    public static Orphan<Bytes> createPooled(byte[] u8) {
-        return new Concrete(u8, ALLOC);
-    }
-    public static Orphan<Bytes> createUnpooled(byte[] u8) {
-        return new Concrete(u8, null);
-    }
+    public static Orphan<Bytes> createUnpooled(byte[] u8) {return new Concrete(u8, null);}
 
     protected Bytes(byte[] arr, @Nullable LevelAlloc<Bytes> pool) {
         this.arr     = arr;
@@ -35,23 +31,16 @@ public abstract sealed class Bytes extends AbstractOwned<Bytes> {
         this.pool    = pool;
     }
 
-    /** Equivalent to {@link #recycle(Object)}, but will behave as if the
-     *  {@link Thread#threadId()} of {@link Thread#currentThread()} were {@code threadId}. */
-    public @Nullable Bytes recycle(int threadId, Object currentOwner) {
+    public @Nullable Bytes recycle(Object currentOwner) {
         if (pool != null) {
             internalMarkRecycled(currentOwner);
             currentOwner = RECYCLED;
             if (INVALIDATE_RECYCLED)
                 Arrays.fill(arr, (byte)0);
-            if (pool.offer(threadId, this, arr.length) == null)
+            if (pool.offer(this, arr.length) == null)
                 return null;
         }
         return internalMarkGarbage(currentOwner);
-    }
-
-
-    @Override public @Nullable Bytes recycle(Object currentOwner) {
-        return recycle((int)Thread.currentThread().threadId(), currentOwner);
     }
 
     public Bytes recycleAndGetEmpty(Object currentOwner) {
@@ -75,18 +64,23 @@ public abstract sealed class Bytes extends AbstractOwned<Bytes> {
     public static final Bytes EMPTY;
     public static final LevelAlloc<Bytes> ALLOC;
     private static final boolean INVALIDATE_RECYCLED = Bytes.class.desiredAssertionStatus();
+    private static final int[] POOLED_PERMITS = new int[33];
+    private static final int RESET_PERMITS = Integer.MIN_VALUE>>1;
     private static final IntFunction<Bytes> FAC = new IntFunction<>() {
         @Override public Bytes apply(int len) {
             byte[] arr = len == 0 ? EMPTY_ARRAY : new byte[len];
-            return new Bytes.Concrete(arr, ALLOC).takeOwnership(RECYCLED);
+            int level = Integer.numberOfTrailingZeros(len);
+            int permits = POOLED_PERMITS[level]--;
+            if (permits < RESET_PERMITS)
+                POOLED_PERMITS[level] = 0;
+            var pool = permits > 0 ? ALLOC : null;
+            return new Bytes.Concrete(arr, pool).takeOwnership(RECYCLED);
         }
         @Override public String toString() {return "Bytes.FAC";}
     };
     private static final Runnable PRIME = new Runnable() {
         @Override public void run() {
-            for (int level = 0; level <= 10; level++)
-                ALLOC.primeLevel(FAC, level, 4, 0);
-            for (int level = 11; level <= 15; level++)
+            for (int level = 0; level <= 15; level++)
                 ALLOC.primeLevel(FAC, level, 1, 0);
         }
         @Override public String toString() {return "Bytes.PRIME";}
@@ -98,12 +92,15 @@ public abstract sealed class Bytes extends AbstractOwned<Bytes> {
                   + 16 + 8 + 2*4; /* MemorySegment */
         int perByte = 1;
         var caps = new LevelAlloc.Capacities()
-                .set(0, 3, THREADS*256)
-                .set(4, 6, THREADS*2048)
-                .setSameBytesUsage(7, 15,
-                        THREADS*2048*(20+(1<<6)),
-                        20, 1);
+                .set(0, 10, THREADS*256)
+                .setSameBytesUsage(9, 13,
+                        THREADS*128*(16+(1<<9)),
+                        16, 1)
+                .set(14, 16, THREADS*8);
         ALLOC = new LevelAlloc<>(Bytes.class, "BYTES", fixed, perByte, FAC, caps);
+        int[] level2cap = caps.array();
+        for (int i = 0; i < level2cap.length; i++)
+            POOLED_PERMITS[i] = level2cap[i] + THREADS*localCapacity(level2cap[i]);
         //noinspection StaticInitializerReferencesSubClass
         EMPTY = new Concrete(new byte[0], ALLOC).takeOwnership(CONSTANT);
         Primer.INSTANCE.sched(PRIME);

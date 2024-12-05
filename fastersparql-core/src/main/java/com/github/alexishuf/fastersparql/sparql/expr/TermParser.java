@@ -67,7 +67,7 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                 ALLOC_FAC, BYTES);
         Primer.INSTANCE.sched(() -> ALLOC.prime(() -> {
             TermParser p = new Concrete().takeOwnership(RECYCLED);
-            p.ntBuf = new MutableRope(Bytes.createPooled(new byte[256]), 0);
+            p.ntBuf = new MutableRope(Bytes.createUnpooled(new byte[256]), 0);
             return p;
         }, 2, 0));
     }
@@ -158,7 +158,6 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
             return result = Result.EOF; //no term has less than 2 chars
         byte f = in.get(begin);
         return result = switch (f) {
-            default       -> parseTTL();
             case '$', '?' -> {
                 stopped = in.skip(begin+1, end, VARNAME);
                 if (stopped - begin > 1) {
@@ -192,7 +191,6 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                     if (qLen > 1)
                         checkAmbiguousLexEnd();
                     switch (in.get(p = lexEnd +qLen)) {
-                        default  -> stopped = p; // no @/^^
                         case '@' -> {
                             if ((stopped = in.skip(++p, end, LANGTAG)) == p)
                                 yield Result.MALFORMED; // empty lang tag
@@ -222,10 +220,12 @@ public abstract sealed class TermParser extends AbstractOwned<TermParser> {
                                 yield Result.TTL;
                             }
                         }
+                        default  -> stopped = p; // no @/^^
                     }
                 }
                 yield quote != NT_QUOTE ? Result.TTL : Result.NT;
             }
+            default       -> parseTTL();
         };
     }
 
