@@ -9,7 +9,7 @@ import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 import static java.lang.invoke.MethodHandles.lookup;
 
-public final class LIFOPool<T> implements LeakyPool, StatsPool, JournalNamed {
+public final class LIFOPool<T> implements PoolReceiver<T>, LeakyPool, StatsPool, JournalNamed {
     private static final int LOCKED = Integer.MIN_VALUE;
     private static final VarHandle S;
     static {
@@ -122,6 +122,10 @@ public final class LIFOPool<T> implements LeakyPool, StatsPool, JournalNamed {
         } finally {
             S.setRelease(this, size);
         }
+    }
+
+    @Override public @Nullable T offer(T o, int len) {
+        return offer(o);
     }
 
     @Override public String toString() {

@@ -14,7 +14,7 @@ import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 import static java.lang.Thread.currentThread;
 
-public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
+public final class Alloc<T> implements PoolReceiver<T>, LeakyPool, StatsPool, JournalNamed {
     public static final int THREADS = PoolStackSupport.THREADS;
     private static final int POOL_PADD = 128/4;
     private static final int MD_WIDTH = 128/4;
@@ -129,6 +129,10 @@ public final class Alloc<T> implements LeakyPool, StatsPool, JournalNamed {
      */
     public @Nullable T offer(T o) {
         return offer((int)currentThread().threadId(), o);
+    }
+
+    @Override public @Nullable T offer(T o, int len) {
+        return offer(o);
     }
 
     /**

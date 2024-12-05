@@ -23,7 +23,7 @@ import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
 import static java.lang.Thread.currentThread;
 
-public class LevelAlloc<T> implements LeakyPool, StatsPool, JournalNamed {
+public class LevelAlloc<T> implements PoolReceiver<T>, LeakyPool, StatsPool, JournalNamed {
     private static final int MD_LEVEL_WIDTH  = 4;
     private static final int MD_LEVEL_SHIFT  = numberOfTrailingZeros(MD_LEVEL_WIDTH);
     private static final int MD_BASE         = 128/4;
