@@ -86,11 +86,11 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
     }
 
     private static sealed abstract class Node extends AbstractOwned<Node> {
-        private static final int BYTES = 16/* headers */
-                +4*6 /* fields */
-                +16+NODE_DATA_LEN /* data contents */
-                +(NODE_KEYS+1)*4 /* children contents */
-                +NODE_KEYS*4 /*slices contents*/;
+        private static final int BYTES = 72 /* header+fields as reported by JOL */
+                +16+NODE_DATA_LEN           /* term local strings */
+                +2+NODE_TERMS_2             /* term local strings offset and len */
+                +4*NODE_TERMS               /* term shared prefix/suffixes references */
+                +4*NODE_MAX_CHILDREN;       /* child references */
         private static final class Fac implements Supplier<Node> {
             private static final VarHandle LOCK;
             static {
@@ -141,23 +141,25 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             return t.maskIfLit(LIT_MASK_MAGIC0, LIT_MASK_MAGIC1);
         }
         static { assert litMask(Term.EMPTY_STRING) == LIT_MASK; }
+        private static final int COPY_STR       = 0x1;
+        private static final int COPY_ID        = 0x2;
+        private static final int COPY_BOTH      = COPY_STR|COPY_ID;
+        private static final int ACQUIRE_FLAGS  = COPY_STR|COPY_ID;
+        private static final int VISITED        = 0x4;
 
         private final short childBegin, slicesBegin, sharedBegin;
         private short dataUsed;
         private byte keysCount;
         private byte cols;
+        private byte flags;
+        private final boolean pooled;
         private final short[] slices;
         private final FinalSegmentRope[] shared;
         private byte[] data;
         private final Node[] child;
-        private boolean copyStr;
-        private boolean copyId;
-        private boolean visited;
-        private final boolean pooled;
         private long[] ids;
         private MemorySegment dataSegment;
         private final MemorySegment ownedData;
-        private long[] ownedIds;
         private @Nullable IdBatchType<?> idType;
 
         private Node(boolean pooled, short[] slices, short slicesBegin,
@@ -171,29 +173,26 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             this.child       = child;
             this.childBegin  = childBegin;
             this.ids         = EMPTY_IDS;
-            this.ownedIds    = EMPTY_IDS;
             this.data        = data;
             this.dataSegment = MemorySegment.ofArray(data);
             this.ownedData   = dataSegment;
         }
 
         public static Node acquireChild(Node parent) {
-            return acquire(parent.cols, parent.idType,
-                           parent.copyId, parent.copyStr).takeOwnership(parent);
+            return acquire(parent.cols, parent.idType, parent.flags).takeOwnership(parent);
         }
 
         private static Orphan<Node> acquire(int cols, IdBatchType<?> idType,
-                                            boolean copyId, boolean copyStr) {
+                                            byte flags) {
             var node = NODE_ALLOC.create();
             if (((cols-1)&INVALID_COLS_MASK) != 0)
                 throw new IllegalArgumentException("cols < 0 || cols > BTreeDedup.MAX_COLS");
             if (node.keysCount != 0 || node.dataSegment != node.ownedData)
                 throw new IllegalStateException("acquire()d non-clean node (double free?)");
             node.cols    = (byte) cols;
-            node.copyId  = copyId;
-            node.copyStr = copyStr;
-            node.idType = idType;
-            if (copyId)
+            node.flags   = (byte)(flags&ACQUIRE_FLAGS);
+            node.idType  = idType;
+            if ((flags&COPY_ID) != 0)
                 node.initIds(cols);
             if (DEBUG) node.validate(-1);
             return node.releaseOwnership(RECYCLED);
@@ -201,15 +200,13 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
 
         private void initIds(int cols) {
             int terms = Math.max(cols*NODE_KEYS, NODE_IDS_LEN);
-            if (ids.length < terms) {
+            if (ids.length < terms)
                 ids = new long[terms];
-                if (terms == NODE_IDS_LEN)
-                    ownedIds = this.ids;
-            }
+
         }
 
         @Override public @Nullable Node recycle(Object currentOwner) {
-            reset(1, false);
+            reset(1, (byte)COPY_STR);
             if (pooled) {
                 internalMarkRecycled(currentOwner);
                 if (NODE_ALLOC.offer(this) == null)
@@ -229,28 +226,26 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             @Override public Node takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
-        private void reset(int cols, boolean useIds) {
-            if (((cols-1)&INVALID_COLS_MASK) != 0)
+        private void reset(int newCols, byte newFlags) {
+            if (((newCols-1)&INVALID_COLS_MASK) != 0)
                 throw new IllegalArgumentException("columns does not fit in a byte");
-            int oldTerms = keysCount*this.cols;
+            int oldTerms = keysCount*cols;
             Arrays.fill(shared, sharedBegin, sharedBegin+oldTerms, null);
             Arrays.fill(slices, slicesBegin, slicesBegin+(oldTerms<<1), (short)0);
-            if (this.copyId)
+            if ((flags&COPY_ID) != 0)
                 Arrays.fill(ids, 0, oldTerms, 0L);
             for (int i = childBegin, end = childBegin+keysCount+1; i < end; i++)
                 child[i] = Owned.safeRecycle(child[i], this);
             if (DEBUG)
                 checkExtraneousKeysAndChildren();
-            if (this.dataSegment != ownedData)
-                this.data = (byte[])(this.dataSegment = ownedData).heapBase().orElseThrow();
-            this.dataUsed  = 0;
-            this.keysCount = 0;
-            this.cols      = (byte)cols;
-            this.copyId    = useIds;
-            if (useIds)
-                initIds(cols);
-            else
-                ids = ownedIds;
+            if (dataSegment != ownedData)
+                data = (byte[])(dataSegment = ownedData).heapBase().orElseThrow();
+            dataUsed  = 0;
+            keysCount = 0;
+            cols      = (byte)newCols;
+            flags     = newFlags;
+            if ((newFlags&COPY_ID) != 0)
+                initIds(newCols);
         }
 
 
@@ -274,9 +269,9 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             }
         }
         private void validateCheap() {
-            if (visited)
+            if ((flags&VISITED) != 0)
                 throw new AssertionError("Cycle detected");
-            visited = true;
+            flags |= VISITED;
             for (int i = 0; i <= keysCount; i++) {
                 Node c = child[childBegin+i];
                 if (c != null) {
@@ -288,7 +283,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                     c.validateCheap();
                 }
             }
-            visited = false;
+            flags &= ~VISITED;
         }
         private void validate(View v0, View v1, int splitMedian) {
             validateCheap();
@@ -309,7 +304,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                 // this node was not split by add(), enforce keys are sorted
                 for (int k = 0; k < keysCount; k++) {
                     v0.wrap(this, k); // will throw if invalid terms
-                    if (copyId && copyStr) {
+                    if ((flags&COPY_BOTH) == COPY_BOTH) {
                         for (int c = 0, base=k*cols; c < cols; c++) {
                             int t = base + c;
                             if (!v0.nodeView(this, t).equals(v1.nodeViewId(this, t)))
@@ -341,13 +336,13 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
         private void checkExtraneousKeysAndChildren() {
             int oldTerms = keysCount*cols;
             int maxTerms = NODE_KEYS*cols;
-            if (copyId) {
+            if ((flags&COPY_ID) != 0) {
                 for (int i = oldTerms; i < maxTerms; i++) {
                     if (ids[i] != 0)
                         throw new AssertionError("extraneous non-zero ID");
                 }
             }
-            if (copyStr) {
+            if ((flags&COPY_STR) != 0) {
                 for (int i = oldTerms; i < maxTerms; i++) {
                     if (shared[sharedBegin+i] != null)
                         throw new AssertionError("extraneous non-null shared");
@@ -389,7 +384,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                     if (child[childBegin+k] != null)
                         child[childBegin+k].dump(out, indent2, visited);
                     indent(out, indent2).append(k).append(": [");
-                    if (copyStr) {
+                    if ((flags&COPY_STR) != 0) {
                         int shb = sharedBegin+k*cols, slb = slicesBegin+k*cols*2;
                         for (int c = 0, sli; c < cols; c++) {
                             short fLen = slices[(sli=slb+c*2)+SL_LEN];
@@ -401,7 +396,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                             out.append(", ");
                         }
                     } else {
-                        assert copyId;
+                        assert (flags&COPY_ID) != 0;
                         for (int c = 0, idb = k*cols; c < cols; c++)
                             out.append(ids[idb+c]).append(", ");
                     }
@@ -540,9 +535,9 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             arraycopy(child, childBegin+keyPos,
                       child, childBegin+keyPos+1, n+1);
             n *= cols;
-            if (copyId)
+            if ((flags&COPY_ID) != 0)
                 arraycopy(ids, termSrc, ids, termDst, n);
-            if (copyStr) {
+            if ((flags&COPY_STR) != 0) {
                 arraycopy(shared, sharedBegin+termSrc,
                           shared, sharedBegin+termDst, n);
                 arraycopy(slices, slicesBegin+(termSrc<<1),
@@ -591,7 +586,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
         }
 
         private Node split(Side side, Node srcNode, int srcKey, int insPos) {
-            boolean copyStr = this.copyStr, copyId = this.copyId;
+            boolean copyStr = (flags&COPY_STR) != 0, copyId = (flags&COPY_ID) != 0;
             byte cols = this.cols, beginKey = side.beginKey(insPos);
             byte keysBfrIns = Side.keysBeforeInsert(insPos, beginKey);
             byte keysAftIns = Side.keysAfterInsert(keysBfrIns);
@@ -630,7 +625,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             return node;
         }
         private Node split(Side side, View view, int insPos) {
-            boolean copyStr = this.copyStr, copyId = this.copyId;
+            boolean copyStr = (flags&COPY_STR) != 0, copyId = (flags&COPY_ID) !=0;
             byte cols       = this.cols;
             byte beginKey   = side.beginKey(insPos);
             byte keysBfrIns = Side.keysBeforeInsert(insPos, beginKey);
@@ -666,9 +661,9 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
         }
 
         private void setKey(View view, int dstKey) {
-            if (copyId)
+            if ((flags&COPY_ID) != 0)
                 arraycopy(view.ids, 0, ids, dstKey*cols, cols);
-            if (copyStr)
+            if ((flags&COPY_STR) != 0)
                 setKeyStr(view, dstKey);
         }
         private void setKeyStr(View view, int dstKey) {
@@ -694,9 +689,9 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             dataUsed = lOut;
         }
         private void setKey(Node src, int srcKey, int dstKey) {
-            if (copyId)
+            if ((flags&COPY_ID) != 0)
                 arraycopy(src.ids, srcKey*cols, ids, dstKey*cols, cols);
-            if (copyStr)
+            if ((flags&COPY_STR) != 0)
                 setKeyStr(src, srcKey, dstKey);
         }
         private void setKeyStr(Node src, int srcKey, int dstKey) {
@@ -892,9 +887,9 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             byte cols = node.cols;
             if (DEBUG)
                 debugCols = cols;
-            if (node.copyId)
+            if ((node.flags&Node.COPY_ID) != 0)
                 arraycopy(node.ids, key*cols, this.ids, 0, cols);
-            if (node.copyStr) {
+            if ((node.flags&Node.COPY_STR) != 0) {
                 short shb   = (short)(node.sharedBegin+(key*cols));
                 short slb   = (short)(node.slicesBegin+(key*cols)*2);
                 for (int c = 0; c < cols; c++) {
@@ -963,7 +958,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
         }
 
         public TermView nodeView(Node node, int term) {
-            if (node.copyStr) {
+            if ((node.flags&Node.COPY_STR) != 0) {
                 int sli = node.slicesBegin + term*2;
                 short len = node.slices[sli+Node.SL_LEN];
                 if ((len&Node.LEN_MASK) == 0) {
@@ -988,9 +983,9 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
     private BTreeDedup(BatchType<B> batchType, int cols, int maxSize) {
         super(batchType, cols);
         var ibt = batchType instanceof IdBatchType<?> i ? i : null;
-        boolean copyId  = ibt != null;
-        boolean copyStr = ibt == null || ibt.isId2StrSlow();
-        this.root = Node.acquire(cols, ibt, copyId, copyStr).takeOwnership(this);
+        byte flags = ibt == null ? Node.COPY_STR
+                   : (byte)(ibt.isId2StrSlow() ? Node.COPY_BOTH : Node.COPY_ID);
+        this.root = Node.acquire(cols, ibt, flags).takeOwnership(this);
         this.maxSize = maxSize;
     }
     public static <B extends Batch<B>> Orphan<BTreeDedup<B>> create(BatchType<B> type, int cols) {
@@ -1018,7 +1013,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
 
     @Override public void clear(int cols) {
         requireAlive();
-        root.reset(cols, root.copyId);
+        root.reset(cols, root.flags);
     }
 
     @Override public boolean isWeak() { return false; }
@@ -1030,8 +1025,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
         Node root = this.root;
         int cols = root.cols;
         IdBatchType<?> idType = root.idType;
-        boolean copyId = root.copyId;
-        boolean copyStr = root.copyStr;
+        byte flags = root.flags;
         lock();
         try {
             if (size >= maxSize)
@@ -1041,7 +1035,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                 return true;
             ++size;
             if (median >= 0) { // root was split
-                Node parent = Node.acquire(cols, idType, copyId, copyStr).takeOwnership(this);
+                Node parent = Node.acquire(cols, idType, flags).takeOwnership(this);
                 parent.takeSplitNodesAndKey(root, median, 0);
                 parent.keysCount = 1;
                 this.root = parent;
@@ -1072,7 +1066,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
     @Override public <E extends Throwable> void forEach(ThrowingConsumer<B, E> consumer) throws E {
         B b = batchType().create(cols).takeOwnership(this);
         try {
-            if (root.copyId)
+            if ((root.flags&Node.COPY_ID) != 0)
                 root.forEachIds((IdBatch<?>)b, consumer);
             else
                 root.forEachStrings(b, consumer);
