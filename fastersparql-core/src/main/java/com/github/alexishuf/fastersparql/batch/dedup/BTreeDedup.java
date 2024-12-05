@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.ThrowingConsumer;
 import com.github.alexishuf.fastersparql.util.concurrent.Alloc;
+import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import com.github.alexishuf.fastersparql.util.concurrent.Primer;
 import com.github.alexishuf.fastersparql.util.owned.AbstractOwned;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
@@ -50,7 +51,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
     }
     private static final long[] EMPTY_IDS = new long[0];
     private static final int NODE_IDS_LEN = EXPECTED_MAX_COLS*NODE_KEYS;
-    private static final int NODE_DATA_LEN = 2048;
+    private static final int NODE_DATA_LEN = 4096;
     static {//noinspection ConstantValue
         assert NODE_DATA_LEN >= NODE_KEYS*EXPECTED_MAX_COLS*16 : "NODE_DATA_LEN may be too short";
     }
@@ -156,10 +157,11 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
         private final short[] slices;
         private final FinalSegmentRope[] shared;
         private byte[] data;
+        private MemorySegment dataSegment;
         private final Node[] child;
         private long[] ids;
-        private MemorySegment dataSegment;
         private final MemorySegment ownedData;
+        private Bytes borrowedData;
         private @Nullable IdBatchType<?> idType;
 
         private Node(boolean pooled, short[] slices, short slicesBegin,
@@ -202,7 +204,6 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             int terms = Math.max(cols*NODE_KEYS, NODE_IDS_LEN);
             if (ids.length < terms)
                 ids = new long[terms];
-
         }
 
         @Override public @Nullable Node recycle(Object currentOwner) {
@@ -238,8 +239,11 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                 child[i] = Owned.safeRecycle(child[i], this);
             if (DEBUG)
                 checkExtraneousKeysAndChildren();
-            if (dataSegment != ownedData)
+            Bytes borrowedData = this.borrowedData;
+            if (borrowedData != null) {
+                this.borrowedData = borrowedData.recycle(this);
                 data = (byte[])(dataSegment = ownedData).heapBase().orElseThrow();
+            }
             dataUsed  = 0;
             keysCount = 0;
             cols      = (byte)newCols;
@@ -357,13 +361,17 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                     throw new AssertionError("extraneous non-null child");
         }
 
-        private byte[] growData(int required) {
+        private byte[] growData(int required, int dataUsed) {
             if (required > Short.MAX_VALUE)
                 throw new UnsupportedOperationException("A Node can only keep 32KiB of string data");
-            var d       = Arrays.copyOf(data, required + (-required&0x7));
-            data        = d;
-            dataSegment = MemorySegment.ofArray(d);
-            return d;
+            Bytes b = Bytes.atLeast(required).takeOwnership(this);
+            arraycopy(data, 0, b.arr, 0, dataUsed);
+            if (borrowedData != null)
+                borrowedData.recycle(this);
+            borrowedData = b;
+            data         = b.arr;
+            dataSegment  = b.segment;
+            return b.arr;
         }
 
         @SuppressWarnings("unused") // used for debug purposes
@@ -679,7 +687,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                 var local = term.local();
                 int lLen = local.len;
                 if (lOut+lLen > this.data.length)
-                    data = growData(lOut+lLen);
+                    data = growData(lOut+lLen, lOut);
                 local.copy(0, lLen, data, lOut);
                 int slOut = slb+(c<<1);
                 slices[slOut+SL_OFF] = lOut;
@@ -707,7 +715,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
             short adj    = (short)(dataUsed - dBegin);
             byte[] data = this.data;
             if (dataUsed+dLen > data.length)
-                data = growData(this.dataUsed +dLen);
+                data = growData(dataUsed+dLen, dataUsed);
             arraycopy(src.data, dBegin, data, dataUsed, dLen);
             this.dataUsed += dLen;
             arraycopy(src.shared, src.sharedBegin+srcKey*cols, shared,
@@ -771,7 +779,7 @@ public class BTreeDedup<B extends Batch<B>> extends Dedup<B, BTreeDedup<B>> {
                     required += required/cols;
                 }
                 if (required > dst.data.length)
-                    dst.growData(required);
+                    dst.growData(required, dst.dataUsed);
             }
         }
 
