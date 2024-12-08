@@ -162,7 +162,7 @@ public class LocalityCompositeDict extends Dict {
             int litSuffCount = 0;
             if (sharedDict.nStrings > Integer.MAX_VALUE)
                 throw new UnsupportedOperationException("Shared dict is too big!");
-            for (long id = 1; id < sharedDict.nStrings; id++) {
+            for (long id = 1; id <= sharedDict.nStrings; id++) {
                 SegmentRope r = l.get(id);
                 if (r != null && r.len > 0 && r.get(0) == '"') {
                     if (litSuffCount == litSuffIds.length)
