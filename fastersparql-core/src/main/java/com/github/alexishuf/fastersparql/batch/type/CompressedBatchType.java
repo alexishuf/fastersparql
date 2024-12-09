@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.util.concurrent.Bytes;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -73,25 +74,47 @@ public final class CompressedBatchType extends BatchType<CompressedBatch> {
     }
 
     @Override
-    public @Nullable Orphan<Merger> projector(Vars out, Vars in) {
+    public @Nullable Orphan<Merger>
+    projector(Vars out, Vars in,
+              @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
         short[] sources = projectorSources(out, in);
-        return sources == null ? null : new Merger.Concrete(this, out, sources);
+        if (sources == null) {
+            if (before != null) {
+                Owned.safeRecycle(before.takeOwnership(this), this);
+                throw new IllegalArgumentException("nop projection with before != null");
+            }
+            return null;
+        }
+        return new Merger.Concrete(this, out, sources, before);
     }
 
     @Override
-    public @NonNull Orphan<Merger> merger(Vars out, Vars left, Vars right) {
-        return new Merger.Concrete(this, out, mergerSources(out, left, right));
+    public @Nullable Orphan<Merger> projector(Vars out, Vars in) {
+        short[] sources = projectorSources(out, in);
+        return sources == null ? null
+                : new Merger.Concrete(this, out, sources, null);
+    }
+
+    @Override public @NonNull Orphan<Merger> merger(Vars out, Vars left, Vars right) {
+        return merger(out, left, right, null);
+    }
+
+    @Override
+    public @NonNull Orphan<Merger>
+    merger(Vars out, Vars left, Vars right,
+           @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
+        return new Merger.Concrete(this, out, mergerSources(out, left, right), before);
     }
 
     @Override
     public Orphan<Filter> filter(Vars out, Vars in, Orphan<? extends RowFilter<CompressedBatch, ?>> filter,
-                         Orphan<? extends BatchFilter<CompressedBatch, ?>> before) {
-        return new Filter.Concrete(this, out, projector(out, in), filter, before);
+                                 @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
+        return new Filter.Concrete(this, out, projector(out, in, null), filter, before);
     }
 
     @Override
     public Orphan<Filter> filter(Vars vars, Orphan<? extends RowFilter<CompressedBatch, ?>> filter,
-                         Orphan<? extends BatchFilter<CompressedBatch, ?>> before) {
+                                 @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
         return new Filter.Concrete(this, vars, null, filter, before);
     }
 }

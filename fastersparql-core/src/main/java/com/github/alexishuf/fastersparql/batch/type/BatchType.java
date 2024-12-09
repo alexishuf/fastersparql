@@ -234,6 +234,10 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
 
     /** Get a {@link BatchMerger} that only executes a projection on its left operand. */
     public abstract @Nullable Orphan<? extends BatchMerger<B, ?>>
+    projector(Vars out, Vars in, @Nullable Orphan<? extends BatchProcessor<B, ?>> before);
+
+    /** Get a {@link BatchMerger} that only executes a projection on its left operand. */
+    public abstract @Nullable Orphan<? extends BatchMerger<B, ?>>
     projector(Vars out, Vars in);
 
     /**
@@ -242,7 +246,7 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      *
      * <p>If {@code out.equals(left)}, this will return {@code null} as there is no work to
      * be done. If {@code leftVars.containsAll(out)}, this will be equivalent to
-     * {@link BatchType#projector(Vars, Vars)}.</p>
+     * {@link BatchType#projector(Vars, Vars, Orphan)}.</p>
      *
      * @param out   the variables of the result (merged) row
      * @param left  the variables present in {@code left} parameter of
@@ -251,6 +255,10 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      *              {@link BatchMerger#merge(Orphan, Batch, int, Batch)}
      * @return a new {@link BatchMerger}
      */
+    public abstract @NonNull Orphan<? extends BatchMerger<B, ?>>
+    merger(Vars out, Vars left, Vars right,
+           @Nullable Orphan<? extends BatchProcessor<B, ?>> before);
+
     public abstract @NonNull Orphan<? extends BatchMerger<B, ?>>
     merger(Vars out, Vars left, Vars right);
 
@@ -266,12 +274,13 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param before a {@link BatchFilter} to always execute before this {@link BatchFilter}.
      * @return a {@link BatchFilter}
      */
-    public abstract Orphan<? extends BatchFilter<B, ?>> filter(Vars out, Vars in,
-                                          Orphan<? extends RowFilter<B, ?>> filter,
-                                          Orphan<? extends BatchFilter<B, ?>> before);
+    public abstract Orphan<? extends BatchFilter<B, ?>>
+    filter(Vars out, Vars in, Orphan<? extends RowFilter<B, ?>> filter,
+           @Nullable Orphan<? extends BatchProcessor<B, ?>> before);
 
     /** {@link #filter(Vars, Vars, Orphan, Orphan)} with {@code before=null}. */
-    public final Orphan<? extends BatchFilter<B, ?>> filter(Vars out, Vars in, Orphan<? extends RowFilter<B, ?>> filter) {
+    public final Orphan<? extends BatchFilter<B, ?>>
+    filter(Vars out, Vars in, Orphan<? extends RowFilter<B, ?>> filter) {
         return filter(out, in, filter, null);
     }
 
@@ -284,9 +293,9 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
      * @param before a {@link BatchFilter} to always execute before this {@link BatchFilter}.
      * @return a {@link BatchFilter}
      */
-    public abstract Orphan<? extends BatchFilter<B, ?>> filter(Vars vars,
-                                          Orphan<? extends RowFilter<B, ?>> filter,
-                                          Orphan<? extends BatchFilter<B, ?>> before);
+    public abstract Orphan<? extends BatchFilter<B, ?>>
+    filter(Vars vars, Orphan<? extends RowFilter<B, ?>> filter,
+           @Nullable Orphan<? extends BatchProcessor<B, ?>> before);
 
     /** {@link #filter(Vars, Orphan, Orphan)} with {@code before=null} */
     public final Orphan<? extends BatchFilter<B, ?>>

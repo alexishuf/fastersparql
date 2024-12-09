@@ -8,6 +8,7 @@ import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.Async;
 import com.github.alexishuf.fastersparql.util.concurrent.ResultJournal;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -32,7 +33,6 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
     }
 
     public final RowFilter<B, ?> rowFilter;
-    public final @Nullable BatchFilter<B, ?> before;
     protected final short outColumns;
     @SuppressWarnings("unused") private long plainReqLimit, plainDownReq;
 
@@ -40,11 +40,10 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
 
     public BatchFilter(BatchType<B> batchType, Vars outVars,
                        Orphan<? extends RowFilter<B, ?>> rowFilter,
-                       @Nullable Orphan<? extends BatchFilter<B, ?>> before) {
-        super(batchType, outVars, CREATED, PROC_FLAGS);
+                       @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
+        super(batchType, outVars, CREATED, PROC_FLAGS, before);
         this.rowFilter    = rowFilter.takeOwnership(this);
         this.bindableVars = this.rowFilter.bindableVars();
-        this.before       = before == null ? null : before.takeOwnership(this);
         this.outColumns   = (short)outVars.size();
         resetReqLimit();
         if (ResultJournal.ENABLED)
@@ -53,19 +52,17 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
 
     private void resetReqLimit() {
         long limit = Long.MAX_VALUE;
-        for (BatchFilter<B, ?> bf = this; bf != null && limit == Long.MAX_VALUE; bf = bf.before)
-            limit = bf.rowFilter.upstreamRequestLimit();
+        for (BatchProcessor<B, ?> p = this; p != null && limit == Long.MAX_VALUE; p = p.before) {
+            if (p instanceof BatchFilter<?,?> bf)
+                limit = bf.rowFilter.upstreamRequestLimit();
+        }
         REQ_LIMIT.setRelease(this, limit);
         DOWN_REQ .setRelease(this, 0);
     }
 
     @Override protected void doRelease() {
-        try {
-            rowFilter.recycle(this);
-            if (before != null) before.recycle(this);
-        } finally {
-            super.doRelease();
-        }
+        Owned.safeRecycle(rowFilter, this);
+        super.doRelease();
     }
 
     /* --- --- --- Emitter methods --- --- --- */
@@ -73,9 +70,8 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
     @Override public void rebind(BatchBinding binding) throws RebindException {
         super.rebind(binding);
         resetReqLimit();
-        var rf = rowFilter;
-        if (rf     != null)     rf.rebind(binding);
-        if (before != null) before.rebind(binding);
+        if (rowFilter != null)
+            rowFilter.rebind(binding);
     }
 
     @Override public void request(long downstreamRequest) throws NoReceiverException {
@@ -104,10 +100,8 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
-        if (before != null) {
-            sb.append('\n');
-            sb.append(before.label(type).replace("\n", "\n  "));
-        }
+        if (before != null)
+            sb.append('\n').append(before.label(type).replace("\n", "\n  "));
         return sb.toString();
     }
 
@@ -134,7 +128,13 @@ public abstract class BatchFilter<B extends Batch<B>, P extends BatchFilter<B, P
     /* --- --- --- BatchProcessor methods --- --- --- */
 
     public final boolean isDedup() {
-        return rowFilter instanceof Dedup<?, ?> || (before != null && before.isDedup());
+        if (rowFilter instanceof Dedup<?,?>)
+            return true;
+        for (BatchProcessor<B, ?> p = before; p != null; p = p.before) {
+            if (p instanceof BatchFilter<?,?> bf && bf.rowFilter instanceof Dedup<?,?>)
+                return true;
+        }
+        return false;
     }
 
     public abstract Orphan<B> filterInPlace(Orphan<B> in);

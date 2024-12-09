@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.ByteSink;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -59,24 +60,47 @@ public abstract class IdBatchType<B extends IdBatch<B>> extends BatchType<B> {
         return IdBatchBucket.estimateBytes(rowsCapacity, cols);
     }
 
-    @Override public @Nullable Orphan<Merger<B>> projector(Vars out, Vars in) {
+    @Override public @Nullable Orphan<Merger<B>>
+    projector(Vars out, Vars in,
+              @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
         short[] sources = projectorSources(out, in);
-        return sources == null ? null : new Merger.Concrete<>(this, out, sources);
+        if (sources == null) {
+            if (before != null) {
+                Owned.safeRecycle(before.takeOwnership(this), this);
+                throw new IllegalArgumentException("nop projection with before != null");
+            }
+            return null;
+        }
+        return new Merger.Concrete<>(this, out, sources, before);
     }
 
-    @Override public @NonNull Orphan<Merger<B>> merger(Vars out, Vars left, Vars right) {
-        return new Merger.Concrete<>(this, out, mergerSources(out, left, right));
+    @Override public @Nullable Orphan<? extends BatchMerger<B, ?>> projector(Vars out, Vars in) {
+        short[] sources = projectorSources(out, in);
+        return sources == null ? null
+                : new IdBatch.Merger.Concrete<>(this, out, sources, null);
+    }
+
+    @Override public @NonNull Orphan<Merger<B>>
+    merger(Vars out, Vars left, Vars right,
+           @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
+        return new Merger.Concrete<>(this, out, mergerSources(out, left, right), before);
+    }
+
+    @Override
+    public @NonNull Orphan<? extends BatchMerger<B, ?>> merger(Vars out, Vars left, Vars right) {
+        return merger(out, left, right, null);
     }
 
     @Override public Orphan<Filter<B>>
     filter(Vars out, Vars in, Orphan<? extends RowFilter<B, ?>> filter,
-           Orphan<? extends BatchFilter<B, ?>> before) {
-        return new Filter.Concrete<>(this, out, projector(out, in), filter, before);
+           @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
+        return new Filter.Concrete<>(this, out, projector(out, in, null),
+                                     filter, before);
     }
 
     @Override public Orphan<Filter<B>>
     filter(Vars vars, Orphan<? extends RowFilter<B, ?>> filter,
-           Orphan<? extends BatchFilter<B, ?>> before) {
+           @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
         return new Filter.Concrete<>(this, vars, null, filter, before);
     }
 

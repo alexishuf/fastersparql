@@ -272,6 +272,8 @@ public class FS {
      * Limit(limit, Offset(offset, Distinct(Project[projection](Filter(input, filters...)))))</p>
      *
      * @param input input of the modifier. May also be a {@link Modifier}.
+     * @param orderBy An optional subset of {@code input.publicVars()} marked with
+     *                ascending/descending order.
      * @param projection If non-null applies a projection of the given vars over {@code input}
      * @param distinct If 0, do not apply DISTINCT; If {@link Integer#MAX_VALUE}, apply
      *                       strict DISTINCT semantics; else apply weaker DISTINCT semantics
@@ -285,10 +287,11 @@ public class FS {
      *                These may be {@link Expr} instances or any {@link Object} whose
      *                {@link Object#toString()} evaluates to a valid SPARQL expression.
      */
-    public static Plan modifiers(Plan input, @Nullable Vars projection,
+    public static Plan modifiers(Plan input, @Nullable OrderBy orderBy, @Nullable Vars projection,
                                               DistinctType distinct, long offset, long limit,
                                               Collection<?> filters) {
         boolean nop = distinct == null
+                && OrderBy.isEmpty(orderBy)
                 && offset == 0 && limit == Long.MAX_VALUE
                 && filters.isEmpty()
                 && (projection == null || projection.equals(input.publicVars()));
@@ -297,6 +300,8 @@ public class FS {
         List<Expr> parsed = parseFilters(input, filters);
         if (input instanceof Modifier m) {
             input = input.left;
+            if (OrderBy.isEmpty(orderBy))
+                orderBy = m.orderBy;
             if (projection == null)
                 projection = m.projection;
             if (distinct == null)
@@ -306,8 +311,16 @@ public class FS {
             if (limit == Long.MAX_VALUE)
                 limit = m.limit;
         }
-        return new Modifier(input, projection, distinct, offset, limit,
+        return new Modifier(input, orderBy, projection, distinct, offset, limit,
                             parsed);
+    }
+
+    public static Modifier order(Plan input, OrderBy orderBy) {
+        if (input instanceof Modifier m) {
+            return new Modifier(m.left, orderBy, m.projection, m.distinct,
+                                m.offset, m.limit, m.filters);
+        }
+        return new Modifier(input, orderBy, null, null, 0, Long.MAX_VALUE, null);
     }
 
     /**
@@ -319,10 +332,10 @@ public class FS {
      */
     public static Modifier limit(Plan input, long limit) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, m.distinct, m.offset,
+            return new Modifier(m.left, m.orderBy, m.projection, m.distinct, m.offset,
                                   limit, m.filters);
         }
-        return new Modifier(input, null, null, 0, limit, null);
+        return new Modifier(input, null, null, null, 0, limit, null);
     }
 
     /**
@@ -333,19 +346,19 @@ public class FS {
      */
     public static Modifier offset(Plan input, long offset) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, m.distinct, offset,
+            return new Modifier(m.left, m.orderBy, m.projection, m.distinct, offset,
                                   m.limit, m.filters);
         }
-        return new Modifier(input, null, null, offset, Long.MAX_VALUE, null);
+        return new Modifier(input, null, null, null, offset, Long.MAX_VALUE, null);
     }
 
     /** Equivalent to {@link FS#limit(Plan, long)} over {@link FS#offset(Plan, long)}. */
     public static Modifier slice(Plan input, long offset, long limit) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, m.distinct, offset,
+            return new Modifier(m.left, m.orderBy, m.projection, m.distinct, offset,
                                   limit, m.filters);
         }
-        return new Modifier(input, null, null, offset, limit, null);
+        return new Modifier(input, null, null, null, offset, limit, null);
     }
 
     /** Equivalent to {@link FS#distinct(Plan, DistinctType)} with {@link Integer#MAX_VALUE}. */
@@ -378,9 +391,9 @@ public class FS {
      */
     public static Modifier distinct(Plan input, DistinctType type) {
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, m.projection, type, m.offset, m.limit, m.filters);
+            return new Modifier(m.left, m.orderBy, m.projection, type, m.offset, m.limit, m.filters);
         }
-        return new Modifier(input, null, type, 0, Long.MAX_VALUE, null);
+        return new Modifier(input, null, null, type, 0, Long.MAX_VALUE, null);
     }
 
     /**
@@ -394,9 +407,9 @@ public class FS {
         if (vars.equals(input.publicVars()))
             return input;
         if (input instanceof Modifier m) {
-            return new Modifier(m.left, vars, m.distinct, m.offset, m.limit, m.filters);
+            return new Modifier(m.left, m.orderBy, vars, m.distinct, m.offset, m.limit, m.filters);
         }
-        return new Modifier(input, vars, null, 0, Long.MAX_VALUE, null);
+        return new Modifier(input, null, vars, null, 0, Long.MAX_VALUE, null);
     }
 
     private static List<Expr> parseFilters(Plan maybeModifier, Collection<?> filters) {
@@ -432,10 +445,10 @@ public class FS {
     public static Modifier filter(Plan input, Collection<?> filters) {
         var parsed = parseFilters(input, filters);
         if (input instanceof Modifier m) {
-            return new Modifier(input.left, m.projection, m.distinct,
+            return new Modifier(input.left, m.orderBy, m.projection, m.distinct,
                                 m.offset, m.limit, parsed);
         } else {
-            return new Modifier(input, null, null, 0, Long.MAX_VALUE,
+            return new Modifier(input, null, null, null, 0, Long.MAX_VALUE,
                                 parsed);
         }
     }
@@ -450,10 +463,10 @@ public class FS {
                 union.addAll(m.filters);
                 union.addAll(filters);
             }
-            return new Modifier(input.left, m.projection, m.distinct,
+            return new Modifier(input.left, m.orderBy, m.projection, m.distinct,
                                 m.offset, m.limit, union);
         } else {
-            return new Modifier(input, null, null, 0, Long.MAX_VALUE,
+            return new Modifier(input, null, null, null, 0, Long.MAX_VALUE,
                                 filters);
         }
     }

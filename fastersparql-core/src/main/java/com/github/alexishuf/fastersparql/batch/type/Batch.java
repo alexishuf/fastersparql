@@ -487,7 +487,7 @@ public abstract class Batch<B extends Batch<B>> extends AbstractOwned<B> {
      *
      * <p>Objects that can be shared by several batches are not included in this count, only
      * 4 bytes (corresponding to the references) will be counted. {@link Term} and
-     * {@link SegmentRope}s are the main examples of this rule. However batch metadata and
+     * {@link SegmentRope}s are the main examples of this rule. However, batch metadata and
      * UTF-8 bytes managed by the batch are counted.</p>
      *
      * @return number of bytes held exclusively by this batch.

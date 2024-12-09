@@ -44,7 +44,7 @@ public class ModifierTest {
             List<Expr> expressions = new ArrayList<>(filters.length);
             for (var string : filters)
                 expressions.add(p.parse(FinalSegmentRope.asFinal(string)));
-            return new Modifier(in.asPlan(), projection, distinct,
+            return new Modifier(in.asPlan(), null, projection, distinct,
                     offset, limit, expressions);
         }
     }

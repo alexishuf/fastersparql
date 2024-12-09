@@ -259,25 +259,33 @@ public abstract sealed class UnitBatch extends Batch<UnitBatch> {
 
     public static abstract sealed class Merger extends BatchMerger<UnitBatch, Merger> {
         private final short outColumns;
-        public Merger(Vars outVars, short[] sources) {
-            super(UNIT, outVars, sources);
+        public Merger(Vars outVars, short[] sources,
+                      @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
+            super(UNIT, outVars, sources, before);
             if (outVars.size() > Short.MAX_VALUE)
                 throw new IllegalArgumentException("too many columns");
             outColumns = (short)outVars.size();
         }
 
-        public static Orphan<Merger> create(Vars outVars, short[] sources) {
-            return new Concrete(outVars, sources);
+        public static Orphan<Merger>
+        create(Vars outVars, short[] sources,
+               @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
+            return new Concrete(outVars, sources, before);
         }
 
         private static final class Concrete extends Merger implements Orphan<Merger> {
-            public Concrete(Vars outVars, short[] sources) {super(outVars, sources);}
+            public Concrete(Vars outVars, short[] sources,
+                            @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
+                super(outVars, sources, before);
+            }
             @Override public Merger takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
         @Override public void onBatch(Orphan<UnitBatch> orphan) {
             if (orphan != null) {
                 int rcvRows = peekTotalRows(orphan);
+                if (before != null)
+                    orphan = before.processInPlace(orphan);
                 if (beforeOnBatch(orphan))
                     afterOnBatch(projectInPlace(orphan), rcvRows);
             }
@@ -285,9 +293,13 @@ public abstract sealed class UnitBatch extends Batch<UnitBatch> {
 
         @Override public void onBatchByCopy(UnitBatch batch) {
             if (batch != null) {
-                int rcvRows = batch.totalRows();
-                if (beforeOnBatch(batch))
-                    afterOnBatch(project(fillingBatch(), batch), rcvRows);
+                if (before != null) {
+                    onBatch(batch.dup());
+                } else {
+                    int rcvRows = batch.totalRows();
+                    if (beforeOnBatch(batch))
+                        afterOnBatch(project(fillingBatch(), batch), rcvRows);
+                }
             }
         }
 
@@ -406,7 +418,7 @@ public abstract sealed class UnitBatch extends Batch<UnitBatch> {
 
         public Filter(Vars outVars, Orphan<Merger> projector,
                       Orphan<? extends RowFilter<UnitBatch, ?>> rowFilter,
-                      @Nullable Orphan<? extends BatchFilter<UnitBatch, ?>> before) {
+                      @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
             super(UNIT, outVars, rowFilter, before);
             this.projector = Orphan.takeOwnership(projector, this);
             assert this.projector == null || this.projector.vars.equals(outVars);
@@ -415,22 +427,20 @@ public abstract sealed class UnitBatch extends Batch<UnitBatch> {
         public static Orphan<Filter>
         create(Vars outVars, Orphan<Merger> projector,
                Orphan<? extends RowFilter<UnitBatch, ?>> rowFilter,
-               @Nullable Orphan<? extends BatchFilter<UnitBatch, ?>> before) {
+               @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
             return new Concrete(outVars, projector, rowFilter, before);
         }
 
         private static final class Concrete extends Filter implements Orphan<Filter> {
             public Concrete(Vars outVars, Orphan<Merger> projector,
                             Orphan<? extends RowFilter<UnitBatch, ?>> rowFilter,
-                            @Nullable Orphan<? extends BatchFilter<UnitBatch, ?>> before) {
+                            @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
                 super(outVars, projector, rowFilter, before);
             }
             @Override public Filter takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
         @Override public Orphan<UnitBatch> filterInPlace(Orphan<UnitBatch> inOrphan) {
-            if (before != null)
-                inOrphan = before.filterInPlace(inOrphan);
             if (inOrphan == null)
                 return null;
             Merger p = projector;
@@ -476,6 +486,8 @@ public abstract sealed class UnitBatch extends Batch<UnitBatch> {
         @Override public void onBatch(Orphan<UnitBatch> batch) {
             if (batch != null) {
                 int rcvRows = peekTotalRows(batch);
+                if (before != null)
+                    batch = before.processInPlace(batch);
                 if (beforeOnBatch(batch))
                     afterOnBatch(filterInPlace(batch), rcvRows);
             }

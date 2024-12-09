@@ -31,8 +31,9 @@ public abstract class BatchMerger<B extends Batch<B>, P extends BatchMerger<B, P
         return mergerSources(out, leftVars, Vars.EMPTY);
     }
 
-    public BatchMerger(BatchType<B> batchType, Vars outVars, short[] sources) {
-        super(batchType, outVars, CREATED, PROC_FLAGS);
+    public BatchMerger(BatchType<B> batchType, Vars outVars, short[] sources,
+                       @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
+        super(batchType, outVars, CREATED, PROC_FLAGS, before);
         this.sources = sources;
 
         boolean isProjection = true, safeInPlace = true;
@@ -86,6 +87,8 @@ public abstract class BatchMerger<B extends Batch<B>, P extends BatchMerger<B, P
         }
         if (type.showStats() && stats != null)
             stats.appendToLabel(sb);
+        if (before != null)
+            sb.append('\n').append(before.label(type).replace("\n", "\n  "));
         return sb.toString();
     }
 

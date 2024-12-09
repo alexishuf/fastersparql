@@ -265,7 +265,7 @@ public class Optimizer extends CardinalityEstimator {
                     addFilters(sparql);
                 } else {
                     var filters = new ArrayList<>(tmpFilters);
-                    p = new Modifier(p, null, null, 0, MAX_VALUE, filters);
+                    p = new Modifier(p, null, null, null, 0, MAX_VALUE, filters);
                 }
             }
             tmpFilters.clear();
@@ -306,7 +306,7 @@ public class Optimizer extends CardinalityEstimator {
                             ops[i] = join.op(i);
                         subJoin = new Join(ops);
                     }
-                    join.replace(0, childIdx+1, new Modifier(subJoin, null, null, 0, MAX_VALUE, new ArrayList<>(tmpFilters)));
+                    join.replace(0, childIdx+1, new Modifier(subJoin, null, null, null, 0, MAX_VALUE, new ArrayList<>(tmpFilters)));
                     last -= childIdx;
                     childIdx = 0;
                     tmpFilters.clear();

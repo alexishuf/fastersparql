@@ -196,8 +196,28 @@ class BTreeDedupTest {
             };
         }
 
+        private Orphan<SortProjection.OfByte> projection(boolean descending) {
+            var b = SortProjection.ofByte(cols());
+            if (descending) {
+                return switch (this) {
+                    case STR,NUM                    -> b.des(0).build();
+                    case STR_ZERO, EQ_STR_NUM       -> b.des(0).des(1).build();
+                    case EQ_NUM_IRI_ZERO            -> b.des(1).des(0).build();
+                    case EQ_NUM_BIG_STR,EQ_STR_STR  -> b.des(1).build();
+                };
+            } else {
+                return switch (this) {
+                    case STR,NUM                    -> b.asc(0).build();
+                    case STR_ZERO, EQ_STR_NUM       -> b.asc(0).asc(1).build();
+                    case EQ_NUM_IRI_ZERO            -> b.asc(1).asc(0).build();
+                    case EQ_NUM_BIG_STR,EQ_STR_STR  -> b.asc(1).build();
+                };
+            }
+        }
+
         private MutableRope writeZeroPadded(int value, MutableRope t) {
-            for (int i = 0, n = 4-1-(int)Math.floor(Math.log10(value)); i < n; i++)
+            int logFloor = (int)Math.floor(value == 0 ? 0 : Math.log10(value));
+            for (int i = 0, n = 4-1-logFloor; i < n; i++)
                 t.append('0');
             return t.append(value);
         }
@@ -231,7 +251,7 @@ class BTreeDedupTest {
                     b.putTerm(1, DT_integer, t.segment, t.utf8, 0, t.len, SUFF_LIT);
                 }
                 case EQ_NUM_IRI_ZERO -> {
-                    t.append(value).append('>');
+                    writeZeroPadded(value, t).append('>');
                     b.putTerm(0, DT_integer, SEVEN_LOCAL.segment, SEVEN_LOCAL.utf8,
                                      SEVEN_LOCAL.offset, SEVEN_LOCAL.len, SUFF_LIT);
                     b.putTerm(1, PREFIX, t.segment, t.utf8,
@@ -356,6 +376,41 @@ class BTreeDedupTest {
             Batch.safeRecycle(values, this);
             Batch.safeRecycle(tmp, this);
             Owned.safeRecycle(dedup, this);
+        }
+    }
+
+    @ParameterizedTest @MethodSource("test")
+    <B extends Batch<B>> void testSort(BatchType<B> bt, RowGenerator gen,
+                                       Order order, int uniqueRows) {
+        var sortDesc  = order == Order.INCREASING;
+        var sortOrder = sortDesc ? Order.DECREASING : Order.INCREASING;
+        B values       = gen.generate(bt, order,            uniqueRows).takeOwnership(this);
+        B uniqueSorted = gen.generate(bt, sortOrder, uniqueRows).takeOwnership(this);
+        B observed     = bt.create(values.cols).takeOwnership(this);
+        var dedup      = BTreeDedup.create(bt, values.cols,
+                                           gen.projection(sortDesc)).takeOwnership(this);
+        try {
+            for (int instances = 1; instances <= 2; instances++) {
+                dedup.sort(values);
+                observed.clear();
+                dedup.forEach(observed::copy);
+                if (instances == 1)
+                    assertEquals(uniqueSorted, observed);
+                int uniqueRow = 0;
+                for (var ex = uniqueSorted; ex != null; ex = ex.next) {
+                    for (short r = 0, rows = ex.rows; r < rows; r++, uniqueRow++) {
+                        for (int i = 0; i < instances; i++) {
+                            if (!ex.linkedEquals(r, observed, uniqueRow*instances + i))
+                                fail("Mismatch at uniqueRow="+uniqueRow+", instances="+instances);
+                        }
+                    }
+                }
+            }
+        } finally {
+            Batch.safeRecycle(values,       this);
+            Batch.safeRecycle(uniqueSorted, this);
+            Batch.safeRecycle(observed,     this);
+            Owned.safeRecycle(dedup,        this);
         }
     }
 }

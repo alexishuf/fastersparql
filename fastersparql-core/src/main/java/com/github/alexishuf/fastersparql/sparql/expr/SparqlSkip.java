@@ -38,4 +38,11 @@ public class SparqlSkip {
     public static final byte[] FROM_u8 = "FROM".getBytes(UTF_8);
     public static final byte[] LIMIT_u8 = "LIMIT".getBytes(UTF_8);
     public static final byte[] OFFSET_u8 = "OFFSET".getBytes(UTF_8);
+
+    public static final byte[] ORDER_u8 = "ORDER".getBytes(UTF_8);
+    public static final byte[] BY_u8 = "BY".getBytes(UTF_8);
+    public static final byte[] ASC_u8 = "ASC".getBytes(UTF_8);
+    public static final byte[] DESC_u8 = "DESC".getBytes(UTF_8);
+
+    public static final int[] ORDER_BY_ARG_FIRST = alphabet("(?$AD");
 }

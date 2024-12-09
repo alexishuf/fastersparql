@@ -7,6 +7,7 @@ import com.github.alexishuf.fastersparql.lrb.sources.LrbSource;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.operators.plan.Empty;
+import com.github.alexishuf.fastersparql.operators.plan.OrderBy;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.operators.plan.Query;
 import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
@@ -145,6 +146,18 @@ public final class PlanRegistry {
         private Plan  left() { return operands.getFirst().createPlan(); }
         private Plan right() { return operands.get(1).createPlan(); }
 
+        private OrderBy orderBy() {
+            OrderBy order = new OrderBy();
+            for (Object varObj : (List<?>)params.get("vars")) {
+                Map<?, ?> map = (Map<?, ?>) varObj;
+                String name = map.get("name").toString();
+                Object descObj = map.get("desc");
+                boolean desc = descObj != null && descObj.toString().equalsIgnoreCase("true");
+                order.add(FinalSegmentRope.asFinal(name), desc);
+            }
+            return order;
+        }
+
         private Plan[] operandsArr() {
             return operands.stream().map(Node::createPlan).toArray(Plan[]::new);
         }
@@ -187,6 +200,7 @@ public final class PlanRegistry {
                                                 longParam("limit", Long.MAX_VALUE));
                case "DISTINCT" -> FS.distinct(left());
                case "PRUNED" -> FS.dedup(left());
+               case "ORDER" -> FS.order(left(), orderBy());
                case "NOP" -> left();
                case "EMPTY" -> new Empty(vars("publicVars"), vars("allVars"));
                case "QUERY" -> {

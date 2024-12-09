@@ -2668,107 +2668,200 @@
     },
     "operands": [
       {
-        "name": "join-175",
-        "operator": "JOIN",
-        "params": {},
+        "name": "order-1",
+        "operator": "ORDER",
+        "params": {
+          "vars": [
+            {
+              "name": "actor",
+              "desc": false
+            }
+          ]
+        },
         "operands": [
           {
-            "name": "join-174",
+            "name": "join-175",
             "operator": "JOIN",
             "params": {},
             "operands": [
               {
-                "name": "join-173",
+                "name": "join-174",
                 "operator": "JOIN",
                 "params": {},
                 "operands": [
                   {
-                    "name": "join-172",
+                    "name": "join-173",
                     "operator": "JOIN",
                     "params": {},
                     "operands": [
                       {
-                        "name": "query-149",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?nytURI <http://data.nytimes.com/elements/topicPage> ?news .\n  ?nytURI <http://data.nytimes.com/elements/number_of_variants> ?variants .\n  ?nytURI <http://data.nytimes.com/elements/associated_article_count> ?articleCount .\n  ?nytURI <http://data.nytimes.com/elements/first_use> ?first_use .\n  ?nytURI <http://data.nytimes.com/elements/latest_use> ?latest_use .\n}",
-                          "endpoint": "http://nyt/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "merge-158",
-                        "operator": "MERGE",
+                        "name": "join-172",
+                        "operator": "JOIN",
                         "params": {},
                         "operands": [
                           {
-                            "name": "query-150",
+                            "name": "query-149",
                             "operator": "query",
                             "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                              "endpoint": "http://dbpedia-subset/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-151",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                              "endpoint": "http://drugbank/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-152",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                              "endpoint": "http://geonames/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-153",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                              "endpoint": "http://jamendo/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-154",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                              "endpoint": "http://kegg/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-155",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                              "endpoint": "http://lmdb/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-156",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "query": "SELECT * WHERE {\n  ?nytURI <http://data.nytimes.com/elements/topicPage> ?news .\n  ?nytURI <http://data.nytimes.com/elements/number_of_variants> ?variants .\n  ?nytURI <http://data.nytimes.com/elements/associated_article_count> ?articleCount .\n  ?nytURI <http://data.nytimes.com/elements/first_use> ?first_use .\n  ?nytURI <http://data.nytimes.com/elements/latest_use> ?latest_use .\n}",
                               "endpoint": "http://nyt/sparql"
                             },
                             "operands": []
                           },
                           {
-                            "name": "query-157",
+                            "name": "merge-158",
+                            "operator": "MERGE",
+                            "params": {},
+                            "operands": [
+                              {
+                                "name": "query-150",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://dbpedia-subset/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-151",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://drugbank/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-152",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://geonames/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-153",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://jamendo/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-154",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://kegg/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-155",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://lmdb/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-156",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://nyt/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-157",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                                  "endpoint": "http://swdfood/sparql"
+                                },
+                                "operands": []
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "name": "merge-167",
+                        "operator": "MERGE",
+                        "params": {},
+                        "operands": [
+                          {
+                            "name": "query-159",
                             "operator": "query",
                             "params": {
-                              "query": "SELECT * WHERE {\n  ?nytURI <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://dbpedia-subset/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-160",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://drugbank/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-161",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://geonames/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-162",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://jamendo/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-163",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://kegg/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-164",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://lmdb/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-165",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
+                              "endpoint": "http://nyt/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-166",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
                               "endpoint": "http://swdfood/sparql"
                             },
                             "operands": []
@@ -2778,119 +2871,40 @@
                     ]
                   },
                   {
-                    "name": "merge-167",
-                    "operator": "MERGE",
-                    "params": {},
-                    "operands": [
-                      {
-                        "name": "query-159",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://dbpedia-subset/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-160",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://drugbank/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-161",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://geonames/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-162",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://jamendo/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-163",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://kegg/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-164",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://lmdb/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-165",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://nyt/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "query-166",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?actor <http://www.w3.org/2002/07/owl#sameAs> ?dbpediaURI .\n}",
-                          "endpoint": "http://swdfood/sparql"
-                        },
-                        "operands": []
-                      }
-                    ]
+                    "name": "query-168",
+                    "operator": "query",
+                    "params": {
+                      "query": "SELECT * WHERE {\n  ?film <http://data.linkedmdb.org/resource/movie/actor> ?actor .\n}",
+                      "endpoint": "http://lmdb/sparql"
+                    },
+                    "operands": []
                   }
                 ]
               },
               {
-                "name": "query-168",
-                "operator": "query",
-                "params": {
-                  "query": "SELECT * WHERE {\n  ?film <http://data.linkedmdb.org/resource/movie/actor> ?actor .\n}",
-                  "endpoint": "http://lmdb/sparql"
-                },
-                "operands": []
-              }
-            ]
-          },
-          {
-            "name": "merge-171",
-            "operator": "MERGE",
-            "params": {},
-            "operands": [
-              {
-                "name": "query-169",
-                "operator": "query",
-                "params": {
-                  "query": "SELECT * WHERE {\n  ?film <http://purl.org/dc/terms/title> ?filmTitle .\n}",
-                  "endpoint": "http://lmdb/sparql"
-                },
-                "operands": []
-              },
-              {
-                "name": "query-170",
-                "operator": "query",
-                "params": {
-                  "query": "SELECT * WHERE {\n  ?film <http://purl.org/dc/terms/title> ?filmTitle .\n}",
-                  "endpoint": "http://swdfood/sparql"
-                },
-                "operands": []
+                "name": "merge-171",
+                "operator": "MERGE",
+                "params": {},
+                "operands": [
+                  {
+                    "name": "query-169",
+                    "operator": "query",
+                    "params": {
+                      "query": "SELECT * WHERE {\n  ?film <http://purl.org/dc/terms/title> ?filmTitle .\n}",
+                      "endpoint": "http://lmdb/sparql"
+                    },
+                    "operands": []
+                  },
+                  {
+                    "name": "query-170",
+                    "operator": "query",
+                    "params": {
+                      "query": "SELECT * WHERE {\n  ?film <http://purl.org/dc/terms/title> ?filmTitle .\n}",
+                      "endpoint": "http://swdfood/sparql"
+                    },
+                    "operands": []
+                  }
+                ]
               }
             ]
           }
@@ -3285,129 +3299,143 @@
         },
         "operands": [
           {
-            "name": "leftjoin-232",
-            "operator": "LEFT_JOIN",
-            "params": {},
+            "name": "order-2",
+            "operator": "ORDER",
+            "params": {
+              "vars": [
+                {
+                  "name": "drugbankDrug",
+                  "desc": false
+                }
+              ]
+            },
             "operands": [
               {
-                "name": "join-230",
-                "operator": "JOIN",
+                "name": "leftjoin-232",
+                "operator": "LEFT_JOIN",
                 "params": {},
                 "operands": [
                   {
-                    "name": "join-229",
+                    "name": "join-230",
                     "operator": "JOIN",
                     "params": {},
                     "operands": [
                       {
-                        "name": "query-218",
-                        "operator": "query",
-                        "params": {
-                          "query": "SELECT * WHERE {\n  ?Drug <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://dbpedia.org/ontology/Drug> .\n}",
-                          "endpoint": "http://dbpedia-subset/sparql"
-                        },
-                        "operands": []
-                      },
-                      {
-                        "name": "merge-227",
-                        "operator": "MERGE",
+                        "name": "join-229",
+                        "operator": "JOIN",
                         "params": {},
                         "operands": [
                           {
-                            "name": "query-219",
+                            "name": "query-218",
                             "operator": "query",
                             "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                              "query": "SELECT * WHERE {\n  ?Drug <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://dbpedia.org/ontology/Drug> .\n}",
                               "endpoint": "http://dbpedia-subset/sparql"
                             },
                             "operands": []
                           },
                           {
-                            "name": "query-220",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://drugbank/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-221",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://geonames/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-222",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://jamendo/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-223",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://kegg/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-224",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://lmdb/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-225",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://nyt/sparql"
-                            },
-                            "operands": []
-                          },
-                          {
-                            "name": "query-226",
-                            "operator": "query",
-                            "params": {
-                              "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
-                              "endpoint": "http://swdfood/sparql"
-                            },
-                            "operands": []
+                            "name": "merge-227",
+                            "operator": "MERGE",
+                            "params": {},
+                            "operands": [
+                              {
+                                "name": "query-219",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://dbpedia-subset/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-220",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://drugbank/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-221",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://geonames/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-222",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://jamendo/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-223",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://kegg/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-224",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://lmdb/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-225",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://nyt/sparql"
+                                },
+                                "operands": []
+                              },
+                              {
+                                "name": "query-226",
+                                "operator": "query",
+                                "params": {
+                                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www.w3.org/2002/07/owl#sameAs> ?Drug .\n}",
+                                  "endpoint": "http://swdfood/sparql"
+                                },
+                                "operands": []
+                              }
+                            ]
                           }
                         ]
+                      },
+                      {
+                        "name": "query-228",
+                        "operator": "query",
+                        "params": {
+                          "query": "SELECT * WHERE {\n  ?InteractionName <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/interactionDrug1> ?drugbankDrug .\n  ?InteractionName <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/interactionDrug2> ?drugbankDrug2 .\n  ?InteractionName <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/text> ?IntEffect .\n}",
+                          "endpoint": "http://drugbank/sparql"
+                        },
+                        "operands": []
                       }
                     ]
                   },
                   {
-                    "name": "query-228",
+                    "name": "query-231",
                     "operator": "query",
                     "params": {
-                      "query": "SELECT * WHERE {\n  ?InteractionName <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/interactionDrug1> ?drugbankDrug .\n  ?InteractionName <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/interactionDrug2> ?drugbankDrug2 .\n  ?InteractionName <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/text> ?IntEffect .\n}",
+                      "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/affectedOrganism> \"Humans and other mammals\" .\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/description> ?description .\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/structure> ?structure .\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/casRegistryNumber> ?casRegistryNumber .\n}",
                       "endpoint": "http://drugbank/sparql"
                     },
                     "operands": []
                   }
                 ]
-              },
-              {
-                "name": "query-231",
-                "operator": "query",
-                "params": {
-                  "query": "SELECT * WHERE {\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/affectedOrganism> \"Humans and other mammals\" .\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/description> ?description .\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/structure> ?structure .\n  ?drugbankDrug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/casRegistryNumber> ?casRegistryNumber .\n}",
-                  "endpoint": "http://drugbank/sparql"
-                },
-                "operands": []
               }
             ]
           }
@@ -3824,57 +3852,105 @@
     },
     "operands": [
       {
-        "name": "join-52",
-        "operator": "JOIN",
-        "params": {},
+        "name": "order-3",
+        "operator": "ORDER",
+        "params": {
+          "vars": [
+            {
+              "name": "patient",
+              "desc": false
+            }
+          ]
+        },
         "operands": [
           {
-            "name": "join-51",
+            "name": "join-52",
             "operator": "JOIN",
             "params": {},
             "operands": [
               {
-                "name": "join-50",
+                "name": "join-51",
                 "operator": "JOIN",
                 "params": {},
                 "operands": [
                   {
-                    "name": "query-40",
-                    "operator": "query",
-                    "params": {
-                      "query": "SELECT ?patient WHERE {\n  ?patient <http://tcga.deri.ie/schema/vital_status> \"Dead\" .\n  ?patient <http://tcga.deri.ie/schema/bcr_drug_barcode> ?drug .\n  ?drug <http://tcga.deri.ie/schema/drug_name> \"Tarceva\" .\n  ?patient <http://tcga.deri.ie/schema/age_at_initial_pathologic_diagnosis> ?age .\n  FILTER(?age <= \"51\"^^<http://www.w3.org/2001/XMLSchema#integer>)}",
-                      "endpoint": "http://linkedtcga-a/sparql"
-                    },
-                    "operands": []
+                    "name": "join-50",
+                    "operator": "JOIN",
+                    "params": {},
+                    "operands": [
+                      {
+                        "name": "query-40",
+                        "operator": "query",
+                        "params": {
+                          "query": "SELECT ?patient WHERE {\n  ?patient <http://tcga.deri.ie/schema/vital_status> \"Dead\" .\n  ?patient <http://tcga.deri.ie/schema/bcr_drug_barcode> ?drug .\n  ?drug <http://tcga.deri.ie/schema/drug_name> \"Tarceva\" .\n  ?patient <http://tcga.deri.ie/schema/age_at_initial_pathologic_diagnosis> ?age .\n  FILTER(?age <= \"51\"^^<http://www.w3.org/2001/XMLSchema#integer>)}",
+                          "endpoint": "http://linkedtcga-a/sparql"
+                        },
+                        "operands": []
+                      },
+                      {
+                        "name": "merge-44",
+                        "operator": "MERGE",
+                        "params": {},
+                        "operands": [
+                          {
+                            "name": "query-41",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT ?patient WHERE {\n  ?s <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                              "endpoint": "http://linkedtcga-m/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-42",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT ?patient WHERE {\n  ?s <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                              "endpoint": "http://linkedtcga-e/sparql"
+                            },
+                            "operands": []
+                          },
+                          {
+                            "name": "query-43",
+                            "operator": "query",
+                            "params": {
+                              "query": "SELECT ?patient WHERE {\n  ?s <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                              "endpoint": "http://linkedtcga-a/sparql"
+                            },
+                            "operands": []
+                          }
+                        ]
+                      }
+                    ]
                   },
                   {
-                    "name": "merge-44",
+                    "name": "merge-48",
                     "operator": "MERGE",
                     "params": {},
                     "operands": [
                       {
-                        "name": "query-41",
+                        "name": "query-45",
                         "operator": "query",
                         "params": {
-                          "query": "SELECT ?patient WHERE {\n  ?s <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                          "query": "SELECT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?results .\n}",
                           "endpoint": "http://linkedtcga-m/sparql"
                         },
                         "operands": []
                       },
                       {
-                        "name": "query-42",
+                        "name": "query-46",
                         "operator": "query",
                         "params": {
-                          "query": "SELECT ?patient WHERE {\n  ?s <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                          "query": "SELECT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?results .\n}",
                           "endpoint": "http://linkedtcga-e/sparql"
                         },
                         "operands": []
                       },
                       {
-                        "name": "query-43",
+                        "name": "query-47",
                         "operator": "query",
                         "params": {
-                          "query": "SELECT ?patient WHERE {\n  ?s <http://tcga.deri.ie/schema/bcr_patient_barcode> ?patient .\n}",
+                          "query": "SELECT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?results .\n}",
                           "endpoint": "http://linkedtcga-a/sparql"
                         },
                         "operands": []
@@ -3884,49 +3960,15 @@
                 ]
               },
               {
-                "name": "merge-48",
-                "operator": "MERGE",
-                "params": {},
-                "operands": [
-                  {
-                    "name": "query-45",
-                    "operator": "query",
-                    "params": {
-                      "query": "SELECT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?results .\n}",
-                      "endpoint": "http://linkedtcga-m/sparql"
-                    },
-                    "operands": []
-                  },
-                  {
-                    "name": "query-46",
-                    "operator": "query",
-                    "params": {
-                      "query": "SELECT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?results .\n}",
-                      "endpoint": "http://linkedtcga-e/sparql"
-                    },
-                    "operands": []
-                  },
-                  {
-                    "name": "query-47",
-                    "operator": "query",
-                    "params": {
-                      "query": "SELECT * WHERE {\n  ?patient <http://tcga.deri.ie/schema/result> ?results .\n}",
-                      "endpoint": "http://linkedtcga-a/sparql"
-                    },
-                    "operands": []
-                  }
-                ]
+                "name": "query-49",
+                "operator": "query",
+                "params": {
+                  "query": "SELECT * WHERE {\n  ?results <http://tcga.deri.ie/schema/beta_value> ?methylationValue .\n}",
+                  "endpoint": "http://linkedtcga-m/sparql"
+                },
+                "operands": []
               }
             ]
-          },
-          {
-            "name": "query-49",
-            "operator": "query",
-            "params": {
-              "query": "SELECT * WHERE {\n  ?results <http://tcga.deri.ie/schema/beta_value> ?methylationValue .\n}",
-              "endpoint": "http://linkedtcga-m/sparql"
-            },
-            "operands": []
           }
         ]
       }

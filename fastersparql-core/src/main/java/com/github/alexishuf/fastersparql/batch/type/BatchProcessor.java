@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.type;
 
+import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.emit.*;
 import com.github.alexishuf.fastersparql.emit.async.Stateful;
 import com.github.alexishuf.fastersparql.emit.exceptions.MultipleRegistrationUnsupportedException;
@@ -31,6 +32,7 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
 
     protected @Nullable Emitter<B, ?> upstream;
     protected @MonotonicNonNull Receiver<B> downstream;
+    public @Nullable BatchProcessor<B, ?> before;
     public final BatchType<B> batchType;
     public final Vars vars;
     public Vars bindableVars = Vars.EMPTY;
@@ -39,11 +41,13 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
 
     /* --- --- --- lifecycle --- --- --- */
 
-    public BatchProcessor(BatchType<B> batchType, Vars outVars, int initState, Flags flags) {
+    public BatchProcessor(BatchType<B> batchType, Vars outVars, int initState, Flags flags,
+                          @Nullable Orphan<? extends BatchProcessor<B, ?>> before) {
         super(initState, flags);
         assert flags.contains(PROC_FLAGS);
         this.batchType = batchType;
         this.vars      = outVars;
+        this.before    = before == null ? null : before.takeOwnership(this);
     }
 
     @Override protected void onPendingRelease() {
@@ -52,6 +56,7 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
 
     @Override protected void doRelease() {
         Owned.safeRecycle(upstream, this);
+        Owned.safeRecycle(before, this);
         super.doRelease();
     }
 
@@ -70,6 +75,15 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
      * @return a batch with the result of the processing, which may be {@code b} itself.
      */
     public abstract Orphan<B> processInPlace(Orphan<B> b);
+
+    /**
+     * Some processors will accumulate state while returning empty batches from
+     * {@link #processInPlace(Orphan)}. For such processors, this method returns an iterator that
+     * iterates over the result rows of the processor. This is useful for implementing
+     * {@code ORDER BY}: {@link #processInPlace(Orphan)} always returns zero rows, but once
+     * the upstream has been exhausted, this method returns a iterator over the sorted rows.
+     */
+    public @Nullable BIt<B> terminalResults() {return null;}
 
     /**
      * {@link Emitter#cancel()}s upstream, but treat {@link #onCancelled()} as
@@ -135,6 +149,8 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
             stats.onRebind(binding);
         if (upstream != null)
             upstream.rebind(binding);
+        if (before != null)
+            before.rebind(binding);
         if (ResultJournal.ENABLED)
             ResultJournal.rebindEmitter(this, binding);
     }
@@ -146,7 +162,7 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
     @Override public boolean     isFailed() { return isFailed(state()); }
     @Override public boolean isTerminated() { return (state()&IS_TERM) != 0; }
 
-    @Override public final boolean cancel() {
+    @Override public boolean cancel() {
         if (upstream == null) {
             if (moveStateRelease(state(), CANCELLED))
                 markDelivered(CANCELLED);
@@ -228,7 +244,7 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
         }
     }
 
-    @Override public final void onComplete() {
+    @Override public void onComplete() {
         try {
             if (moveStateRelease(statePlain(), COMPLETED)) {
                 if (downstream == null) throw new NoDownstreamException(this);
@@ -239,7 +255,7 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
         }
     }
 
-    @Override public final void onCancelled() {
+    @Override public void onCancelled() {
         int st = state();
         try {
             if (downstream == null)
@@ -258,7 +274,7 @@ public abstract class BatchProcessor<B extends Batch<B>, P extends BatchProcesso
         }
     }
 
-    @Override public final void onError(Throwable cause) {
+    @Override public void onError(Throwable cause) {
         try {
             if (moveStateRelease(statePlain(), FAILED)) {
                 if (downstream == null) throw new NoDownstreamException(this);

@@ -256,9 +256,9 @@ public abstract sealed class Plan
                         case MODIFIER -> {
                             for (Expr e : ((Modifier)o).filters) {
                                 out.newline(indent);
-                                if (e instanceof Expr.Exists ex) {
-                                    out.append(ex.negate() ? NOT_EXISTS_SP : EXISTS_SP);
-                                    ex.filter().groupGraphPattern(out, indent, assigner);
+                                if (e instanceof Expr.Exists(Plan filter, boolean negate)) {
+                                    out.append(negate ? NOT_EXISTS_SP : EXISTS_SP);
+                                    filter.groupGraphPattern(out, indent, assigner);
                                 } else {
                                     e.toSparql(out.append(FILTER_SP), assigner);
                                 }
@@ -387,21 +387,21 @@ public abstract sealed class Plan
     @Override public Plan toDistinct(DistinctType distinct) {
         if (this instanceof Modifier m) {
             if (m.distinct == distinct) return m;
-            return new Modifier(m.left, m.projection, distinct, m.offset, m.limit, m.filters);
+            return new Modifier(m.left, m.orderBy, m.projection, distinct, m.offset, m.limit, m.filters);
         }
-        return new Modifier(this, null, distinct, 0, Long.MAX_VALUE, null);
+        return new Modifier(this, null, null, distinct, 0, Long.MAX_VALUE, null);
     }
 
     @Override public Plan toAsk() {
         if (this instanceof Modifier m) {
             if (m.limit == 1 && m.projection == Vars.EMPTY)
                 return this;
-            return new Modifier(m.left, Vars.EMPTY, null, m.offset, 1, m.filters);
+            return new Modifier(m.left, null, Vars.EMPTY, null, m.offset, 1, m.filters);
         } else if (this instanceof Query q) {
             if (q.sparql.isAsk()) return this;
             return new Query(q.sparql.toAsk(), q.client);
         }
-        return new Modifier(this, Vars.EMPTY, null, 0, 1, null);
+        return new Modifier(this, null, Vars.EMPTY, null, 0, 1, null);
     }
 
     /**
@@ -437,8 +437,9 @@ public abstract sealed class Plan
         Plan copy = copy();
         if (this instanceof Modifier m) {
             Modifier cm = (Modifier) copy;
+            if (m.orderBy    !=                       null) cm.orderBy    = new OrderBy(m.orderBy);
             if (m.filters    instanceof ArrayList<Expr> al) cm.filters    = new ArrayList<>(al);
-            if (m.projection instanceof Vars.Mutable     v) cm.projection =    Vars.fromSet(v);
+            if (m.projection instanceof Vars.Mutable     v) cm.projection =     Vars.fromSet(v);
         } else if (this instanceof Join j && j.projection instanceof Vars.Mutable v) {
             ((Join)copy).projection = Vars.fromSet(v);
         }
@@ -476,6 +477,14 @@ public abstract sealed class Plan
                             copied = true;
                         }
                         m.projection = projection.minus(bVars);
+                    }
+                    OrderBy orderBy = m.orderBy;
+                    if (orderBy != null && orderBy.intersects(bVars)){
+                        if (!copied) {
+                            m = m.copy(null);
+                            copied = true;
+                        }
+                        m.orderBy = orderBy.minus(bVars);
                     }
                     List<Expr> boundFilters = m.boundFilters(binding);
                     if (boundFilters != m.filters) {

@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.batch.type;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -53,27 +54,48 @@ public class UnitBatchType extends BatchType<UnitBatch> {
     }
 
     @Override
+    public @Nullable Orphan<? extends BatchMerger<UnitBatch, ?>>
+    projector(Vars out, Vars in,
+              @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
+        short[] sources = BatchMerger.projectorSources(out, in);
+        if (sources == null) {
+            if (before != null) {
+                Owned.safeRecycle(before.takeOwnership(this), this);
+                throw new IllegalArgumentException("nop projection with before != null");
+            }
+            return null;
+        }
+        return UnitBatch.Merger.create(out, sources, before);
+    }
+
+    @Override
     public @Nullable Orphan<UnitBatch.Merger> projector(Vars out, Vars in) {
         short[] sources = BatchMerger.projectorSources(out, in);
-        return sources == null ? null : UnitBatch.Merger.create(out, sources);
+        return sources == null ? null : UnitBatch.Merger.create(out, sources, null);
     }
 
     @Override
-    public @NonNull Orphan<UnitBatch.Merger> merger(Vars out, Vars left, Vars right) {
-        return UnitBatch.Merger.create(out, BatchMerger.mergerSources(out, left, right));
+    public @NonNull Orphan<UnitBatch.Merger>
+    merger(Vars out, Vars left, Vars right,
+           @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
+        return UnitBatch.Merger.create(out, BatchMerger.mergerSources(out, left, right), before);
     }
 
     @Override
-    public Orphan<UnitBatch.Filter> filter(Vars out, Vars in,
-                                           Orphan<? extends RowFilter<UnitBatch, ?>> filter,
-                                           Orphan<? extends BatchFilter<UnitBatch, ?>> before) {
+    public @NonNull Orphan<? extends BatchMerger<UnitBatch, ?>>
+    merger(Vars out, Vars left, Vars right) {return merger(out, left, right, null);}
+
+    @Override
+    public Orphan<UnitBatch.Filter>
+    filter(Vars out, Vars in, Orphan<? extends RowFilter<UnitBatch, ?>> filter,
+           @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
         return UnitBatch.Filter.create(out, projector(out, in), filter, before);
     }
 
     @Override
-    public Orphan<UnitBatch.Filter> filter(Vars vars,
-                                           Orphan<? extends RowFilter<UnitBatch, ?>> filter,
-                                           Orphan<? extends BatchFilter<UnitBatch, ?>> before) {
+    public Orphan<UnitBatch.Filter>
+    filter(Vars vars, Orphan<? extends RowFilter<UnitBatch, ?>> filter,
+           @Nullable Orphan<? extends BatchProcessor<UnitBatch, ?>> before) {
         return UnitBatch.Filter.create(vars, null, filter, before);
     }
 }

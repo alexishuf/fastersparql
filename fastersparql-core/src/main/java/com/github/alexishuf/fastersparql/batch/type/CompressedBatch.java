@@ -1290,8 +1290,9 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         private FinalSegmentRope[] leftShared;
         private final short outColumns;
 
-        public Merger(BatchType<CompressedBatch> batchType, Vars outVars, short[] sources) {
-            super(batchType, outVars, sources);
+        public Merger(BatchType<CompressedBatch> batchType, Vars outVars, short[] sources,
+                      @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
+            super(batchType, outVars, sources, before);
             int leftSize = 0;
             for (short s : sources) {
                 if (s > leftSize) leftSize = s;
@@ -1308,8 +1309,9 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         }
 
         protected static final class Concrete extends Merger implements Orphan<Merger> {
-            public Concrete(BatchType<CompressedBatch> batchType, Vars outVars, short[] sources) {
-                super(batchType, outVars, sources);
+            public Concrete(BatchType<CompressedBatch> batchType, Vars outVars, short[] sources,
+                            @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
+                super(batchType, outVars, sources, before);
             }
             @Override public Merger takeOwnership(Object o) {return takeOwnership0(o);}
         }
@@ -1539,30 +1541,34 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         @Override public void onBatch(Orphan<CompressedBatch> batch) {
             if (batch != null) {
                 int rcvRows = peekTotalRows(batch);
+                if (before != null)
+                    batch = before.processInPlace(batch);
                 if (beforeOnBatch(batch))
                     afterOnBatch(projectInPlace(batch), rcvRows);
             }
         }
         @Override public void onBatchByCopy(CompressedBatch batch) {
             if (batch != null) {
-                int rcvRows = batch.totalRows();
-                if (beforeOnBatch(batch))
-                    afterOnBatch(project(fillingBatch(), batch), rcvRows);
+                if (before != null) {
+                    onBatch(batch.dup());
+                } else {
+                    int rcvRows = batch.totalRows();
+                    if (beforeOnBatch(batch))
+                        afterOnBatch(project(fillingBatch(), batch), rcvRows);
+                }
             }
         }
     }
 
     public static abstract sealed class Filter extends BatchFilter<CompressedBatch, Filter> {
         private final Merger projector;
-        private final Filter beforeFilter;
         public Filter(BatchType<CompressedBatch> batchType, Vars outVars,
                       @Nullable Orphan<Merger> projector,
                       Orphan<? extends RowFilter<CompressedBatch, ?>> rowFilter,
-                      @Nullable Orphan<? extends BatchFilter<CompressedBatch, ?>> before) {
+                      @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
             super(batchType, outVars, rowFilter, before);
             this.projector = Orphan.takeOwnership(projector, this);
             assert this.projector == null || this.projector.vars.equals(outVars);
-            this.beforeFilter = (Filter)this.before;
         }
 
         @Override protected void doRelease() {
@@ -1574,7 +1580,7 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
             public Concrete(BatchType<CompressedBatch> batchType, Vars outVars,
                             @Nullable Orphan<Merger> projector,
                             Orphan<? extends RowFilter<CompressedBatch, ?>> rowFilter,
-                            @Nullable Orphan<? extends BatchFilter<CompressedBatch, ?>> before) {
+                            @Nullable Orphan<? extends BatchProcessor<CompressedBatch, ?>> before) {
                 super(batchType, outVars, projector, rowFilter, before);
             }
             @Override public Filter takeOwnership(Object o) {return takeOwnership0(o);}
@@ -1587,14 +1593,14 @@ public abstract class CompressedBatch extends Batch<CompressedBatch> {
         @Override public void onBatch(Orphan<CompressedBatch> batch) {
             if (batch != null) {
                 int rcvRows = Batch.peekTotalRows(batch);
+                if (before != null)
+                    batch = before.processInPlace(batch);
                 if (beforeOnBatch(batch))
                     afterOnBatch(filterInPlace(batch), rcvRows);
             }
         }
 
         @Override public Orphan<CompressedBatch> filterInPlace(Orphan<CompressedBatch> inOrphan) {
-            if (beforeFilter != null)
-                inOrphan = beforeFilter.filterInPlace(inOrphan);
             if (inOrphan == null)
                 return null;
             var p = this.projector;

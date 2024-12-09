@@ -3,10 +3,7 @@ package com.github.alexishuf.fastersparql.operators.plan;
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
 import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
-import com.github.alexishuf.fastersparql.batch.type.Batch;
-import com.github.alexishuf.fastersparql.batch.type.BatchProcessor;
-import com.github.alexishuf.fastersparql.batch.type.BatchType;
-import com.github.alexishuf.fastersparql.batch.type.RowFilter;
+import com.github.alexishuf.fastersparql.batch.type.*;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -32,7 +29,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import static com.github.alexishuf.fastersparql.FSProperties.*;
+import static com.github.alexishuf.fastersparql.FSProperties.opportunisticDedup;
+import static com.github.alexishuf.fastersparql.FSProperties.weakenDistinct;
 import static com.github.alexishuf.fastersparql.batch.dedup.Dedup.strongUntil;
 import static com.github.alexishuf.fastersparql.batch.dedup.Dedup.weak;
 import static com.github.alexishuf.fastersparql.sparql.DistinctType.STRONG;
@@ -43,25 +41,28 @@ import static com.github.alexishuf.fastersparql.sparql.expr.SparqlSkip.*;
 public final class Modifier extends Plan {
     private static final Logger log = LoggerFactory.getLogger(Modifier.class);
 
+    public @Nullable OrderBy orderBy;
     public @Nullable Vars projection;
     public @Nullable DistinctType distinct;
     public long offset, limit;
     public List<Expr> filters;
 
-    public Modifier(Plan in, @Nullable Vars projection, @Nullable DistinctType distinct,
+    public Modifier(Plan in, @Nullable OrderBy orderBy, @Nullable Vars projection,
+                    @Nullable DistinctType distinct,
                     long offset, long limit, List<Expr> filters) {
         super(Operator.MODIFIER);
-        this.left = in;
+        this.left       = in;
+        this.orderBy    = orderBy;
         this.projection = projection;
-        this.distinct = distinct;
-        this.offset = offset;
-        this.limit = limit;
-        this.filters = filters == null ? List.of() : filters;
+        this.distinct   = distinct;
+        this.offset     = offset;
+        this.limit      = limit;
+        this.filters    = filters == null ? List.of() : filters;
     }
 
     @Override public Modifier copy(@Nullable Plan[] ops) {
         Plan left = ops == null ? this.left : ops[0];
-        return new Modifier(left, projection, distinct, offset, limit, filters);
+        return new Modifier(left, orderBy, projection, distinct, offset, limit, filters);
     }
 
     public @Nullable Vars       projection() { return projection; }
@@ -82,6 +83,8 @@ public final class Modifier extends Plan {
     private static final byte[] DISTINCT = "Distinct".getBytes(StandardCharsets.UTF_8);
     private static final byte[] PROJECT = "Project".getBytes(StandardCharsets.UTF_8);
     private static final byte[] FILTER = "Filter".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] ORDER = "Order".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] DESC = "DESC".getBytes(StandardCharsets.UTF_8);
     private static final byte[] LBRA_WINDOW = "[window=".getBytes(StandardCharsets.UTF_8);
 
     @Override public void algebraName(MutableRope dst) {
@@ -97,6 +100,14 @@ public final class Modifier extends Plan {
             dst.append(PROJECT).append(projection).append('(');
         if (!filters.isEmpty())
             dst.append(FILTER).append(filters).append('(');
+        if (OrderBy.nonEmpty(orderBy)) {
+            dst.append(ORDER).append('[');
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                if (orderBy.isDesc(i)) dst.append(DESC);
+                dst.append(orderBy.get(i));
+            }
+            dst.append(']').append('(');
+        }
     }
 
     @Override public boolean equals(Object o) {
@@ -121,6 +132,7 @@ public final class Modifier extends Plan {
             if (limit  > 0 && limit < Long.MAX_VALUE) sb.append(')');
             if (offset > 0)                           sb.append(')');
             if (projection != null)                   sb.append(')');
+            if (OrderBy.nonEmpty(orderBy))            sb.append(')');
 
             return sb.toString();
         }
@@ -147,10 +159,12 @@ public final class Modifier extends Plan {
                     sb.append('*');
                 }
                 groupGraphPattern(sb, 0, PrefixAssigner.NOP);
+                if (orderBy != null && !orderBy.isEmpty())
+                    orderBy.append(sb.append('\n'));
                 if (offset > 0)
-                    sb.append(' ').append(OFFSET_u8).append(' ').append(offset);
+                    sb.append('\n').append(OFFSET_u8).append(' ').append(offset);
                 if (limit < Long.MAX_VALUE)
-                    sb.append(' ').append(LIMIT_u8).append(' ').append(limit);
+                    sb.append('\n').append(LIMIT_u8).append(' ').append(limit);
             }
             return FinalSegmentRope.asFinal(sb);
         }
@@ -184,6 +198,10 @@ public final class Modifier extends Plan {
         var pDedup = DistinctType.compareTo(distinct, weakDedupIn ? WEAK : null) > 0
                   || projection != null && !projection.equals(inVars)
                    ? distinct : null;
+        if (OrderBy.nonEmpty(orderBy)) {
+            in = BatchSorter.create(type, this)
+                            .takeOwnership(this).subscribeTo(in).releaseOwnership(this);
+        }
         var p = processorFor(type, inVars, null, pDedup);
         if (p == null)
             return in;
@@ -193,14 +211,23 @@ public final class Modifier extends Plan {
     public <B extends Batch<B>>
     BIt<B> executeFor(BIt<B> in, @Nullable Binding binding, boolean weakDedup) {
         var distinct = weakDedup ? WEAK : this.distinct;
-        var processor = processorFor(in.batchType(), in.vars(), binding, distinct);
-        if (processor == null) return in;
-        return new ProcessorBIt<>(in, processor, Metrics.createIf(this));
+        BatchType<B> bt = in.batchType();
+        if (OrderBy.nonEmpty(orderBy))
+            in = new ProcessorBIt<>(in, BatchSorter.create(bt, this), null);
+        var p = processorFor(bt, in.vars(), binding, distinct);
+        if (p == null)
+            return in;
+        return new ProcessorBIt<>(in, p, Metrics.createIf(this));
     }
 
     public <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     processed(Orphan<? extends Emitter<B, ?>> in) {
-        var p = processorFor(Emitter.peekBatchType(in), Emitter.peekVars(in), null, distinct);
+        BatchType<B> bt = Emitter.peekBatchType(in);
+        if (OrderBy.nonEmpty(orderBy)) {
+            in = BatchSorter.create(bt, this)
+                            .takeOwnership(this).subscribeTo(in).releaseOwnership(this);
+        }
+        var p = processorFor(bt, Emitter.peekVars(in), null, distinct);
         if (p == null)
             return in;
         return p.takeOwnership(this).subscribeTo(in).releaseOwnership(this);
@@ -217,35 +244,35 @@ public final class Modifier extends Plan {
 
         Orphan<? extends Dedup<B, ?>> dedup = null;
         if      (cols == 0)                               limit = distinct != null ? 1 : limit;
-        else if (distinct == STRONG && !weakenDistinct()) dedup = strongUntil(bt, distinctCapacity(), cols);
+        else if (distinct == STRONG && !weakenDistinct()) dedup = strongUntil(bt, cols);
         else if (distinct != null)                        dedup = weak(bt, cols, distinct);
 
-        Orphan<? extends BatchProcessor<B, ?>> processor;
+        Orphan<? extends BatchProcessor<B, ?>> proc;
         boolean slice = limit < Long.MAX_VALUE || offset > 0;
         if (!filters.isEmpty()) {
             Orphan<? extends RowFilter<B, ?>> rf;
             if (slice && dedup == null)
-                rf = new SlicingFiltering.Concrete<>(offset, limit, bt, inVars, filters);
+                rf = SlicingFiltering.create(offset, limit, bt, inVars, filters);
             else
-                rf = new Filtering.Concrete<>(bt, inVars, filters);
+                rf = Filtering.create(bt, inVars, filters);
             var filter = bt.filter(outVars, inVars, rf);
-            processor = filter;
+            proc = filter;
             if (dedup != null) {
                 Orphan<? extends RowFilter<B, ?>> dedupRF;
                 if (slice)
-                    dedupRF = new SlicingDedup.Concrete<>(offset, limit, dedup);
+                    dedupRF = SlicingDedup.create(offset, limit, dedup);
                 else
                     dedupRF = dedup;
-                processor = bt.filter(outVars, dedupRF, filter);
+                proc = bt.filter(outVars, dedupRF, filter);
             }
         } else if (dedup == null) {
-            processor = slice ? bt.filter(outVars, inVars, new Slicing.Concrete<>(offset, limit))
-                              : bt.projector(outVars, inVars);
+            proc = slice ? bt.filter(outVars, inVars, Slicing.create(offset, limit))
+                         : bt.projector(outVars, inVars);
         } else {
-            var rf = slice ? new SlicingDedup.Concrete<>(offset, limit, dedup) : dedup;
-            processor = bt.filter(outVars, inVars, rf);
+            var rf = slice ? SlicingDedup.create(offset, limit, dedup) : dedup;
+            proc   = bt.filter(outVars, inVars, rf);
         }
-        return processor;
+        return proc;
     }
 
 
@@ -262,15 +289,16 @@ public final class Modifier extends Plan {
         private final long offset, limit;
         private long skip, allowed;
 
-        public Slicing(long offset, long limit) {
+        private Slicing(long offset, long limit) {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-
+        public static <B extends Batch<B>> Orphan<Slicing<B>> create(long offset, long limit) {
+            return new Concrete<>(offset, limit);
+        }
         @Override public @Nullable Slicing<B> recycle(Object currentOwner) {
             return internalMarkGarbage(currentOwner);
         }
-
         private static final class Concrete<B extends Batch<B>>
                 extends Slicing<B> implements Orphan<Slicing<B>> {
             public Concrete(long offset, long limit) {super(offset, limit);}
@@ -319,13 +347,15 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-
+        public static <B extends Batch<B>> Orphan<SlicingDedup<B>>
+        create(long offset, long limit, Orphan<? extends Dedup<B, ?>> dedup) {
+            return new Concrete<>(offset, limit, dedup);
+        }
         @Override public @Nullable SlicingDedup<B> recycle(Object currentOwner) {
             internalMarkRecycled(currentOwner);
             dedup.recycle(this);
             return null;
         }
-
         private static final class Concrete<B extends Batch<B>> extends SlicingDedup<B>
                 implements Orphan<SlicingDedup<B>> {
             public Concrete(long offset, long limit, Orphan<? extends Dedup<B, ?>> dedup) {
@@ -375,7 +405,10 @@ public final class Modifier extends Plan {
             skip = this.offset = offset;
             allowed = this.limit = limit;
         }
-
+        public static <B extends Batch<B>> Orphan<SlicingFiltering<B>>
+        create(long offset, long limit, BatchType<B> bt, Vars inVars, List<Expr> filters) {
+            return new Concrete<>(offset, limit, bt, inVars, filters);
+        }
         private static final class Concrete<B extends Batch<B>>
                 extends SlicingFiltering<B>
                 implements Orphan<SlicingFiltering<B>> {
@@ -442,7 +475,10 @@ public final class Modifier extends Plan {
             this.filterVars = new Vars.Mutable(10);
             setFilters(filters);
         }
-
+        public static <B extends Batch<B>, R extends Filtering<B, R>> Orphan<R>
+        create(BatchType<B> bt, Vars inVars, List<Expr> filters) {
+            return new Concrete<>(bt, inVars, filters);
+        }
         @Override public @Nullable R recycle(Object currentOwner) {
             internalMarkGarbage(currentOwner);
             for (ExprEvaluator e : evaluators)

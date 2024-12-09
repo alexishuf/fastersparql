@@ -7,10 +7,7 @@ import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PrivateRopeFactory;
 import com.github.alexishuf.fastersparql.model.rope.Rope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
-import com.github.alexishuf.fastersparql.operators.plan.Join;
-import com.github.alexishuf.fastersparql.operators.plan.Plan;
-import com.github.alexishuf.fastersparql.operators.plan.TriplePattern;
-import com.github.alexishuf.fastersparql.operators.plan.Values;
+import com.github.alexishuf.fastersparql.operators.plan.*;
 import com.github.alexishuf.fastersparql.sparql.DistinctType;
 import com.github.alexishuf.fastersparql.sparql.InvalidSparqlException;
 import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
@@ -321,6 +318,7 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
 
     private Plan pModifiers(Plan where) {
         long offset = 0;
+        OrderBy order = null;
         for (byte c = skipWS(); c != '\0'; c = skipWS()) {
             switch (c) {
                 case 'l', 'L' -> {
@@ -328,16 +326,42 @@ public sealed abstract class SparqlParser extends AbstractOwned<SparqlParser> {
                     limit = pLong();
                 }
                 case 'o', 'O' -> {
-                    require(OFFSET_u8);
-                    offset = pLong();
+                    if (poll(ORDER_u8, Rope.WS)) {
+                        require(BY_u8);
+                        pOrderByArg(order = new OrderBy(), false);
+                    } else {
+                        require(OFFSET_u8);
+                        offset = pLong();
+                    }
                 }
                 default -> throw ex("LIMIT/OFFSET", pos);
             }
         }
+        return FS.modifiers(where, order, projection, distinct, offset, limit, List.of());
+    }
 
-        if (limit != Long.MAX_VALUE || offset > 0 || projection != null || distinct != null)
-            return FS.modifiers(where, projection, distinct, offset, limit, List.of());
-        return where;
+    private void pOrderByArg(OrderBy order, boolean desc) {
+        for (byte c; Rope.contains(ORDER_BY_ARG_FIRST, c=skipWS());) {
+            switch (c) {
+                case '$', '?' -> {
+                    order.add(pVarName(), desc);
+                    desc = false;
+                }
+                case 'A' -> {
+                    require(ASC_u8);
+                    desc = false;
+                }
+                case 'D' -> {
+                    require(DESC_u8);
+                    desc = true;
+                }
+                case '(' -> {
+                    ++pos;
+                    pOrderByArg(order, desc);
+                    require(')');
+                }
+            }
+        }
     }
 
     private class GroupParser {

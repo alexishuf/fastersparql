@@ -631,7 +631,12 @@ public class StoreSparqlClient extends AbstractSparqlClient
     private static boolean canExecuteRightBGP(Plan right, int rIdx) {
         for (Plan o; rIdx < right.opCount(); ++rIdx) {
             o = right.op(rIdx);
-            if (o.type != TRIPLE && (o.type != MODIFIER || o.left().type != TRIPLE)) return false;
+            if (o.type != TRIPLE) {
+                if (!(o instanceof Modifier m))
+                    return false;
+                if (o.left().type != TRIPLE || OrderBy.nonEmpty(m.orderBy))
+                    return false;
+            }
         }
         return true;
     }
@@ -752,7 +757,7 @@ public class StoreSparqlClient extends AbstractSparqlClient
             }
             op = m.left();
         }
-        return new Modifier(op, null, distinctType, 0, Long.MAX_VALUE, filters);
+        return new Modifier(op, null, null, distinctType, 0, Long.MAX_VALUE, filters);
     }
 
     /* --- --- --- emitters --- --- --- */

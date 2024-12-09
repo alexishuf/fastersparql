@@ -13,9 +13,12 @@ import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.Objects;
+
 
 public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> {
     protected final BatchProcessor<B, ?> processor;
+    private @Nullable BIt<B> terminal;
 
     public ProcessorBIt(BIt<B> delegate, Orphan<? extends BatchProcessor<B, ?>> processor,
                         @Nullable MetricsFeeder metrics) {
@@ -41,11 +44,19 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
 
     @Override protected void cleanup(@Nullable Throwable error) {
         Owned.safeRecycle(processor, this);
-        delegate.tryCancel();
+        try {
+            delegate.tryCancel();
+        } finally {
+            if (terminal != null)
+                terminal.tryCancel();
+        }
     }
 
     @Override public @Nullable Orphan<B> nextBatch(Orphan<B> orphan) {
+        if (terminal != null)
+            return nextBatchTerminal(orphan);
         try (var g = new Guard.BatchGuard<>(orphan, this)) {
+            BIt<B> delegate = this.delegate;
             while (g.nextBatch(delegate) != null) {
                 lock();
                 try {
@@ -60,12 +71,42 @@ public class ProcessorBIt<B extends Batch<B>> extends DelegatedControlBIt<B, B> 
                 } finally { unlock(); }
             }
             orphan = g.poll();
-            if   (orphan == null) onTermination(null); //exhausted
-            else                  onNextBatch(orphan);
+            if (orphan == null && (orphan=makeTerminalAndGetNextBatch()) == null)
+                onTermination(null); //exhausted
+            else
+                onNextBatch(orphan);
             return orphan;
         } catch (Throwable t) {
             onTermination(t); //error
             throw t;
         }
+    }
+
+    private @Nullable Orphan<B> nextBatchTerminal(Orphan<B> orphan) {
+        try {
+            orphan = Objects.requireNonNull(terminal).nextBatch(orphan);
+            if (orphan == null)
+                onTermination(null);
+            else
+                onNextBatch(orphan);
+            return orphan;
+        } catch (Throwable t) {
+            onTermination(t);
+            throw t;
+        }
+    }
+
+    private @Nullable Orphan<B> makeTerminalAndGetNextBatch() {
+        lock();
+        try {
+            if (!isTerminated()) {
+                BIt<B> terminal = processor.terminalResults();
+                if (terminal != null) {
+                    this.terminal = terminal;
+                    return terminal.nextBatch(null);
+                }
+            }
+        } finally {unlock();}
+        return null;
     }
 }

@@ -1,5 +1,6 @@
 package com.github.alexishuf.fastersparql.batch.dedup;
 
+import com.github.alexishuf.fastersparql.FSProperties;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.batch.type.RowFilter;
@@ -37,8 +38,12 @@ public abstract class Dedup<B extends Batch<B>, D extends Dedup<B, D>>
     }
 
     public static <B extends Batch<B>>
+    Orphan<BTreeDedup<B>> strongUntil(BatchType<B> bt, int cols) {
+        return strongUntil(bt, FSProperties.distinctCapacity(), cols);
+    }
+    public static <B extends Batch<B>>
     Orphan<BTreeDedup<B>> strongUntil(BatchType<B> bt, int strongCapacity, int cols) {
-        return BTreeDedup.create(bt, cols, strongCapacity);
+        return BTreeDedup.create(bt, cols, strongCapacity, false, null);
     }
 
     public static <B extends Batch<B>>
@@ -86,6 +91,8 @@ public abstract class Dedup<B extends Batch<B>, D extends Dedup<B, D>>
      * @param cols number of columns of subsequent rows to be added.
      */
     public abstract void clear(int cols);
+
+    public final void clear() { clear(cols); }
 
     public final BatchType<B> batchType() { return bt; }
 

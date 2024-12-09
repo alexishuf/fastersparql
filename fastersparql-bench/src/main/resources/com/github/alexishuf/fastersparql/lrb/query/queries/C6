@@ -16,4 +16,4 @@ WHERE
 	nytimes:first_use 		?first_use;
 	nytimes:latest_use 		?latest_use
 }
-#ORDER BY (?actor)
+ORDER BY (?actor)

@@ -801,15 +801,18 @@ public sealed class CABatch extends Batch<CABatch> {
 
     public static abstract sealed class Merger extends BatchMerger<CABatch, Merger> {
         private final short outColumns;
-        public Merger(BatchType<CABatch> batchType, Vars outVars, short[] sources) {
-            super(batchType, outVars, sources);
+        public Merger(BatchType<CABatch> batchType, Vars outVars, short[] sources,
+                      @Nullable Orphan<? extends BatchProcessor<CABatch, ?>> before) {
+            super(batchType, outVars, sources, before);
             outColumns = (short)sources.length;
         }
 
         static final class Concrete extends Merger implements Orphan<Merger> {
-            public Concrete(BatchType<CABatch> batchType, Vars outVars, short[] sources) {
-                super(batchType, outVars, sources);
+            public Concrete(BatchType<CABatch> batchType, Vars outVars, short[] sources,
+                            @Nullable Orphan<? extends BatchProcessor<CABatch, ?>> before) {
+                super(batchType, outVars, sources, before);
             }
+
             @Override public Merger takeOwnership(Object o) {return takeOwnership0(o);}
         }
 
@@ -953,30 +956,34 @@ public sealed class CABatch extends Batch<CABatch> {
         @Override public void onBatch(Orphan<CABatch> batch) {
             if (batch != null) {
                 int rcvRows = peekTotalRows(batch);
+                if (before != null)
+                    batch = before.processInPlace(batch);
                 if (beforeOnBatch(batch))
                     afterOnBatch(projectInPlace(batch), rcvRows);
             }
         }
         @Override public void onBatchByCopy(CABatch batch) {
             if (batch != null) {
-                int rcvRows = batch.totalRows();
-                if (beforeOnBatch(batch))
-                    afterOnBatch(project(fillingBatch(), batch), rcvRows);
+                if (before != null) {
+                    onBatch(batch.dup());
+                } else {
+                    int rcvRows = batch.totalRows();
+                    if (beforeOnBatch(batch))
+                        afterOnBatch(project(fillingBatch(), batch), rcvRows);
+                }
             }
         }
     }
 
     public static abstract sealed class Filter extends BatchFilter<CABatch, Filter> {
-        private final Filter beforeFilter;
         private final Merger projector;
 
         public Filter(BatchType<CABatch> batchType, Vars vars, @Nullable Orphan<Merger> projector,
                       Orphan<? extends RowFilter<CABatch, ?>> rowFilter,
-                      @Nullable Orphan<? extends BatchFilter<CABatch, ?>> before) {
+                      @Nullable Orphan<? extends BatchProcessor<CABatch, ?>> before) {
             super(batchType, vars, rowFilter, before);
             this.projector = Orphan.takeOwnership(projector, this);
             assert this.projector == null || this.projector.vars.equals(vars);
-            this.beforeFilter = (Filter)this.before;
         }
 
         @Override protected void doRelease() {
@@ -988,7 +995,7 @@ public sealed class CABatch extends Batch<CABatch> {
             public Concrete(BatchType<CABatch> batchType, Vars vars,
                             @Nullable Orphan<Merger> projector,
                             Orphan<? extends RowFilter<CABatch, ?>> rowFilter,
-                            @Nullable Orphan<? extends BatchFilter<CABatch, ?>> before) {
+                            @Nullable Orphan<? extends BatchProcessor<CABatch, ?>> before) {
                 super(batchType, vars, projector, rowFilter, before);
             }
             @Override public Filter takeOwnership(Object o) {return takeOwnership0(o);}
@@ -1001,14 +1008,14 @@ public sealed class CABatch extends Batch<CABatch> {
         @Override public void onBatch(Orphan<CABatch> batch) {
             if (batch != null) {
                 int rcvRows = peekTotalRows(batch);
+                if (before != null)
+                    batch = before.processInPlace(batch);
                 if (beforeOnBatch(batch))
                     afterOnBatch(filterInPlace(batch), rcvRows);
             }
         }
 
         @Override public Orphan<CABatch> filterInPlace(Orphan<CABatch> inOrphan) {
-            if (beforeFilter != null)
-                inOrphan = beforeFilter.filterInPlace(inOrphan);
             if (inOrphan == null)
                 return null;
             var p = this.projector;

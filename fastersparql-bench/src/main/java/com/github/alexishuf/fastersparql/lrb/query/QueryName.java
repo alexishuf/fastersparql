@@ -10,6 +10,8 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.PooledSegmentRopeView;
+import com.github.alexishuf.fastersparql.operators.plan.Modifier;
+import com.github.alexishuf.fastersparql.operators.plan.OrderBy;
 import com.github.alexishuf.fastersparql.operators.plan.Plan;
 import com.github.alexishuf.fastersparql.sparql.OpaqueSparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.PooledTermView;
@@ -25,7 +27,6 @@ import java.util.*;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.sparql.expr.Term.Type.LIT;
 import static com.github.alexishuf.fastersparql.sparql.results.ResultsParser.createFor;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 public enum QueryName {
     S1,
@@ -126,28 +127,34 @@ public enum QueryName {
         }
     }
 
-    private static final byte[] LF_ORDER_BY = "\nORDER BY".getBytes(UTF_8);
+//    private static final byte[] LF_ORDER_BY = "\nORDER BY".getBytes(UTF_8);
     public OpaqueSparqlQuery opaque() {
         String path = "queries/" + name();
         try (var is = getClass().getResourceAsStream(path)) {
-            if (is == null) throw new RuntimeException("resource stream "+path+" not found");
-            var sparql = new FinalSegmentRope(is.readAllBytes());
-            int obBegin = sparql.skipUntil(0, sparql.len(), LF_ORDER_BY);
-            if (obBegin != sparql.len()) {
-                try (var unordered = PooledMutableRope.get()) {
-                    unordered.append(sparql, 0, obBegin);
-                    int obEnd = sparql.skipUntil(obBegin + 1, sparql.len, (byte)'\n');
-                    unordered.append(sparql, obEnd, sparql.len);
-                    sparql = FinalSegmentRope.asFinal(unordered);
-                }
-            }
-            return new OpaqueSparqlQuery(sparql);
+            if (is == null)
+                throw new RuntimeException("resource stream "+path+" not found");
+            return new OpaqueSparqlQuery(FinalSegmentRope.asFinal(is.readAllBytes()));
+//            var sparql = new FinalSegmentRope(is.readAllBytes());
+//            int obBegin = sparql.skipUntil(0, sparql.len(), LF_ORDER_BY);
+//            if (obBegin != sparql.len()) {
+//                try (var unordered = PooledMutableRope.get()) {
+//                    unordered.append(sparql, 0, obBegin);
+//                    int obEnd = sparql.skipUntil(obBegin + 1, sparql.len, (byte)'\n');
+//                    unordered.append(sparql, obEnd, sparql.len);
+//                    sparql = FinalSegmentRope.asFinal(unordered);
+//                }
+//            }
+//            return new OpaqueSparqlQuery(sparql);
         } catch (IOException e) {
             throw new RuntimeException("Cannot open resource stream for "+this);
         }
     }
 
     public Plan parsed() { return SparqlParser.parse(opaque()); }
+
+    public @Nullable OrderBy orderBy() {
+        return this != C6 && this != C9 && this != B3 ? null : ((Modifier) parsed()).orderBy;
+    }
 
     public boolean isAmputateNumberNoOp() {return this != C7 && this != C8 && this != C10;}
 

@@ -9,6 +9,9 @@ import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
 import com.github.alexishuf.fastersparql.model.rope.PooledMutableRope;
 import com.github.alexishuf.fastersparql.model.rope.SegmentRope;
+import com.github.alexishuf.fastersparql.operators.plan.OrderBy;
+import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.ResultsSerializer;
 import com.github.alexishuf.fastersparql.sparql.results.serializer.TsvSerializer;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
@@ -20,6 +23,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
@@ -33,6 +37,8 @@ public abstract class QueryChecker<B extends Batch<B>>
     private final boolean sane;
     private @Nullable StrongDedup<CompressedBatch> expected;
     private @Nullable StrongDedup<CompressedBatch> observed;
+    private @Nullable CompressedBatch actualOrdered;
+    private final OrderBy orderBy;
     private final int expectedRows;
     public CompressedBatch unexpected;
     private int rows;
@@ -45,14 +51,16 @@ public abstract class QueryChecker<B extends Batch<B>>
         this.sane = queryName.isAmputateNumberNoOp()
                 && queryName.isExpandUnicodeEscapesNoOp()
                 && queryName.isUnescapeSlashNoOp();
-        var original     = queryName.expected(COMPRESSED);
+        var original   = queryName.expected(COMPRESSED);
         vars           = queryName.parsed().publicVars();
+        orderBy        = queryName.orderBy();
         expectedRows   = original == null ? 0 : original.totalRows();
         init(original);
     }
 
     @Override public @Nullable QueryChecker<B> recycle(Object currentOwner) {
         super.recycle(currentOwner);
+        actualOrdered = Batch.safeRecycle(actualOrdered, this);
         expected = Owned.safeRecycle(expected, this);
         observed = Owned.safeRecycle(observed, this);
         unexpected = Owned.safeRecycle(unexpected, this);
@@ -93,34 +101,72 @@ public abstract class QueryChecker<B extends Batch<B>>
             }
             sb.append(bos.toString(StandardCharsets.UTF_8));
             return sb.toString();
-        } else if (expected != null && observed != null) {
-            int[] missing = {0};
-            StringBuilder sb = new StringBuilder()
-                    .append("Expected rows: ").append(expectedRows)
-                    .append("\nMissing rows:");
-            forEachMissing((b, r) -> {
-                boolean stop = ++missing[0] >= 10;
-                if (!stop) sb.append("\n  ").append(b.toString(r));
-                return !stop;
-            });
-            if (missing[0] == 0)
-                sb.append(" 0");
-            if (missing[0] == 0 && unexpected.rows == 0)
-                return OK;
-            if (missing[0] >= 10)
-                sb.append("\n  +").append(missing[0]-9);
-            sb.append("\nUnexpected rows: ").append(unexpected.totalRows());
-            for (int r = 0, n = Math.min(unexpected.rows, 9); r < n; r++)
-                sb.append("\n  ").append(unexpected.toString(r));
-            if (unexpected.rows > 9)
-                sb.append("\n +").append(unexpected.totalRows()-9);
-            //serialize(new File("/tmp/expected.tsv"), expected);
-            //serialize(new File("/tmp/observed.tsv"), observed);
-            //serialize(new File("/tmp/unexpected.tsv"), unexpected);
-            return sb.toString();
         } else if (rows == 0) {
             return "Results are unknown, but got no rows";
         } else {
+            if (expected != null && observed != null) {
+                int[] missing = {0};
+                StringBuilder sb = new StringBuilder()
+                        .append("Expected rows: ").append(expectedRows)
+                        .append("\nMissing rows:");
+                forEachMissing((b, r) -> {
+                    boolean stop = ++missing[0] >= 10;
+                    if (!stop) sb.append("\n  ").append(b.toString(r));
+                    return !stop;
+                });
+                if (missing[0] == 0)
+                    sb.append(" 0");
+                if (missing[0] == 0 && unexpected.rows == 0)
+                    return OK;
+                if (missing[0] >= 10)
+                    sb.append("\n  +").append(missing[0]-9);
+                sb.append("\nUnexpected rows: ").append(unexpected.totalRows());
+                for (int r = 0, n = Math.min(unexpected.rows, 9); r < n; r++)
+                    sb.append("\n  ").append(unexpected.toString(r));
+                if (unexpected.rows > 9)
+                    sb.append("\n +").append(unexpected.totalRows()-9);
+                //serialize(new File("/tmp/expected.tsv"), expected);
+                //serialize(new File("/tmp/observed.tsv"), observed);
+                //serialize(new File("/tmp/unexpected.tsv"), unexpected);
+                return sb.toString();
+            }
+            if (actualOrdered != null) {
+                int[] orderProj = new int[orderBy.size()];
+                int[] orderMult = new int[orderProj.length];
+                for (int i = 0; i < orderProj.length; i++) {
+                    orderProj[i] = vars.indexOf(orderBy.get(i));
+                    orderMult[i] = orderBy.isAsc(i) ? 1 : -1;
+                }
+                var view = new TermView[2][orderProj.length];
+                for (int r = 0; r < view.length; r++) {
+                    for (int c = 0; c < orderProj.length; c++)
+                        view[r][c] = new TermView();
+                }
+                int gRow = 0, nodeCount = 0;
+                for (int c = 0; c < orderProj.length; c++)
+                    actualOrdered.getView(0, c, view[1][c]);
+                for (var node = actualOrdered; node != null; node = node.next) {
+                    for (int r = gRow == 0 ? 1 : 0, rows = node.rows; r < rows; r++, gRow++) {
+                        for (int c = 0; c < orderProj.length; c++) {
+                            view[0][c].wrap(view[1][c]);
+                            if (!node.getView(r, orderProj[c], view[1][c]))
+                                view[1][c].wrap(Term.EMPTY_STRING);
+                        }
+                        for (int c = 0, diff = 0; diff == 0 && c < orderProj.length; c++) {
+                            if ((diff=view[0][c].compareTo(view[1][c]) * orderMult[c]) <= 0)
+                                continue;
+                            return String.format("""
+                                    Row %d (r=%d node=%d) violates %s at column %d (order c=%d)
+                                      Order projection for row %4d: %s
+                                      Order projection for row %4d: %s
+                                    """, gRow, r, nodeCount, orderBy, orderProj[c], c,
+                                    gRow-1, Arrays.toString(view[0]),
+                                    gRow, Arrays.toString(view[1]));
+                        }
+                    }
+                    ++nodeCount;
+                }
+            }
             return OK;
         }
     }
@@ -195,10 +241,9 @@ public abstract class QueryChecker<B extends Batch<B>>
         rows = 0;
         explanation = null;
         int cols = vars.size();
-        if (unexpected == null)
-            unexpected = COMPRESSED.create(cols).takeOwnership(this);
-        else
-            unexpected.clear(cols);
+        unexpected = COMPRESSED.empty(unexpected, this, cols);
+        if (orderBy != null)
+            actualOrdered = COMPRESSED.empty(actualOrdered, this, cols);
         if (observed == null || expected == null) {
             if (original == null)
                 original = queryName.expected(COMPRESSED);
@@ -266,15 +311,17 @@ public abstract class QueryChecker<B extends Batch<B>>
     }
 
     private void check(CompressedBatch cb) {
+        if (actualOrdered != null)
+            actualOrdered.copy(cb);
+        rows += cb.totalRows();
         var expected = this.expected;
         var observed = this.observed;
-        for (var node = cb; node != null; node = node.next) {
-            rows += node.rows;
-            if (expected == null || observed == null)
-                continue;
-            for (int r = 0, rows1 = node.rows; r < rows1; r++) {
-                if (!expected.contains(node, r)) unexpected.putRow(node, r);
-                else                             observed.add(node, r);
+        if (expected != null && observed != null) {
+            for (var node = cb; node != null; node = node.next) {
+                for (int r = 0, rows1 = node.rows; r < rows1; r++) {
+                    if (!expected.contains(node, r)) unexpected.putRow(node, r);
+                    else                             observed.add(node, r);
+                }
             }
         }
     }

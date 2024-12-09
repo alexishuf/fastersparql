@@ -17,5 +17,5 @@ drugbank:structure ?structure ;
 drugbank:casRegistryNumber ?casRegistryNumber
 }
 }
-#ORDER BY (?drugbankDrug)
+ORDER BY (?drugbankDrug)
 LIMIT 100
