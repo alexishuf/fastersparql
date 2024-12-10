@@ -184,7 +184,7 @@ public abstract class IdBatch<B extends IdBatch<B>> extends Batch<B> {
         this.cachedTerm = null;
         this.tail       = (B)this;
         if (next != null)
-            next.recycle(this);
+            next = next.recycle(this);
     }
 
     @SuppressWarnings("unchecked") @Override public final @This B clear(int cols) {
