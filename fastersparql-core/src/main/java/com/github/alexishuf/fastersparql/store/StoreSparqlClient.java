@@ -1702,26 +1702,23 @@ public class StoreSparqlClient extends AbstractSparqlClient
         }
 
 
-        @SuppressWarnings("unchecked") @Override protected void doRelease() {
+        @Override protected void doRelease() {
             super.doRelease();
-            B lexBatch = null, nextLexBatch = null;
-            if (lexJoinBinding != null) {
-                lexBatch = (B)lexJoinBinding.batch;
-                nextLexBatch = (B)requireNonNull(nextLexJoinBinding).batch;
-                lexJoinBinding.attach(Batch.safeRecycle(lexBatch, this), 0);
-            }
-            if (nextLexBatch != lexBatch)
-                Batch.safeRecycle(nextLexBatch, this);
+            BatchBinding ljb = lexJoinBinding;
+            if (ljb != null)
+                ljb.attach(Batch.safeRecycle(ljb.batch, this), 0);
+            if ((ljb=nextLexJoinBinding) != null)
+                ljb.attach(Batch.safeRecycle(ljb.batch, this), 0);
             if (convBindingBatches != null) {
                 for (int i = 0, n = convBindingBatches.size(); i < n; i++)
                     convBindingBatches.set(i, Batch.safeRecycle(convBindingBatches.get(i), this));
-                // detach recycled batches from binding, in case is is reachable elsewhere
+                // detach recycled batches from binding, in case is reachable elsewhere
                 for (var bb = convIntBinding; bb != null; bb = bb.remainder)
                     bb.attach(null, 0);
             }
             lookup = Owned.safeRecycle(lookup, this);
-            for (var i : lexIts)
-                Owned.safeRecycle(i, this);
+            for (int i = 0; i < lexIts.length; i++)
+                lexIts[i] = Owned.safeRecycle(lexIts[i], this);
         }
 
         @Override public StoreBindingEmitter<B> takeOwnership(Object o) {return takeOwnership0(o);}

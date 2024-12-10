@@ -250,7 +250,7 @@ public class ResultsSparqlClient extends AbstractSparqlClient {
 
         @Override protected void doRelease() {
             super.doRelease();
-            Batch.safeRecycle(batch, this);
+            batch = Batch.safeRecycle(batch, this);
             if (expected != null && expected.hasBindings()) {
                 List<List<Term>> exBindingRows = expected.bindingsList();
                 if (exBindingRows == null)

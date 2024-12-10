@@ -145,6 +145,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
                             if (nlb != null && plainState == State.ACTIVE) {
                                 lb = nlb.takeOwnership(this);
                             } else {
+                                tempBinding.attach(null, 0);
                                 Orphan.recycle(nlb);
                                 break; // reached end or cancelled
                             }

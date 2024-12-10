@@ -11,6 +11,7 @@ import com.github.alexishuf.fastersparql.util.StreamNode;
 import com.github.alexishuf.fastersparql.util.StreamNodeDOT;
 import com.github.alexishuf.fastersparql.util.concurrent.ThreadJournal;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
+import com.github.alexishuf.fastersparql.util.owned.Owned;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.common.returnsreceiver.qual.This;
@@ -35,8 +36,11 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>,
     }
 
     @Override protected void doRelease() {
-        if (upstream != null) upstream.recycle(this);
-        super.doRelease();
+        try {
+            Owned.safeRecycle(upstream, this);
+        } finally {
+            super.doRelease();
+        }
     }
 
     @Override protected void onPendingRelease() {
@@ -85,7 +89,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>,
     }
 
     @Override public void rebindPrefetch(BatchBinding binding) {
-        if (upstream != null) upstream.rebindPrefetch(binding);
+        if (upstream != null) upstream.requireOwner(this).rebindPrefetch(binding);
     }
 
     @Override public void rebindPrefetchEnd() {
@@ -99,7 +103,7 @@ public abstract class AbstractStage<I extends Batch<I>, O extends Batch<O>,
             stats.onRebind(binding);
         if (upstream == null)
             throw new NoEmitterException();
-        upstream.rebind(binding);
+        upstream.requireOwner(this).rebind(binding);
     }
 
     @Override public Vars bindableVars() { return upstream.bindableVars(); }

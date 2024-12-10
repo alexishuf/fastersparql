@@ -9,6 +9,7 @@ import com.github.alexishuf.fastersparql.sparql.expr.Term;
 import com.github.alexishuf.fastersparql.sparql.expr.TermView;
 import com.github.alexishuf.fastersparql.store.batch.StoreBatchType;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.common.returnsreceiver.qual.This;
 
 import java.util.List;
 
@@ -52,7 +53,7 @@ public class BatchBinding extends Binding {
         this.cols = (short) cols;
     }
 
-    public final BatchBinding attach(@Nullable Batch<?> batch, int row) {
+    public final @This BatchBinding attach(@Nullable Batch<?> batch, int row) {
         if (batch != null) {
             if (row < 0 || row >= batch.rows)
                 throw new IndexOutOfBoundsException(row);

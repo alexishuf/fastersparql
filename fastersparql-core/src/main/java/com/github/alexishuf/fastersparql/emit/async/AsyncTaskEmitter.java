@@ -82,15 +82,15 @@ public abstract class AsyncTaskEmitter<B extends Batch<B>, E extends AsyncTaskEm
         @SuppressWarnings("unchecked") B peek = (B)offer;
         if (peek.rows == 0) {
             Orphan.safeRecycle(offer);
-            return;
         } else if (peek.cols != outCols) {
             throw new IllegalArgumentException("offer.cols != outCols");
+        } else {
+            lock();
+            try {
+                queue = Batch.quickAppendTrusted(queue, this, offer);
+            } finally { unlock(); }
+            awakeSameWorker();
         }
-        lock();
-        try {
-            queue = Batch.quickAppendTrusted(queue, this, offer);
-        } finally { unlock(); }
-        awakeSameWorker();
     }
     private static final int QUICK_APPEND_ALLOWED = IS_INIT|IS_LIVE;
 

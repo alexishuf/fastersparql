@@ -266,7 +266,7 @@ public abstract class BindingStage<B extends Batch<B>, S extends BindingStage<B,
 
         int state = lockFlag(LB_LOCK);
         try {
-            if ((state & IS_CANCEL_REQ) != 0) {
+            if ((state&IS_CANCEL_REQ) != 0) {
                 Orphan.safeRecycle(orphan);
                 return;
             } else {

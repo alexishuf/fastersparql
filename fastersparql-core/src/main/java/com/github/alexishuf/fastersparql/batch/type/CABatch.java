@@ -334,7 +334,7 @@ public sealed class CABatch extends Batch<CABatch> {
                 }
             }
         } finally {
-            if (o != null) Batch.safeRecycle(o, this);
+            Batch.safeRecycle(o, this);
         }
     }
 
