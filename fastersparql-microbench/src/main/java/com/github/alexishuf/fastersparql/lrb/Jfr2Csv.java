@@ -205,7 +205,7 @@ public class Jfr2Csv implements Callable<Void> {
         REBIND,
         EM_REBIND,
         IT_REBIND,
-        PLAN_BIND,
+        BOUND_QUERY_GEN,
         PARSE_SPARQL,
         SERIALIZE_RESULTS,
         PARSE_RESULTS,
@@ -226,6 +226,8 @@ public class Jfr2Csv implements Callable<Void> {
         VTHREAD_SWITCH,
         TASK_WORKER,
         FEDX_WORKER,
+        FEDX_JOIN_TASK,
+        FEDX_UNION_TASK,
         DRAIN,
         NIO_WAKEUP,
         NIO_EVENT_LOOP,
@@ -252,13 +254,18 @@ public class Jfr2Csv implements Callable<Void> {
         EM_INIT,
         BIT_CLEANUP,
         EM_CLEANUP,
-        BATCH_CONVERSION,
+        TERM_WRAP,
+        TERM_HASH,
         BATCH_HASH,
+        BATCH_CONVERSION,
         BATCH_QUICK_APPEND,
         BATCH_APPEND,
         BATCH_COPY,
         BATCH_CREATE,
         BATCH_RECYCLE,
+        TERMINFO_SET,
+        ROPE_COMPARE,
+        ROPE_COMPARE_PAGE_FAULT,
         ROPE_INTERN,
         ROPE_INTERN_PAGE_FAULT,
         PUT_TERM,
@@ -271,6 +278,11 @@ public class Jfr2Csv implements Callable<Void> {
         ALLOC_OFFER,
         WEAK_DEDUP,
         DEDUP,
+        BTREE_DEDUP_COMPARE,
+        BTREE_SORT_COMPARE,
+        BTREE_SORT,
+        BTREE_DESTRUCTIVE_FOREACH,
+        BTREE_DESTRUCTIVE_FOREACH_CONSUMER,
         FILTER_IN_PLACE,
         PROJECT_IN_PLACE;
 
@@ -355,8 +367,9 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[IT_REBIND.ordinal()] = new TaskPattern[] {
                     new TaskPattern("BindingBIt\\.(re)?bind")
             };
-            PATTERNS[PLAN_BIND.ordinal()] = new TaskPattern[] {
-                    new TaskPattern("Plan\\.bound")
+            PATTERNS[BOUND_QUERY_GEN.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("(Plan|SparqlQuery)\\.bound"),
+                    new TaskPattern("QueryStringUtil\\.selectQueryString")
             };
             PATTERNS[SERIALIZE_RESULTS.ordinal()] = new TaskPattern[] {
                     new TaskPattern("Handler\\.serialize")
@@ -405,6 +418,12 @@ public class Jfr2Csv implements Callable<Void> {
             };
             PATTERNS[FEDX_WORKER.ordinal()] = new TaskPattern[] {
                     new TaskPattern("ControlledWorker|BackgroundResultExecutor")
+            };
+            PATTERNS[FEDX_JOIN_TASK.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Parallel(Bound|Left|Check|Service)?JoinTask\\.performTaskInternal")
+            };
+            PATTERNS[FEDX_UNION_TASK.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Parallel(Prepared(Algebra)?)?Union(Operator)?Task\\.performTaskInternal")
             };
             PATTERNS[NIO_WAKEUP.ordinal()] = new TaskPattern[] {
                     new TaskPattern("NioEventLoop\\.wakeup")
@@ -480,6 +499,12 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[BATCH_CONVERSION.ordinal()] = new TaskPattern[] {
                     new TaskPattern("put(Row)?Converting|FromStoreConverter\\.onBatchByCopy|(Store|Hdt)?ConverterStage\\.onBatchByCopy")
             };
+            PATTERNS[TERM_WRAP.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("TermView\\.wrap")
+            };
+            PATTERNS[TERM_HASH.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Term\\.hash")
+            };
             PATTERNS[BATCH_HASH.ordinal()] = new TaskPattern[] {
                     new TaskPattern("Batch\\.hash")
             };
@@ -503,6 +528,15 @@ public class Jfr2Csv implements Callable<Void> {
             };
             PATTERNS[BATCH_RECYCLE.ordinal()] = new TaskPattern[] {
                     new TaskPattern("Batch\\.recycle")
+            };
+            PATTERNS[TERMINFO_SET.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("TermInfo\\.set")
+            };
+            PATTERNS[ROPE_COMPARE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Rope\\.compare")
+            };
+            PATTERNS[ROPE_COMPARE_PAGE_FAULT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("exc_page_fault", "Rope\\.compare", true)
             };
             PATTERNS[ROPE_INTERN.ordinal()] = new TaskPattern[] {
                     new TaskPattern("SharedRopes\\.intern")
@@ -531,24 +565,54 @@ public class Jfr2Csv implements Callable<Void> {
             PATTERNS[DEDUP.ordinal()] = new TaskPattern[] {
                     new TaskPattern("Dedup\\.isDuplicate")
             };
+            PATTERNS[BTREE_DEDUP_COMPARE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Term\\.compareTo",
+                                    "BTreeDedup\\.isDuplicate", true)
+            };
+            PATTERNS[BTREE_SORT_COMPARE.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("Term\\.compareTo",
+                                    "BTreeDedup\\.sort", true)
+            };
+            PATTERNS[BTREE_SORT.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("BTreeDedup\\.sort")
+            };
+            PATTERNS[BTREE_DESTRUCTIVE_FOREACH.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("BTreeDedup\\.destructiveForEach")
+            };
+            PATTERNS[BTREE_DESTRUCTIVE_FOREACH_CONSUMER.ordinal()] = new TaskPattern[] {
+                    new TaskPattern("(BatchQueue|SPSCBIt).(copy|offer)",
+                                    "BTreeDedup\\.destructiveForEach",
+                                    true), // ITERATE
+                    new TaskPattern("BatchSorter\\.accept",
+                                    "BTreeDedup\\.destructiveForEach",
+                                    true) // EMIT
+            };
             PATTERNS[FILTER_IN_PLACE.ordinal()] = new TaskPattern[] {
                     new TaskPattern("filterInPlace")
             };
             PATTERNS[PROJECT_IN_PLACE.ordinal()] = new TaskPattern[] {
                     new TaskPattern("projectInPlace")
             };
-            PATTERNS[GC.ordinal()]                       = new TaskPattern[0];
-            PATTERNS[GC_PAGE_FAULT.ordinal()]            = new TaskPattern[0];
-            PATTERNS[NEW_OR_PAGE_FAULT.ordinal()]        = new TaskPattern[0];
-            PATTERNS[NEW_OR_PAGE_FAULT_REBIND.ordinal()] = new TaskPattern[0];
-            PATTERNS[MMAP_PAGE_FAULT.ordinal()]          = new TaskPattern[0];
-            PATTERNS[PARSE_SPARQL.ordinal()]             = new TaskPattern[0];
-            PATTERNS[REBIND.ordinal()]                   = new TaskPattern[0];
-            PATTERNS[LOCKBIND.ordinal()]                 = new TaskPattern[0];
-            PATTERNS[OPTIMIZER.ordinal()]                = new TaskPattern[0];
-            PATTERNS[TASK_QUEUES.ordinal()]              = new TaskPattern[0];
-            PATTERNS[TASK_TAKE.ordinal()]                = new TaskPattern[0];
-            PATTERNS[TASK_PUT.ordinal()]                 = new TaskPattern[0];
+            var noPatternTasks = new Task[]{
+                    GC,
+                    GC_PAGE_FAULT,
+                    NEW_OR_PAGE_FAULT,
+                    NEW_OR_PAGE_FAULT_REBIND,
+                    MMAP_PAGE_FAULT,
+                    PARSE_SPARQL,
+                    REBIND,
+                    LOCKBIND,
+                    OPTIMIZER,
+                    TASK_QUEUES,
+                    TASK_TAKE,
+                    TASK_PUT
+            };
+            for (Task task : noPatternTasks) {
+                if (PATTERNS[task.ordinal()] != null)
+                    throw new ExceptionInInitializerError("PATTERNS["+task+"] already defined");
+                PATTERNS[task.ordinal()] = new TaskPattern[0];
+            }
+            // check PATTERNS was intialized for all tasks
             String missing = Arrays.stream(ALL).filter(t -> PATTERNS[t.ordinal()] == null)
                     .map(Objects::toString).collect(joining(", "));
             if (!missing.isEmpty())
@@ -705,7 +769,7 @@ public class Jfr2Csv implements Callable<Void> {
             }
         }
 
-        public int paramsCount() {return param2files.keySet().size();}
+        public int paramsCount() {return param2files.size();}
         public int  filesCount() {return param2files.values().stream().mapToInt(List::size).sum();}
     }
 
