@@ -5,6 +5,7 @@ import com.github.alexishuf.fastersparql.batch.BatchQueue;
 import com.github.alexishuf.fastersparql.batch.base.SPSCBIt;
 import com.github.alexishuf.fastersparql.batch.dedup.BTreeDedup;
 import com.github.alexishuf.fastersparql.batch.dedup.SortProjection;
+import com.github.alexishuf.fastersparql.emit.EmitterStats;
 import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.exceptions.RebindException;
 import com.github.alexishuf.fastersparql.model.Vars;
@@ -94,7 +95,7 @@ public abstract sealed class BatchSorter<B extends Batch<B>>
         sb.append('@').append(Integer.toHexString(System.identityHashCode(this)));
         if (type.showState())
             sb.append("\nstate=").append(flags.render(state()));
-        if (type.showStats())
+        if (EmitterStats.ENABLED && type.showStats() && stats != null)
             stats.appendToLabel(sb);
         if (before != null)
             sb.append('\n').append(before.label(type).replace("\n", "\n  "));
