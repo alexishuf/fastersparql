@@ -66,7 +66,6 @@ public final class Modifier extends Plan {
     }
 
     public @Nullable Vars       projection() { return projection; }
-    public @Nullable DistinctType distinct() { return distinct; }
     public long                     offset() { return offset; }
     public long                      limit() { return limit; }
     public List<Expr>              filters() { return filters; }

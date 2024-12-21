@@ -1,6 +1,7 @@
 package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.rope.FinalSegmentRope;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 public enum DistinctType {
     WEAK,
@@ -19,7 +20,7 @@ public enum DistinctType {
         };
     }
 
-    public static int compareTo(DistinctType left, DistinctType right) {
+    public static int compareTo(@Nullable DistinctType left, @Nullable DistinctType right) {
         if (left  == right) return  0;
         if (left  ==  null) return -1;
         if (right ==  null) return  1;

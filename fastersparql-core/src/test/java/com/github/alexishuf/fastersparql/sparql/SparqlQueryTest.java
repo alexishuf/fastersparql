@@ -447,6 +447,10 @@ class SparqlQueryTest {
                 }
                 var b = q.bound(d.binding);
 
+                if (ex.isAsk())
+                    assertNotNull(b.distinct(), "bad distinct"+ctx);
+                else
+                    assertEquals(ex.distinct(), b.distinct(), "bad distinct"+ctx);
                 assertEquals(ex.publicVars(), b.publicVars(), "bad publicVars" + ctx);
                 assertEquals(ex.allVars(), b.allVars(), "bad allVars" + ctx);
                 assertEquals(ex.isGraph(), b.isGraph(), "bad isGraph" + ctx);
@@ -532,6 +536,7 @@ class SparqlQueryTest {
                 var a = q.toAsk();
 
                 assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
+                assertNotNull(a.distinct(), "bad distinct"+ctx);
                 assertEquals(e.publicVars(), a.publicVars(), "bad publicVars" + ctx);
                 assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);
                 if (a instanceof OpaqueSparqlQuery oa) {
@@ -620,6 +625,9 @@ class SparqlQueryTest {
                 }
                 var a = q.toDistinct(t.type());
 
+                var exDistinct = (q instanceof OpaqueSparqlQuery && q.isAsk()) || q.isGraph()
+                               ? STRONG : t.type();
+                assertEquals(exDistinct, a.distinct(), "bad distinct"+ctx);
                 assertEquals(e.isGraph(), a.isGraph(), "bad isGraph" + ctx);
                 assertEquals(e.publicVars(), a.publicVars(), "bad publicVars" + ctx);
                 assertEquals(e.allVars(), a.allVars(), "bad allVars" + ctx);

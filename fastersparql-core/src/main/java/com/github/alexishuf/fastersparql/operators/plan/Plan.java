@@ -384,6 +384,19 @@ public abstract sealed class Plan
         return this;
     }
 
+    @Override public @Nullable DistinctType distinct() {
+        if (this instanceof Modifier m) {
+            if (m.distinct == null)
+                return m.publicVars().isEmpty() ? DistinctType.WEAK : null;
+            return m.distinct;
+        } else if (this instanceof Query q) {
+            return q.sparql.distinct();
+        } else if (publicVars().isEmpty()) {
+            return DistinctType.WEAK;
+        }
+        return null;
+    }
+
     @Override public Plan toDistinct(DistinctType distinct) {
         if (this instanceof Modifier m) {
             if (m.distinct == distinct) return m;

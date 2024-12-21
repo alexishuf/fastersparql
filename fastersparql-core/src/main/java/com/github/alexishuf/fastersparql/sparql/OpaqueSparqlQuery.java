@@ -6,6 +6,7 @@ import com.github.alexishuf.fastersparql.sparql.binding.Binding;
 import com.github.alexishuf.fastersparql.sparql.expr.TermParser;
 import com.github.alexishuf.fastersparql.util.SafeCloseable;
 import org.checkerframework.checker.mustcall.qual.MustCall;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
 
@@ -17,6 +18,7 @@ import static java.util.Arrays.copyOf;
 public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerator {
     public final SegmentRope sparql;
     public final boolean isGraph;
+    public final @Nullable DistinctType distinct;
     public final Vars publicVars;
     public final Vars allVars;
     public final Vars aliasVars;
@@ -24,10 +26,12 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
     private final int verbEnd;
     final int[] varPos; // visible for testing
 
-    private OpaqueSparqlQuery(SegmentRope sparql, boolean isGraph, Vars publicVars, Vars allVars,
-                              Vars aliasVars, int[] varPos, int verbBegin, int verbEnd) {
+    private OpaqueSparqlQuery(SegmentRope sparql, boolean isGraph, @Nullable DistinctType distinct,
+                              Vars publicVars, Vars allVars, Vars aliasVars,
+                              int[] varPos, int verbBegin, int verbEnd) {
         this.sparql = sparql;
         this.isGraph = isGraph;
+        this.distinct = distinct;
         this.publicVars = publicVars;
         this.allVars = allVars;
         this.varPos = varPos;
@@ -39,13 +43,14 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
     public OpaqueSparqlQuery(CharSequence sparql) {
         this.sparql = FinalSegmentRope.asFinal(sparql);
         try (var s = new Scan(this.sparql)) {
-            this.isGraph = s.isGraph;
+            this.isGraph    = s.isGraph;
+            this.distinct   = s.distinct;
             this.publicVars = s.publicVars;
-            this.allVars = s.allVars;
-            this.varPos = s.varPositions;
-            this.verbBegin = s.verbBegin;
-            this.verbEnd = s.verbEnd;
-            this.aliasVars = s.aliasVars;
+            this.allVars    = s.allVars;
+            this.varPos     = s.varPositions;
+            this.verbBegin  = s.verbBegin;
+            this.verbEnd    = s.verbEnd;
+            this.aliasVars  = s.aliasVars;
         }
     }
 
@@ -57,6 +62,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
     @Override public SparqlType      sparqlType() { return SparqlType.SPARQL; }
     @Override public SegmentRope generateSparql() { return sparql; }
     @Override public boolean            isGraph() { return isGraph; }
+    @Override public DistinctType      distinct() { return distinct; }
     @Override public Vars            publicVars() { return publicVars; }
     @Override public Vars               allVars() { return allVars; }
 
@@ -72,7 +78,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
             b.nVarPos[b.nVarPosSize++] = begin + b.growth;
             b.nVarPos[b.nVarPosSize++] = end + b.growth;
         }
-        return b.build(true);
+        return b.build(true, DistinctType.STRONG);
     }
 
     @Override public OpaqueSparqlQuery toDistinct(DistinctType distinctType) {
@@ -104,7 +110,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
             b.nVarPos[b.nVarPosSize++] = begin + b.growth;
             b.nVarPos[b.nVarPosSize++] = end + b.growth;
         }
-        return b.build(false);
+        return b.build(false, distinctType);
     }
 
     @Override public OpaqueSparqlQuery bound(Binding binding) {
@@ -143,7 +149,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
                 }
             }
         }
-        return b.build(isAsk);
+        return b.build(isAsk, isAsk ? DistinctType.STRONG : distinct);
     }
 
     @Override public boolean equals(Object obj) {
@@ -212,7 +218,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
             nVerbEnd = verbEnd+growth; // adjust verbEnd for replaced SELECT
         }
 
-        OpaqueSparqlQuery build(boolean dropModifiers) {
+        OpaqueSparqlQuery build(boolean dropModifiers, DistinctType distinct) {
             int end = sparql.len();
             if (dropModifiers)
                 end = Math.min(end, sparql.skipUntilLastNear(consumed, end, (byte)'}')+1);
@@ -222,8 +228,8 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
             b = null;
             // nVarPosSize <= nVarsPos.length since a no-op bind would've returned earlier
             nVarPos = copyOf(nVarPos, nVarPosSize);
-            return new OpaqueSparqlQuery(nQuery, isGraph, nPublicVars, nAllVars, nAliasVars,
-                                         nVarPos, verbBegin, nVerbEnd);
+            return new OpaqueSparqlQuery(nQuery, isGraph, distinct, nPublicVars, nAllVars,
+                                         nAliasVars, nVarPos, verbBegin, nVerbEnd);
         }
     }
 
@@ -232,6 +238,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
         int pos;
         final int len;
         boolean isGraph;
+        @Nullable DistinctType distinct;
         Vars publicVars, allVars, aliasVars = Vars.EMPTY;
         int[] varPositions;
         int nVarPositions, verbBegin, verbEnd;
@@ -286,6 +293,23 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
             if (ex == null || !in.hasAnyCase(pos, ex)) {
                 Rope actual = in.sub(pos, in.skip(pos, len, UNTIL_WS));
                 throw new InvalidSparqlException("Expected SELECT/ASK/CONSTRUCT/DESCRIBE, found " + actual + " in sparql="+in);
+            } else if (ex == ASK_u8 || ex == CONSTRUCT_u8) {
+                distinct = DistinctType.STRONG;
+            } else if (ex == SELECT_u8) {
+                pos = in.skipWS(pos+SELECT_u8.length, len);
+                DistinctType type = null;
+                byte[] token = switch (in.get(pos)) {
+                    case 'd', 'D' -> {type = DistinctType.STRONG;  yield DISTINCT_u8;}
+                    case 'r', 'R' -> {type = DistinctType.REDUCED; yield REDUCED_u8;}
+                    case 'p', 'P' -> {type = DistinctType.WEAK;    yield PRUNED_u8;}
+                    default       -> null;
+                };
+                if (token != null && in.hasAnyCase(pos, token)) {
+                    pos += token.length;
+                    distinct = type;
+                } else {
+                    distinct = null;
+                }
             }
         }
 
@@ -347,7 +371,6 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
             pos = in.skip(++pos, len, STOP_AS);
             while (pos < len) {
                 switch (in.get(pos)) {
-                    default       -> skipQuoted();
                     case '#'      -> pos = in.skipUntil(pos, len, (byte)'\n');
                     case '?', '$' -> {
                         if (as) {
@@ -367,6 +390,7 @@ public class OpaqueSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerato
                            && Rope.contains(AFT_AS, c2);
                         pos += 2;
                     }
+                    default       -> skipQuoted();
                 }
                 pos = in.skip(pos, len, STOP_AS);
             }

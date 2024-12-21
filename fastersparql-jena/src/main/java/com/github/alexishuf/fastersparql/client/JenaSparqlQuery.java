@@ -45,6 +45,12 @@ public class JenaSparqlQuery implements SparqlQuery, SparqlType.SparqlGenerator 
         return jenaQuery.isConstructType() || jenaQuery.isDescribeType();
     }
 
+    @Override public @Nullable DistinctType distinct() {
+        if (jenaQuery.isDistinct()) return DistinctType.STRONG;
+        if (jenaQuery.isReduced())  return DistinctType.REDUCED;
+        return null;
+    }
+
     @Override public Vars publicVars() {
         if (publicVars == null)
             publicVars = Vars.fromSet(jenaQuery.getResultVars());

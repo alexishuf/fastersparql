@@ -2,6 +2,7 @@ package com.github.alexishuf.fastersparql.sparql;
 
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.sparql.binding.Binding;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 public interface SparqlQuery {
     /** Gets the SPARQL representation of this query. The representation may use prefixed IRIs. */
@@ -12,6 +13,11 @@ public interface SparqlQuery {
 
     /** Whether this is a {@code CONSTRUCT} or {@code DESCRIBE} query */
     boolean isGraph();
+
+    /**
+     * Whether this query uses  {@code DISTINCT}, {@code REDUCED} or {@code WEAK} de-duplication.
+     */
+    @Nullable DistinctType distinct();
 
     /** List of unique var names present in the result set of this query */
     Vars publicVars();
