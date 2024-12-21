@@ -323,9 +323,5 @@ public abstract class BatchType<B extends Batch<B>> implements BatchConverter<B>
         return equals(other);
     }
 
-    @Override public boolean equals(Object o) {
-        return o instanceof BatchType<?> && o.getClass().equals(getClass());
-    }
-
     @Override public int hashCode() { return getClass().hashCode(); }
 }

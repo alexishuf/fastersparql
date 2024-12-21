@@ -12,7 +12,7 @@ import java.util.function.Supplier;
 
 import static com.github.alexishuf.fastersparql.util.owned.SpecialOwner.RECYCLED;
 
-public abstract class ScopedIdBatchType extends IdBatchType<ScopedIdBatch> {
+public abstract sealed class ScopedIdBatchType extends IdBatchType<ScopedIdBatch> {
     private static final class ScopedIdBatchFac implements Supplier<ScopedIdBatch> {
         @Override public ScopedIdBatch get() {
             long[] ids = new long[PREFERRED_BATCH_TERMS];
@@ -91,6 +91,12 @@ public abstract class ScopedIdBatchType extends IdBatchType<ScopedIdBatch> {
                 toStringCache = cache = "ScopedIdBatchType("+Integer.toHexString(scope.id())+")";
             }
             return cache;
+        }
+
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof WithScope bt))
+                return false;
+            return scope.id() == bt.scope.id();
         }
 
         @Override public String journalName() {return toString();}
