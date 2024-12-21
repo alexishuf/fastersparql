@@ -53,6 +53,7 @@ public final class QueryRunner {
             implements Receiver<B> {
         protected BatchType<B> batchType;
         protected @Nullable StreamNode upstreamNode;
+        protected long rows;
 
         public BatchConsumer(BatchType<B> batchType) {
             this.batchType = batchType;
@@ -72,6 +73,7 @@ public final class QueryRunner {
 
         public BatchType<B> batchType() { return batchType; }
 
+        public final long rows() { return rows; }
         /** Called when iteration of an iterator starts (before {@link #onBatch(Orphan)}
          *  and {@link #onBatchByCopy(Batch)}). */
         public void start(Vars vars, @Nullable StreamNode upstreamNode) {
@@ -330,6 +332,7 @@ public final class QueryRunner {
         }
 
         @Override protected void start0(Vars vars) {
+            rows = 0;
             this.batch = batch == null ? batchType.create(vars.size()).takeOwnership(this)
                                        : batch.clear(vars.size());
         }
@@ -338,8 +341,14 @@ public final class QueryRunner {
             this.error = cause;
         }
 
-        @Override public void onBatchByCopy(B batch)   {this.batch.copy(batch);}
-        @Override public void onBatch(Orphan<B> batch) {this.batch.append(batch);}
+        @Override public void onBatchByCopy(B batch)   {
+            this.rows += batch.totalRows();
+            this.batch.copy(batch);
+        }
+        @Override public void onBatch(Orphan<B> batch) {
+            this.rows += Batch.peekTotalRows(batch);
+            this.batch.append(batch);
+        }
     }
 
     /** A {@link BatchConsumer} that serializes the query results */
@@ -392,11 +401,13 @@ public final class QueryRunner {
         }
 
         @Override protected void start0(Vars vars) {
+            rows = 0;
             serializer.init(vars, vars, vars.isEmpty());
             serializer.serializeHeader(sink);
         }
 
         @Override public void onBatch(Orphan<B> batch) {
+            rows += Batch.peekTotalRows(batch);
             serializer.serialize(batch, sink, Integer.MAX_VALUE, recycler, ignoreChunks());
         }
 
@@ -423,7 +434,6 @@ public final class QueryRunner {
     public static abstract class BoundCounter<B extends Batch<B>, C extends BoundCounter<B, C>>
             extends BatchConsumer<B, C> {
         private final int[] counts = new int[5];
-        private int rows;
 
         public BoundCounter(BatchType<B> batchType) { super(batchType); }
 

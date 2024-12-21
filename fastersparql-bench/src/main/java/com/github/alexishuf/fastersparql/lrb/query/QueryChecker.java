@@ -41,7 +41,6 @@ public abstract class QueryChecker<B extends Batch<B>>
     private final OrderBy orderBy;
     private final int expectedRows;
     public CompressedBatch unexpected;
-    private int rows;
     private @Nullable Throwable error;
     private @Nullable String explanation;
 
@@ -81,8 +80,6 @@ public abstract class QueryChecker<B extends Batch<B>>
 
     protected abstract void doFinish(@Nullable Throwable error);
 
-    public int rows() { return rows; }
-
     public boolean isValid() { return OK.equals(explanation()); }
 
     public String explanation() {
@@ -102,7 +99,10 @@ public abstract class QueryChecker<B extends Batch<B>>
             sb.append(bos.toString(StandardCharsets.UTF_8));
             return sb.toString();
         } else if (rows == 0) {
-            return "Results are unknown, but got no rows";
+            if (expected == null)
+                return "Results are unknown, but got no rows";
+            else
+                return "Results are unknown, but got no rows";
         } else {
             if (expected != null && observed != null) {
                 int[] missing = {0};
@@ -266,7 +266,7 @@ public abstract class QueryChecker<B extends Batch<B>>
         var sanitized = queryName.isAmputateNumberNoOp() ? original
                 : queryName.amputateNumbers(original.dup()).takeOwnership(this);
         assert expectedRows == original.totalRows();
-        expected = StrongDedup.createForever(COMPRESSED, rows, sanitized.cols).takeOwnership(this);
+        expected = StrongDedup.createForever(COMPRESSED, expectedRows, sanitized.cols).takeOwnership(this);
         for (var n = sanitized; n != null; n = n.next) {
             for (int r = 0, nRows = n.rows; r < nRows; r++)
                 expected.add(n, r);

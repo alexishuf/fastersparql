@@ -146,12 +146,12 @@ public class QueryBench {
     private final class RowCounter<B extends Batch<B>>
             extends BatchConsumer<B, RowCounter<B>>
             implements Orphan<RowCounter<B>> {
-        public int rows;
         public RowCounter(BatchType<B> batchType) {super(batchType);}
-        public int rows() { return rows; }
         @Override protected void start0(Vars vars) {rows = 0;}
 
         @Override public RowCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
+
+        public int rowsInt() {return (int)Math.min(Integer.MAX_VALUE, rows);}
 
         @Override public void onBatch(Orphan<B> orphan) {
             if (orphan == null) return;
@@ -175,7 +175,6 @@ public class QueryBench {
             extends BatchConsumer<B, RopeLenCounter<B>> implements Orphan<RopeLenCounter<B>> {
         private final TwoSegmentRope tmp = new TwoSegmentRope();
         private int acc;
-        private long accRows;
 
         public RopeLenCounter(BatchType<B> batchType) {super(batchType);}
 
@@ -185,11 +184,11 @@ public class QueryBench {
 
         @Override protected void start0(Vars vars) {
             acc = 0;
-            accRows = 0;
+            rows = 0;
         }
         @Override public void finish(@Nullable Throwable error) {
             if (EmitterStats.GLOBAL_ENABLED)
-                resultRows += accRows;
+                resultRows += rows;
             throwAsUnchecked(error);
         }
 
@@ -204,7 +203,7 @@ public class QueryBench {
             for (var b = batch; b != null; b = b.next) {
                 int rows = batch.rows;
                 if (EmitterStats.GLOBAL_ENABLED)
-                    accRows += rows;
+                    this.rows += rows;
                 for (int r = 0, cols = b.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
                         if (b.getRopeView(r, c, tmp))
@@ -219,7 +218,6 @@ public class QueryBench {
             extends BatchConsumer<B, TermLenCounter<B>> implements Orphan<TermLenCounter<B>> {
         private final TermView tmp = new TermView();
         private int acc;
-        private long accRows;
 
         public TermLenCounter(BatchType<B> batchType) {super(batchType);}
         @Override public TermLenCounter<B> takeOwnership(Object o) {return takeOwnership0(o);}
@@ -227,11 +225,11 @@ public class QueryBench {
 
         @Override public void start0(Vars vars) {
             acc = 0;
-            accRows = 0;
+            rows = 0;
         }
         @Override public void finish(@Nullable Throwable error) {
             if (EmitterStats.GLOBAL_ENABLED)
-                resultRows += accRows;
+                resultRows += rows;
             throwAsUnchecked(error);
         }
 
@@ -246,7 +244,7 @@ public class QueryBench {
             for (var b = batch; b != null; b = b.next) {
                 int rows = batch.rows;
                 if (EmitterStats.GLOBAL_ENABLED)
-                    accRows += rows;
+                    this.rows += rows;
                 for (int r = 0, cols = batch.cols; r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
                         if (batch.getView(r, c, tmp))
@@ -683,7 +681,7 @@ public class QueryBench {
     }
 
     @Benchmark public int countTerms(Blackhole bh) { return execute(bh, boundCounter,   boundCounter::nonNull); }
-    @Benchmark public int countRows(Blackhole bh)  { return execute(bh, rowCounter,     rowCounter::rows); }
+    @Benchmark public int countRows(Blackhole bh)  { return execute(bh, rowCounter,     rowCounter::rowsInt); }
     @Benchmark public int ropeLen(Blackhole bh)    { return execute(bh, ropeLenCounter, ropeLenCounter::len); }
     @Benchmark public int termLen(Blackhole bh)    { return execute(bh, termLenCounter, termLenCounter::len); }
 }

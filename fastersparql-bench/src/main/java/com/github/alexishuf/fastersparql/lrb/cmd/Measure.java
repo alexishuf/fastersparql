@@ -52,6 +52,7 @@ import static com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.ResultsCo
 import static com.github.alexishuf.fastersparql.lrb.query.QueryRunner.drainWild;
 import static com.github.alexishuf.fastersparql.model.SparqlResultFormat.TSV;
 import static com.github.alexishuf.fastersparql.model.Vars.EMPTY;
+import static java.lang.String.format;
 import static java.lang.System.nanoTime;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static java.util.Objects.requireNonNull;
@@ -270,8 +271,10 @@ public class Measure implements Callable<Void>{
                 log.info("Starting rep {} of {} with sel={}, src={}, flow={}...",
                          rep, task.query(), task.selector(), task.source(), msrOp.flowModel);
                 int ms = run(client, task, rep, timeoutMs);
-                log.info("Measured rep {} of {} with sel={} and src={} in {}ms",
-                        rep, task.query(), task.selector(), task.source(), ms);
+                log.info("Measured rep {} of {} with sel={} and src={} in {}ms, rows={}",
+                        rep, task.query(), task.selector(), task.source(),
+                        format("%,d", ms),
+                        consumer == null ? "?" : format("%,d", consumer.rows()));
                 spent[taskIdx] += ms;
                 msrOp.cooldown();
             }
