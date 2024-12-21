@@ -16,6 +16,7 @@ import com.github.alexishuf.fastersparql.sparql.SparqlQuery;
 import com.github.alexishuf.fastersparql.sparql.expr.Expr;
 import com.github.alexishuf.fastersparql.sparql.expr.ExprParser;
 import com.github.alexishuf.fastersparql.sparql.expr.Term;
+import com.github.alexishuf.fastersparql.sparql.parser.SparqlParser;
 import com.github.alexishuf.fastersparql.util.owned.Guard;
 import com.github.alexishuf.fastersparql.util.owned.Orphan;
 import com.github.alexishuf.fastersparql.util.owned.StaticMethodOwner;
@@ -397,6 +398,20 @@ public class FS {
     }
 
     /**
+     * Equivalent to {@link #distinct(Plan, DistinctType)}, but tries to avoid parsing
+     * {@code input} into a {@link Plan}.
+     */
+    public static SparqlQuery distinctAtLeast(SparqlQuery input, DistinctType type) {
+        if (DistinctType.compareTo(type, input.distinct()) <= 0)
+            return input;
+        Plan plan = SparqlParser.parse(input);
+        if (plan instanceof Modifier m) {
+            return new Modifier(m.left, m.orderBy, m.projection, type, m.offset, m.limit, m.filters);
+        }
+        return new Modifier(plan, null, null, type, 0, Long.MAX_VALUE, null);
+    }
+
+    /**
      * Apply a projection to the rows of {@code input}, so that {@code publicVars().equals(vars)}.
      *
      * @param input source of rows to project. If it is a {@link Modifier} all other modifiers
@@ -410,6 +425,19 @@ public class FS {
             return new Modifier(m.left, m.orderBy, vars, m.distinct, m.offset, m.limit, m.filters);
         }
         return new Modifier(input, null, vars, null, 0, Long.MAX_VALUE, null);
+    }
+
+    /**
+     * Equivalent to {@link #project(Plan, Vars)}, but tries to avoid parsing
+     * {@code query} into a {@link Plan}
+     */
+    public static SparqlQuery project(SparqlQuery input, Vars vars) {
+        if (vars.equals(input.publicVars()))
+            return input;
+        Plan plan = SparqlParser.parse(input);
+        if (plan instanceof Modifier m)
+            return new Modifier(m.left, m.orderBy, vars, m.distinct, m.offset, m.limit, m.filters);
+        return new Modifier(plan, null, vars, null, 0, Long.MAX_VALUE, null);
     }
 
     private static List<Expr> parseFilters(Plan maybeModifier, Collection<?> filters) {

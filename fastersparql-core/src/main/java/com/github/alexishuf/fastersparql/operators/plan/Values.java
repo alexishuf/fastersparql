@@ -29,10 +29,15 @@ import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
 public final class Values extends Plan implements LeakyOwner {
     private @Nullable TermBatch values;
     private @MonotonicNonNull TermBatch dedupValues;
+    private final boolean assumeValuesDistinct;
 
     public Values(Vars vars, @Nullable Orphan<TermBatch> values) {
+        this(vars, values, false);
+    }
+    public Values(Vars vars, @Nullable Orphan<TermBatch> values, boolean assumeValuesDistinct) {
         super(Operator.VALUES);
         this.publicVars = this.allVars = vars;
+        this.assumeValuesDistinct = assumeValuesDistinct;
         if (Batch.peekRows(values) == 0)
             Orphan.recycle(values);
         else if (values != null)
@@ -82,6 +87,8 @@ public final class Values extends Plan implements LeakyOwner {
     }
 
     private TermBatch dedupValues() {
+        if (assumeValuesDistinct)
+            return values;
         TermBatch dedupValues = this.dedupValues;
         if (dedupValues == null && values != null) {
             var filter = TERM.filter(publicVars, Dedup.weak(TERM, values.cols, WEAK))

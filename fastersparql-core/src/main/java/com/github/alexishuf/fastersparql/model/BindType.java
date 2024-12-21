@@ -67,4 +67,6 @@ public enum BindType {
     }
 
     public boolean isJoin() { return this == JOIN || this == LEFT_JOIN; }
+
+    public boolean isNegation() { return this == MINUS || this == NOT_EXISTS; }
 }

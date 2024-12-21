@@ -1,12 +1,15 @@
 package com.github.alexishuf.fastersparql.client;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
+import com.github.alexishuf.fastersparql.batch.operators.GroupBind;
+import com.github.alexishuf.fastersparql.batch.operators.GroupBindingBIt;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.model.SparqlEndpoint;
 import com.github.alexishuf.fastersparql.client.util.ClientBindingBIt;
 import com.github.alexishuf.fastersparql.emit.Emitter;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
+import com.github.alexishuf.fastersparql.emit.stages.GroupBindingStage;
 import com.github.alexishuf.fastersparql.exceptions.FSException;
 import com.github.alexishuf.fastersparql.exceptions.FSIllegalStateException;
 import com.github.alexishuf.fastersparql.exceptions.InvalidSparqlQueryType;
@@ -113,12 +116,16 @@ public abstract class AbstractSparqlClient implements SparqlClient {
     doEmit(BatchType<B> bt, SparqlQuery sparql, Vars rebindHint);
 
     protected <B extends Batch<B>> BIt<B> doQuery(ItBindQuery<B> bq) {
-        return new ClientBindingBIt<>(bq, this);
+        var gb = GroupBind.tryCreate(bq, false, this, null);
+        return gb == null ? new ClientBindingBIt<>(bq, this)
+                          : new GroupBindingBIt<>(gb);
     }
 
     protected <B extends Batch<B>> Orphan<? extends Emitter<B, ?>>
     doEmit(EmitBindQuery<B> query, Vars rebindHint) {
-        return BindingStage.create(query, rebindHint, this);
+        var gb = GroupBind.tryCreate(query, false, this, null);
+        return gb == null ? BindingStage.create(query, rebindHint, this)
+                          : GroupBindingStage.create(gb);
     }
 
     /* --- --- --- interface implementations --- --- --- */

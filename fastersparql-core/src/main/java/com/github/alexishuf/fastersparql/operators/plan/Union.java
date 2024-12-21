@@ -24,7 +24,7 @@ import static com.github.alexishuf.fastersparql.sparql.DistinctType.WEAK;
 
 
 public final class Union extends Plan {
-    public final boolean crossDedup;
+    public boolean crossDedup;
     Boolean singleEndpoint;
 
     public Union(boolean crossDedup, Plan left, Plan right) {

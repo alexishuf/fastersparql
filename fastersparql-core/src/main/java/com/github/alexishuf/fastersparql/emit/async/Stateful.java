@@ -49,6 +49,9 @@ public abstract class Stateful<S extends Stateful<S>> extends AbstractOwned<S> {
     /** The notification of termination has been send (downstream handlers already returned). */
     public static final int IS_TERM_DELIVERED = 0x00000080;
 
+    public static final int IS_TERM_OR_DELIVERED = IS_TERM|IS_TERM_DELIVERED;
+    public static final int IS_CANCEL_REQ_OR_TERM_OR_DELIVERED = IS_CANCEL_REQ|IS_TERM_OR_DELIVERED;
+
     protected static final int GRP_MASK       = 0x000000fc;
     protected static final int STATE_MASK     = -1 >>> numberOfLeadingZeros(GRP_MASK);
     protected static final int GRP_BIT        = numberOfTrailingZeros(GRP_MASK);

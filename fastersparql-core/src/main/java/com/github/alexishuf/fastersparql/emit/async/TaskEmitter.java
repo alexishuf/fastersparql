@@ -112,6 +112,8 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
 
     @Override
     public void subscribe(Receiver<B> receiver) throws RegisterAfterStartException, MultipleRegistrationUnsupportedException {
+        if (receiver == null)
+            throw new NullPointerException("receiver is null");
         int st = lock();
         try {
             if ((st & IS_INIT) == 0)
@@ -144,7 +146,10 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     }
 
     protected void onFirstRequest() {
-        moveStateRelease(statePlain(), ACTIVE);
+        int st = stateAcquire();
+        if (downstream == null)
+            throw new IllegalStateException("request() before subscribe");
+        moveStateRelease(st, ACTIVE);
     }
 
     protected void resume() {
@@ -158,7 +163,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
     @Override protected void task(EmitterService.Worker worker, int threadId) {
         this.threadId = (short)threadId;
         int st = statePlain();
-        if ((st&IS_CANCEL_REQ) != 0)
+        if ((st&IS_CANCEL_REQ_OR_TERM_OR_DELIVERED) == IS_CANCEL_REQ)
             st = doCancel(st);
         if ((st&IS_PENDING_TERM) != 0)
             st = doPendingTerm(st);
@@ -173,13 +178,12 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
             }
         }
 
-        if ((termState& IS_TERM_OR_TERM_DELIVERED) == IS_TERM)
+        if ((termState&IS_TERM_OR_DELIVERED) == IS_TERM)
             deliverTermination(st, termState);
         else if ((st&IS_TERM_DELIVERED) == 0 && mustAwake())
             awakeSameWorker(worker);
     }
     private static final int CAN_PRODUCE_AND_DELIVER   = IS_LIVE|IS_PENDING_TERM;
-    private static final int IS_TERM_OR_TERM_DELIVERED = IS_TERM|IS_TERM_DELIVERED;
 
     /**
      * Called from {@link #task(EmitterService.Worker, int)} when the state contains the
@@ -189,7 +193,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
      * @return the updated current {@link #state()}
      */
     protected int doCancel(int state) {
-        moveStateRelease(state, CANCELLED);
+        deliverTermination(state, CANCELLED);
         return statePlain();
     }
 
@@ -201,7 +205,7 @@ public abstract class TaskEmitter<B extends Batch<B>, E extends TaskEmitter<B, E
      * @return the updated current {@link #state()}
      */
     protected int doPendingTerm(int state) {
-        moveStateRelease(state, (state&~IS_PENDING_TERM)|IS_TERM);
+        deliverTermination(state, (state&~IS_PENDING_TERM)|IS_TERM);
         return statePlain();
     }
 

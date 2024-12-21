@@ -63,6 +63,7 @@ public class FSProperties {
     public static final String IT_QUEUE_BATCHES          = "fastersparql.it.queue.batches";
     public static final String IT_TRACE_CANCEL           = "fastersparql.it.cancel.trace";
     public static final String IT_STATS                  = "fastersparql.it.stats";
+    public static final String SP_GROUP_BIND_JOIN        = "fastersparql.group-sp-bind-join";
     public static final String OP_DISTINCT_CAPACITY      = "fastersparql.op.distinct.capacity";
     public static final String OP_WEAKEN_DISTINCT        = "fastersparql.op.distinct.weaken";
     public static final String OP_CROSS_DEDUP            = "fastersparql.op.cross-dedup";
@@ -95,10 +96,11 @@ public class FSProperties {
     public static final int     DEF_EMIT_REQ_CHUNK_BATCHES    = 8;
     public static final int     DEF_WS_IMPLICIT_REQUEST       = DEF_EMIT_REQ_CHUNK_BATCHES/4;
     public static final int     DEF_IT_QUEUE_BATCHES          = 4;
-    public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<20; // 1 Mi rows --> 8MiB
+    public static final int     DEF_OP_DISTINCT_CAPACITY      = 1<<24; // 16 Mi rows --> 8MiB
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
+    public static final int     DEF_SP_GROUP_BIND_JOIN        = 15; // same value as FedX
     public static final boolean DEF_BATCH_NO_INTERN_IRI       = false;
     public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
@@ -129,6 +131,7 @@ public class FSProperties {
     private static int CACHE_FED_ASK_POS_CAP           = -1;
     private static int CACHE_FED_ASK_NEG_CAP           = -1;
     private static int CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
+    private static int CACHE_SP_GROUP_BIND_JOIN        = -1;
     private static long CACHE_WS_IMPLICIT_REQUEST      = -1;
     private static double CACHE_BATCH_MIN_SIZE         = -1;
     private static Boolean CACHE_OP_WEAKEN_DISTINCT     = null;
@@ -256,6 +259,7 @@ public class FSProperties {
         CACHE_FED_ASK_POS_CAP           = -1;
         CACHE_FED_ASK_NEG_CAP           = -1;
         CACHE_EMIT_REQ_CHUNK_BATCHES    = -1;
+        CACHE_SP_GROUP_BIND_JOIN        = -1;
         CACHE_OP_WEAKEN_DISTINCT        = null;
         CACHE_USE_VECTORIZATION         = null;
         CACHE_USE_UNSAFE                = null;
@@ -851,6 +855,24 @@ public class FSProperties {
      */
     public static @Positive int itQueueRows(BatchType<?> bt, int varsCount) {
         return (itQueueBatches()*bt.preferredRowsPerBatch(varsCount));
+    }
+
+
+    /**
+     * The maximum number of left-side bindings to send in a single SPARQL query if using
+     * SPARQL over HTTP. If this value is larger than {@code 1}, then queries will use a VALUES
+     * clause to encode multiple bindings. If the value is {@code <= 1} each left-side binding
+     * will generate a bound right-side query which will have variables replaced by values
+     * from the binding (there will be no VALUES clause).
+     *
+     * @return The maximum number of bindings per SPARQL query, {@code 1} means values are inlined,
+     *         {@code n > 1} means that up to {@code n} bindings will be set in a VALUES clause.
+     */
+    public static int sparqlGroupBindJoin() {
+        int v = CACHE_SP_GROUP_BIND_JOIN;
+        if (v <= 0)
+            CACHE_SP_GROUP_BIND_JOIN = v = readPositiveInt(SP_GROUP_BIND_JOIN, DEF_SP_GROUP_BIND_JOIN);
+        return v;
     }
 
     /**

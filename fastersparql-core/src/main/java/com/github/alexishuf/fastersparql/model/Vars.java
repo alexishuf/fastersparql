@@ -111,6 +111,21 @@ public sealed class Vars extends AbstractList<SegmentRope> implements RandomAcce
         return copy;
     }
 
+    public final Vars union(FinalSegmentRope name) {
+        if (contains(name))
+            return this;
+        int capacity = Math.max(10, Math.max(size+1, array.length+(array.length>>1)));
+        var copy = new Mutable(Arrays.copyOf(array, capacity), has, size);
+        copy.add(FinalSegmentRope.asFinal(name));
+        return copy;
+    }
+
+    public final Vars union(Term var) {
+        if (!var.isVar())
+            throw new IllegalArgumentException("Non-var term");
+        return union(var.name());
+    }
+
     /** Get a {@link Vars} (which may be {@code this}) with all items in {@code this} that are
      *  not present in {@code right} */
     public final Vars minus(Vars right) {

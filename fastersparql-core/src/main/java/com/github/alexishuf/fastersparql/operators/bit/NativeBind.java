@@ -2,9 +2,7 @@ package com.github.alexishuf.fastersparql.operators.bit;
 
 import com.github.alexishuf.fastersparql.batch.BIt;
 import com.github.alexishuf.fastersparql.batch.dedup.Dedup;
-import com.github.alexishuf.fastersparql.batch.operators.MergeBIt;
-import com.github.alexishuf.fastersparql.batch.operators.ProcessorBIt;
-import com.github.alexishuf.fastersparql.batch.operators.ScatterBIt;
+import com.github.alexishuf.fastersparql.batch.operators.*;
 import com.github.alexishuf.fastersparql.batch.type.Batch;
 import com.github.alexishuf.fastersparql.batch.type.BatchType;
 import com.github.alexishuf.fastersparql.client.EmitBindQuery;
@@ -15,6 +13,7 @@ import com.github.alexishuf.fastersparql.emit.Emitters;
 import com.github.alexishuf.fastersparql.emit.async.GatheringEmitter;
 import com.github.alexishuf.fastersparql.emit.async.ScatterStage;
 import com.github.alexishuf.fastersparql.emit.stages.BindingStage;
+import com.github.alexishuf.fastersparql.emit.stages.GroupBindingStage;
 import com.github.alexishuf.fastersparql.model.BindType;
 import com.github.alexishuf.fastersparql.model.Vars;
 import com.github.alexishuf.fastersparql.operators.metrics.Metrics;
@@ -102,8 +101,12 @@ public class NativeBind {
             } else if (r instanceof Union rUnion && allNativeOperands(rUnion)) {
                 left = multiBind(left, type, projection, rUnion, binding, weakDedup, jm, null);
             } else {
-                if (binding != null) r = r.bound(binding);
-                left = new PlanBindingBIt<>(new ItBindQuery<>(r, left, type, jm), weakDedup, projection);
+                if (binding != null)
+                    r = r.bound(binding);
+                var bq = new ItBindQuery<>(r, left, type, jm);
+                Orphan<GroupBind<B>> gb = GroupBind.tryCreate(bq, weakDedup, projection);
+                left = gb == null ? new PlanBindingBIt<>(bq, weakDedup, projection)
+                                  : new GroupBindingBIt<>(gb);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)
@@ -166,8 +169,10 @@ public class NativeBind {
                 left = multiBindEmit(left, type, projection, rUnion, rebindHint,
                                      weakDedup, null);
             } else {
-                left = BindingStage.create(new EmitBindQuery<>(r, left, type), rebindHint,
-                                           weakDedup, projection);
+                EmitBindQuery<B> bq = new EmitBindQuery<>(r, left, type);
+                var gb = GroupBind.tryCreate(bq, weakDedup, projection);
+                left = gb == null ? BindingStage.create(bq, rebindHint, weakDedup, projection)
+                                  : GroupBindingStage.create(gb);
             }
         }
         // if the join has a projection (due to reordering, not due to outer Modifier)

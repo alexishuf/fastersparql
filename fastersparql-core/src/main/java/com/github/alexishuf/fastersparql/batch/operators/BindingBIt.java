@@ -29,7 +29,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     @SuppressWarnings("unchecked")
     private static final Class<ArrayList<SparqlClient.Guard>> GUARDS_CLASS
             = (Class<ArrayList<SparqlClient.Guard>>) (Object)ArrayList.class;
-    private static final Alloc<ArrayList<SparqlClient.Guard>> GUARDS_ALLOC
+    static final Alloc<ArrayList<SparqlClient.Guard>> GUARDS_ALLOC
             = new Alloc<>(GUARDS_CLASS, "BindingBIt.GUARDS_ALLOC",
                           Alloc.THREADS*32, GUARDS_FAC, 16 + 2*4);
     static {Primer.INSTANCE.sched(GUARDS_ALLOC::prime);}
@@ -41,7 +41,7 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
     private final BIt<B> empty;
     private final BatchBinding tempBinding;
     private long bindingSeq;
-    private @Nullable ArrayList<SparqlClient.Guard> guards;
+    protected @Nullable ArrayList<SparqlClient.Guard> guards;
 
     /* --- --- --- lifecycle --- --- --- */
 
@@ -59,11 +59,6 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
         this.merger      = batchType.merger(vars(), leftPublicVars, rFree).takeOwnership(this);
         this.tempBinding = new BatchBinding(leftPublicVars);
         this.metrics     = bindQuery.metrics;
-    }
-
-    protected void addGuard(SparqlClient.Guard g) {
-        //noinspection DataFlowIssue guards != null
-        guards.add(g);
     }
 
     @Override public Stream<? extends StreamNode> upstreamNodes() {
@@ -200,11 +195,11 @@ public abstract class BindingBIt<B extends Batch<B>> extends AbstractFlatMapBIt<
             b = null;
             return r.rows == 0 ? handleEmptyBatch(r) : onNextBatch(r.releaseOwnership(this));
         } catch (Throwable t) {
-            Batch.safeRecycle(b, this);
             onTermination(t);
             throw t;
         } finally {
             unlock();
+            Batch.safeRecycle(b, this);
         }
     }
 

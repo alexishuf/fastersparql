@@ -7,13 +7,15 @@ import com.github.alexishuf.fastersparql.client.ItBindQuery;
 import com.github.alexishuf.fastersparql.client.SparqlClient;
 import com.github.alexishuf.fastersparql.sparql.binding.BatchBinding;
 
+import java.util.Objects;
+
 public final class ClientBindingBIt<B extends Batch<B>> extends BindingBIt<B> {
     private final SparqlClient client;
 
     public ClientBindingBIt(ItBindQuery<B> bindQuery, SparqlClient client) {
         super(bindQuery, null);
         this.client = client;
-        addGuard(client.retain());
+        Objects.requireNonNull(guards).add(client.retain());
     }
 
     @Override protected BIt<B> bind(BatchBinding binding) {
