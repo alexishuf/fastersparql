@@ -71,7 +71,7 @@ public abstract sealed class Plan
             case EXISTS     -> dest.append(EXISTS_NM);
             case NOT_EXISTS -> dest.append(NOT_EXISTS_NM);
             case VALUES     -> dest.append(VALUES_NM).append(allVars());
-            case UNION -> dest.append(((Union)this).crossDedup ? UNION_NM : UNION_NM_CD);
+            case UNION -> dest.append(((Union)this).crossDedup ? UNION_NM_CD : UNION_NM);
             case QUERY -> {
                 Query q = (Query) this;
                 dest.append(QUERY_LBRAC).append(q.client.endpoint().uri()).append(']').append('(');
