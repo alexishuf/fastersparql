@@ -184,10 +184,8 @@ public class Jfr2Csv implements Callable<Void> {
                 }
                 syncWeigtsList.add(fileCounter.makeInfo());
             } catch (IOException e) {
-                log.error("Failed to read JFR data from {}", file);
-                throw new RuntimeException(e);
+                log.warn("Failed to read JFR data from {}: {}", file, e.toString());
             }
-            log.info("Processed {}/{} .jfr files for {}", ++nDone, jfrFiles.size(), params);
         }
         syncWeigtsList.add(allCounter.makeInfo());
     }
@@ -753,8 +751,8 @@ public class Jfr2Csv implements Callable<Void> {
 
     record JfrFile(File file, long modifiedMs) {
         public JfrFile(File file) { this(file, file.lastModified()); }
-        public boolean isNewerThan(JfrFile other) {
-            return other == null || modifiedMs > other.modifiedMs;
+        public static boolean isNewerThan(File candidate, @Nullable JfrFile older) {
+            return older == null || candidate.lastModified() > older.modifiedMs;
         }
     }
 
@@ -799,28 +797,22 @@ public class Jfr2Csv implements Callable<Void> {
                 if (matcher.matches()) {
                     File jfr = new File(subDir, "jfr-cpu.jfr");
                     if (jfr.isFile() && jfr.length() > 0) {
-                        try (var rec = new RecordingFile(jfr.toPath())) {
-                            rec.readEventTypes();
-                            Params params = null;
-                            try {
-                                params = new Params(
-                                        matcher.group(QUERIES_GRP),
-                                        SourceKind.valueOf(matcher.group(SRC_KIND_GRP)),
-                                        BatchKind.valueOf(matcher.group(BATCH_KIND_GRP)),
-                                        FlowModel.valueOf(matcher.group(FLOW_GRP)),
-                                        Boolean.parseBoolean(matcher.group(UNION_SOURCE_GRP)));
-                            } catch (IllegalArgumentException e) {
-                                log.error("JFR file naming does not match current names." +
-                                          " file: {}. error: {}", jfr, e.getMessage());
-                            }
-                            if (params != null) {
-                                JfrFile offer = new JfrFile(jfr);
-                                JfrFile old = param2jfr.getOrDefault(params, null);
-                                if (offer.isNewerThan(old))
-                                    param2jfr.put(params, offer);
-                            }
-                        } catch (Exception e) {
-                            log.warn("Ignoring broken JFR at {}", jfr);
+                        Params params = null;
+                        try {
+                            params = new Params(
+                                    matcher.group(QUERIES_GRP),
+                                    SourceKind.valueOf(matcher.group(SRC_KIND_GRP)),
+                                    BatchKind.valueOf(matcher.group(BATCH_KIND_GRP)),
+                                    FlowModel.valueOf(matcher.group(FLOW_GRP)),
+                                    Boolean.parseBoolean(matcher.group(UNION_SOURCE_GRP)));
+                        } catch (IllegalArgumentException e) {
+                            log.error("JFR file naming does not match current names." +
+                                    " file: {}. error: {}", jfr, e.getMessage());
+                        }
+                        if (params != null) {
+                            JfrFile old = param2jfr.getOrDefault(params, null);
+                            if (JfrFile.isNewerThan(jfr, old))
+                                param2jfr.put(params, new JfrFile(jfr));
                         }
                     }
                 } else if (subDir.isDirectory()) {
