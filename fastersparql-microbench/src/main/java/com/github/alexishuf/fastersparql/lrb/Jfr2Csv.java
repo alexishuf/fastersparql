@@ -3,6 +3,7 @@ package com.github.alexishuf.fastersparql.lrb;
 import com.github.alexishuf.fastersparql.FlowModel;
 import com.github.alexishuf.fastersparql.lrb.cmd.MeasureOptions.BatchKind;
 import com.github.alexishuf.fastersparql.lrb.sources.SourceKind;
+import com.github.alexishuf.fastersparql.util.BS;
 import jdk.jfr.consumer.*;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -21,7 +22,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static java.lang.String.format;
@@ -157,25 +157,25 @@ public class Jfr2Csv implements Callable<Void> {
     private static void makeTasksWeights(Params params, List<File> jfrFiles,
                                          List<TasksWeights> syncWeigtsList) {
         var allCounter = new SampleCounter(params, "All");
-        var tmp = new StringBuilder();
-        int nDone = 0;
+        Matcher matcher = new Matcher(params);
         for (File file : jfrFiles) {
-            log.info("Processing {}...", file  );
+            log.info("Processing {}", file  );
             try (var rec = new RecordingFile(file.toPath())) {
                 var fileCounter = new SampleCounter(params, file.toString());
                 while (rec.hasMoreEvents()) {
                     var event = rec.readEvent();
                     if (event.getEventType().getName().equals("jdk.ExecutionSample")) {
+                        matcher.reset(event);
                         allCounter.sample();
                         fileCounter.sample();
                         for (var task : Task.EXCLUDE) {
-                            if (task.matches(params, event, tmp)) {
+                            if (matcher.matches(task)) {
                                 allCounter.excluded(task);
                                 fileCounter.excluded(task);
                             }
                         }
                         for (var task : Task.INCLUDE) {
-                            if (task.matches(params, event, tmp)) {
+                            if (matcher.matches(task)) {
                                 allCounter.included(task);
                                 fileCounter.included(task);
                             }
@@ -307,11 +307,6 @@ public class Jfr2Csv implements Callable<Void> {
             }
         }
         public String headerName() { return HEADER_NAME[ordinal()]; }
-
-        public boolean matches(Params params, RecordedEvent event, StringBuilder tmp) {
-            return matches(params, event.getThread("sampledThread"),
-                           event.getStackTrace().getFrames(), tmp);
-        }
 
         private static final TaskPattern[][] PATTERNS;
         static {
@@ -616,43 +611,71 @@ public class Jfr2Csv implements Callable<Void> {
             if (!missing.isEmpty())
                 throw new ExceptionInInitializerError("No patterns for "+missing);
         }
+    }
 
-        public boolean matches(Params params, RecordedThread thread, List<RecordedFrame> frames,
-                               StringBuilder tmp) {
-            return switch (this) {
+    private static final class Matcher {
+        private static final int TASKS_COUNT = Task.values().length;
+        private static final int NEGATIVE_BEGIN = TASKS_COUNT;
+        private final Params params;
+        private RecordedEvent event;
+        private final StringBuilder sb = new StringBuilder();
+        private final long[] bitset = new long[BS.longsFor(TASKS_COUNT*2)];
+
+        public Matcher(Params params) {this.params = params;}
+
+        public void reset(RecordedEvent e) {
+            Arrays.fill(this.bitset, 0L);
+            this.sb.setLength(0);
+            this.event = e;
+        }
+
+        public boolean matches(Task task) {
+            int ordinal = task.ordinal();
+            if (BS.get(bitset, ordinal))
+                return true; // cached positive match
+            if (BS.get(bitset, NEGATIVE_BEGIN+ordinal))
+                return false; // cached negative match
+            var frames = event.getStackTrace().getFrames();
+            return matches0(params, task, event.getThread("sampledThread"), frames);
+        }
+
+        private boolean matches0(Params params, Task task, RecordedThread thread, List<RecordedFrame> frames) {
+            boolean match = switch (task) {
                 case GC -> thread != null && thread.getOSName().startsWith("GC Thread");
                 case GC_PAGE_FAULT -> thread != null && thread.getOSName().startsWith("GC Thread")
-                        && PAGE_FAULT.matches(params, thread, frames, tmp);
-                case NEW_OR_PAGE_FAULT -> NEW.matches(params, thread, frames, tmp)
-                        || NEW_PAGE_FAULT.matches(params, thread, frames, tmp);
+                        && matches0(params, Task.PAGE_FAULT, thread, frames);
+                case NEW_OR_PAGE_FAULT -> matches0(params, Task.NEW, thread, frames)
+                        || matches0(params, Task.NEW_PAGE_FAULT, thread, frames);
                 case NEW_OR_PAGE_FAULT_REBIND ->
-                        NEW_OR_PAGE_FAULT.matches(params, thread, frames, tmp)
-                                && REBIND.matches(params, thread, frames, tmp);
+                        matches0(params, Task.NEW_OR_PAGE_FAULT, thread, frames)
+                                && matches0(params, Task.REBIND, thread, frames);
                 case MMAP_PAGE_FAULT ->
-                    PAGE_FAULT.matches(params, thread, frames, tmp)
-                            && !NEW_PAGE_FAULT.matches(params, thread, frames, tmp);
-                case OPTIMIZER -> JENA_OPTIMIZER.matches(params, thread, frames, tmp)
-                        || FS_OPTIMIZER.matches(params, thread, frames, tmp);
-                case PARSE_SPARQL -> FS_PARSE_SPARQL.matches(params, thread, frames, tmp)
-                        || JENA_PARSE_SPARQL.matches(params, thread, frames, tmp);
-                case REBIND -> EM_REBIND.matches(params, thread, frames, tmp)
-                        || IT_REBIND.matches(params, thread, frames, tmp);
-                case LOCKBIND -> LOCK.matches(params, thread, frames, tmp)
-                        && REBIND.matches(params, thread, frames, tmp);
-                case TASK_TAKE -> EM_TASK_TAKE.matches(params, thread, frames, tmp)
-                        || IT_TASK_TAKE.matches(params, thread, frames, tmp);
-                case TASK_PUT -> EM_TASK_PUT.matches(params, thread, frames, tmp)
-                        || IT_TASK_PUT.matches(params, thread, frames, tmp);
-                case TASK_QUEUES -> TASK_TAKE.matches(params, thread, frames, tmp)
-                        || TASK_PUT.matches(params, thread, frames, tmp);
+                        matches0(params, Task.PAGE_FAULT, thread, frames)
+                                && !matches0(params, Task.NEW_PAGE_FAULT, thread, frames);
+                case OPTIMIZER -> matches0(params, Task.JENA_OPTIMIZER, thread, frames)
+                        || matches0(params, Task.FS_OPTIMIZER, thread, frames);
+                case PARSE_SPARQL -> matches0(params, Task.FS_PARSE_SPARQL, thread, frames)
+                        || matches0(params, Task.JENA_PARSE_SPARQL, thread, frames);
+                case REBIND -> matches0(params, Task.EM_REBIND, thread, frames)
+                        || matches0(params, Task.IT_REBIND, thread, frames);
+                case LOCKBIND -> matches0(params, Task.LOCK, thread, frames)
+                        && matches0(params, Task.REBIND, thread, frames);
+                case TASK_TAKE -> matches0(params, Task.EM_TASK_TAKE, thread, frames)
+                        || matches0(params, Task.IT_TASK_TAKE, thread, frames);
+                case TASK_PUT -> matches0(params, Task.EM_TASK_PUT, thread, frames)
+                        || matches0(params, Task.IT_TASK_PUT, thread, frames);
+                case TASK_QUEUES -> matches0(params, Task.TASK_TAKE, thread, frames)
+                        || matches0(params, Task.TASK_PUT, thread, frames);
                 default -> {
-                    for (var taskPattern : PATTERNS[ordinal()]) {
-                        if (taskPattern.matches(params, frames, tmp))
+                    for (var taskPattern : Task.PATTERNS[task.ordinal()]) {
+                        if (taskPattern.matches(params, frames, sb))
                             yield true;
                     }
                     yield false;
                 }
             };
+            BS.set(bitset, (match ? 0 : NEGATIVE_BEGIN) + task.ordinal());
+            return match;
         }
     }
 
@@ -793,7 +816,7 @@ public class Jfr2Csv implements Callable<Void> {
             }
             log.info("Scanning {} dirs in {}...", subDirs.length, dir);
             for (File subDir : subDirs) {
-                Matcher matcher = RX.matcher(subDir.getName());
+                java.util.regex.Matcher matcher = RX.matcher(subDir.getName());
                 if (matcher.matches()) {
                     File jfr = new File(subDir, "jfr-cpu.jfr");
                     if (jfr.isFile() && jfr.length() > 0) {
