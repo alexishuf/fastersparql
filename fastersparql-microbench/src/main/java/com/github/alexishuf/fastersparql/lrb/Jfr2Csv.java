@@ -17,6 +17,8 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Semaphore;
@@ -103,7 +105,7 @@ public class Jfr2Csv implements Callable<Void> {
 
     private void writeOutputCsv(List<TasksWeights> infos) throws IOException {
         try (var w = new FileWriter(destFile, UTF_8)) {
-            w.append("queries,source,batch,flow,unionSource,origin,samples,excludedSamples,includedSamples");
+            w.append("queries,source,batch,flow,unionSource,origin,samples,excludedSamples,includedSamples,ms");
             for (Task task : Task.ALL)
                 w.append(',').append(task.headerName());
             w.append("\r\n");
@@ -117,7 +119,8 @@ public class Jfr2Csv implements Callable<Void> {
                         .append(weights.origin).append(',')
                         .append(Long.toString(weights.samples)).append(',')
                         .append(Long.toString(weights.excludedSamples)).append(',')
-                        .append(Long.toString(weights.includedSamples()));
+                        .append(Long.toString(weights.includedSamples())).append(',')
+                        .append(Long.toString(weights.ms));
                 for (Task task : Task.ALL)
                     w.append(',').append(Double.toString(weights.get(task)));
                 w.append("\r\n");
@@ -160,10 +163,16 @@ public class Jfr2Csv implements Callable<Void> {
         Matcher matcher = new Matcher(params);
         for (File file : jfrFiles) {
             log.info("Processing {}", file  );
+            Instant begin = Instant.MAX, end = Instant.MIN;
             try (var rec = new RecordingFile(file.toPath())) {
                 var fileCounter = new SampleCounter(params, file.toString());
                 while (rec.hasMoreEvents()) {
                     var event = rec.readEvent();
+                    var instant = event.getStartTime();
+                    if (instant.compareTo(begin) < 0)
+                        begin = instant;
+                    if (instant.compareTo(end) > 0)
+                        end = instant;
                     if (event.getEventType().getName().equals("jdk.ExecutionSample")) {
                         matcher.reset(event);
                         allCounter.sample();
@@ -182,6 +191,9 @@ public class Jfr2Csv implements Callable<Void> {
                         }
                     }
                 }
+                long ms = begin.until(end, ChronoUnit.MILLIS);
+                allCounter.addMs(ms);
+                fileCounter.addMs(ms);
                 syncWeigtsList.add(fileCounter.makeInfo());
             } catch (IOException e) {
                 log.warn("Failed to read JFR data from {}: {}", file, e.toString());
@@ -737,6 +749,7 @@ public class Jfr2Csv implements Callable<Void> {
     private static final class SampleCounter {
         private final Params params;
         private final String origin;
+        private long ms;
         private long samples;
         private long excludedSamples;
         private final long[] task2samples = new long[Task.ALL.length];
@@ -745,6 +758,8 @@ public class Jfr2Csv implements Callable<Void> {
             this.params = params;
             this.origin = origin;
         }
+
+        public void addMs(long ms) { this.ms += ms; }
 
         public void included(Task task) { ++task2samples[task.ordinal()]; }
 
@@ -762,12 +777,12 @@ public class Jfr2Csv implements Callable<Void> {
                 weights[t.ordinal()] = task2samples[t.ordinal()]/(double)samples;
             for (Task t : Task.INCLUDE)
                 weights[t.ordinal()] = task2samples[t.ordinal()]/nonExcludedSamples;
-            return new TasksWeights(params, origin, samples, excludedSamples, weights);
+            return new TasksWeights(params, origin, samples, excludedSamples, ms, weights);
         }
     }
 
     private record TasksWeights(Params params, String origin, long samples, long excludedSamples,
-                                double[] weights) {
+                                long ms, double[] weights) {
         public double get(Task task) { return weights[task.ordinal()]; }
         public long includedSamples() { return samples-excludedSamples; }
     }
