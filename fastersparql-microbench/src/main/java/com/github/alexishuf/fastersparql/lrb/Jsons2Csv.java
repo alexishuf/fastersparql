@@ -21,10 +21,7 @@ import java.io.*;
 import java.lang.reflect.Type;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -83,9 +80,9 @@ public class Jsons2Csv implements Callable<Void> {
     private static final class JmhResults {
         transient File originFile;
         transient long lastModified;
-        transient boolean oom;
-        transient boolean timeout;
-        transient boolean failed;
+        transient boolean[][] oom = new boolean[0][];
+        transient boolean[][] timeout = new boolean[0][];
+        transient boolean[][] failed = new boolean[0][];
         String benchmark;
         String jvm;
         String jdkVersion;
@@ -99,6 +96,20 @@ public class Jsons2Csv implements Callable<Void> {
         List<String> jvmArgs;
         Params params;
         PrimaryMetric primaryMetric;
+
+        void setIterations(int forks, int measIterations) {
+            this.forks                 = forks;
+            this.measurementIterations = measIterations;
+            oom     = copyOf(oom,     forks);
+            failed  = copyOf(failed,  forks);
+            timeout = copyOf(timeout, forks);
+            boolean[] empty = new boolean[0];
+            for (int i = 0; i < forks; i++) {
+                oom[i]     = copyOf(requireNonNullElse(oom[i],     empty), measIterations);
+                failed[i]  = copyOf(requireNonNullElse(failed[i],  empty), measIterations);
+                timeout[i] = copyOf(requireNonNullElse(timeout[i], empty), measIterations);
+            }
+        }
     }
 
     public static void main(String[] args) {
@@ -156,9 +167,9 @@ public class Jsons2Csv implements Callable<Void> {
                     }
                     if (toutIteration < forkData.length) {
                         log.info("Timeout at {}s for {} src={} flow={} batch={}",
-                                format("%,7.3f", timeoutMs/1_000.0),
+                                format("%,9.3f", timeoutMs/1_000.0),
                                 format("%-7s", p.queries),
-                                format("%-25s", p.srcKind+(p.unionSource?"(union)": "")),
+                                format("%-27s", p.srcKind+(p.unionSource?"(union)": "")),
                                 p.flowModel.name().substring(0, 2),
                                 format("%-10s", p.batchKind));
                     }
@@ -169,15 +180,11 @@ public class Jsons2Csv implements Callable<Void> {
                         out.append(Integer.toString(iteration)).append(',');
                         double ms = iteration >= toutIteration ? timeoutMs : forkData[iteration];
                         out.append(Double.toString(ms)).append(',');
-                        out.append(iteration >= toutIteration ? "true" : notTimeout);
-                        out.append(",false,false\r\n");
+                        boolean timeout = r.timeout[fork][iteration] || iteration >= toutIteration;
+                        out.append(timeout ? "true" : notTimeout).append(',');
+                        out.append(Boolean.toString(r.failed[fork][iteration])).append(',');
+                        out.append(Boolean.toString(r.oom[fork][iteration])).append("\r\n");
                     }
-                }
-                if (r.failed) {
-                    out.append(shared);
-                    out.append(Integer.toString(r.primaryMetric.rawData.length)); //fork
-                    out.append(",0,,false,true,"); // ,iteration,ms,timedout,failed,
-                    out.append(Boolean.toString(r.oom)).append("\r\n");
                 }
             }
         }
@@ -197,11 +204,14 @@ public class Jsons2Csv implements Callable<Void> {
 
     private static final class ResultsCollector {
         private static final String PARAMS_LINE_PREFIX = "# Parameters: (";
-        private static final String OOM = "OutOfMemoryError";
-        private static final String OOM_KILLED = "OOM-killed";
         private static final String FAILED = "<forked VM failed with exit code ";
         private static final String EXIT_CODE_OOM  = "exit code 23";
-        private static final String EXIT_CODE_HANG = "exit code 27";
+        private static final Pattern EXIT_CODE_HANG = Pattern.compile("exit code (27|137)");
+        private static final Pattern OOM = Pattern.compile("OutOfMemoryError|Java heap space|OOM-killed");
+        private static final Pattern EXCEPTION = Pattern.compile("(IndexOutOfBounds|IllegalArgument|NumberFormat|QueryResultParse|InvalidSparqlResults|JsonParse|InvalidTerm)Exception|(OutOfMemory)Error");
+        private static final Pattern ITERATION = Pattern.compile("^Iteration +(\\d+):");
+        private static final Pattern FORK = Pattern.compile("^# Fork: (\\d+) +of +(\\d+)");
+        private static final Pattern ITERATIONS = Pattern.compile("^# +Measurement: +(\\d+) +iterations");
         private static final Pattern BATCH_KIND = Pattern.compile("[( ]batchKind = (\\w+)");
         private static final Pattern FLOW_MODEL = Pattern.compile("[( ]flowModel = (\\w+)");
         private static final Pattern QUERIES = Pattern.compile("[( ]queries = (\\w+)");
@@ -247,6 +257,7 @@ public class Jsons2Csv implements Callable<Void> {
                 for (var results : list) {
                     results.originFile   = f;
                     results.lastModified = f.lastModified();
+                    results.setIterations(results.forks, results.measurementIterations);
                     JmhResults old = param2res.get(results.params);
                     if (old == null || old.lastModified < results.lastModified) {
                         if (old != null)
@@ -269,6 +280,7 @@ public class Jsons2Csv implements Callable<Void> {
                 for (var results : list) {
                     results.originFile   = f;
                     results.lastModified = f.lastModified();
+                    results.setIterations(results.forks, results.measurementIterations);
                     JmhResults old = param2res.get(results.params);
                     if (old == null || old.lastModified < results.lastModified) {
                         if (old == null) {
@@ -300,14 +312,28 @@ public class Jsons2Csv implements Callable<Void> {
         private void visitLog(File f) {
             if (!f.isFile() || f.length() == 0)
                 return;
+            var corrJson = f.toPath().resolveSibling(f.getName().replace(".log", ".json")).toFile();
             try (var reader = new BufferedReader(new FileReader(f))) {
                 boolean oom = false;
-                boolean timeout = false;
+                boolean exception = false;
+                int fork = 0, forks = 0, iteration = -1, measIterations = 1;
+                Matcher itMatcher = ITERATION.matcher("");
+                Matcher forkMatcher = FORK.matcher("");
+                Matcher itersMatcher = ITERATIONS.matcher("");
+                Matcher oomMatcher = OOM.matcher("");
+                Matcher exceptionMatcher = EXCEPTION.matcher("");
                 Params params = null;
                 for (String line; (line=reader.readLine()) != null; ) {
-                    if (line.startsWith(PARAMS_LINE_PREFIX)) {
+                    if (forkMatcher.reset(line).find()) {
+                        fork = Integer.parseInt(forkMatcher.group(1)) - 1;
+                        forks = Integer.parseInt(forkMatcher.group(2));
+                        iteration = -1;
+                        oom = exception = false;
+                    } else if (itersMatcher.reset(line).find()) {
+                        measIterations = Integer.parseInt(itersMatcher.group(1));
+                    } else if (line.startsWith(PARAMS_LINE_PREFIX)) {
                         params = null;
-                        oom = false;
+                        oom = exception = false;
                         Matcher m = BATCH_KIND.matcher(line);
                         if (!m.find())
                             continue;
@@ -333,42 +359,68 @@ public class Jsons2Csv implements Callable<Void> {
                         params = new Params(queries, srcKind, null,
                                 null, null, batchKind, flowModel,
                                 null, null, unionSource);
-                    } else if (line.contains(OOM) || line.contains(OOM_KILLED)) {
+                    } else if (oomMatcher.reset(line).find()) {
                         oom = true;
+                    } else if (exceptionMatcher.reset(line).find()) {
+                        exception = true;
                     } else if (line.startsWith(FAILED) && params != null) {
-                        if (line.contains(EXIT_CODE_HANG))
-                            timeout = true;
+                        boolean timeout = EXIT_CODE_HANG.matcher(line).find();
                         if (line.contains(EXIT_CODE_OOM))
                             oom = true;
-                        var results             = new JmhResults();
-                        results.originFile      = f;
-                        results.lastModified    = f.lastModified();
-                        results.failed          = true;
-                        results.oom             = oom;
-                        results.timeout         = timeout;
-                        results.benchmark       = "";
-                        results.jvmArgs         = List.of();
-                        results.jvm             = "";
-                        results.jdkVersion      = "";
-                        results.vmVersion       = "";
-                        results.warmupTime      = "";
-                        results.measurementTime = "";
-                        results.params          = params;
-                        results.primaryMetric   = new PrimaryMetric(Double.NaN, Double.NaN,
-                                new double[0], Map.of(), "ms/op",
-                                new double[0][]);
-                        if (param2res.getOrDefault(params, null) == null) {
-                            param2res.put(params, results);
-                            log.info("Recorded Forked VM failure for {} from {}",
-                                     params, f.getPath());
-                        }
+                        updateOrAddResults(f, iteration, params, corrJson, forks,
+                                           measIterations, fork, exception, oom, timeout);
                         params = null;
-                        oom = false;
+                        oom = exception = false;
+                    } else if (itMatcher.reset(line).find() && params  != null) {
+                        if (iteration >= 0 && (exception || oom)) {
+                            updateOrAddResults(f, iteration, params, corrJson, forks,
+                                               measIterations, fork, exception, oom, false);
+                        }
+                        iteration = Integer.parseInt(itMatcher.group(1))-1;
+                        exception = false;
                     }
                 }
             } catch (IOException e) {
                 log.warn("Ignoring {} reading from {}: {}", e.getClass().getSimpleName(),
                          f.getAbsolutePath(), e.getMessage());
+            }
+        }
+
+        private void updateOrAddResults(File f, int iteration, Params params, File corrJson,
+                                        int forks, int measurementIterations, int fork,
+                                        boolean exception, boolean oom, boolean timeout) {
+            int iterationOrZero = Math.max(0, iteration);
+            var results = param2res.getOrDefault(params, null);
+            if (results == null
+                    || (results.originFile.getName().endsWith(".log")
+                    && results.originFile.lastModified() < f.lastModified())) {
+                results                 = new JmhResults();
+                results.originFile      = f;
+                results.lastModified    = f.lastModified();
+                results.benchmark       = "";
+                results.jvmArgs         = List.of();
+                results.jvm             = "";
+                results.jdkVersion      = "";
+                results.vmVersion       = "";
+                results.warmupTime      = "";
+                results.measurementTime = "";
+                results.params          = params;
+                results.primaryMetric   = new PrimaryMetric(Double.NaN, Double.NaN,
+                        new double[]{Double.NaN, Double.NaN},
+                        Map.of(), "ms/op",
+                        new double[][] {{Double.NaN}});
+            }
+            if (results.originFile == f || results.originFile.equals(corrJson)) {
+                results.setIterations(forks, measurementIterations);
+                results.failed [fork][iterationOrZero] = exception|oom|timeout;
+                results.oom    [fork][iterationOrZero] = oom;
+                results.timeout[fork][iterationOrZero] = timeout;
+                param2res.put(params, results);
+                String type = oom ? "OOM"
+                                  : (timeout ? "Timeout"
+                                             : (exception ? "Exception" : "non-failure"));
+                log.info("Recorded fork {} iteration {} {} for {} from {}",
+                        fork, iteration, type, params, f.getPath());
             }
         }
     }
