@@ -435,6 +435,11 @@ public class Jsons2Csv implements Callable<Void> {
                                 null, null, unionSource);
                     } else if (itTimeMatcher.reset(line).find()) {
                         itTime = Double.parseDouble(itTimeMatcher.group(1));
+                        updateOrAddResults(f, iteration, params, corrJson, forks,
+                                           measIterations, fork, itTime, exception,
+                                           oom, false);
+                        iteration = -1;
+                        exception = false;
                     } else if (line.startsWith(FAILED) && params != null) {
                         boolean timeout = EXIT_CODE_HANG.matcher(line).find();
                         if (line.contains(EXIT_CODE_OOM))
@@ -531,7 +536,7 @@ public class Jsons2Csv implements Callable<Void> {
                             : (exception ? "Exception" : "non-failure"));
                     log.info("Recorded {} ms={} for fork {}, iteration {} of {} from {}",
                              type, String.format("%.2fms", itTime),
-                             fork, iteration, params, f.getPath());
+                             fork+1, iteration+1, params, f.getPath());
                 }
             }
         }
