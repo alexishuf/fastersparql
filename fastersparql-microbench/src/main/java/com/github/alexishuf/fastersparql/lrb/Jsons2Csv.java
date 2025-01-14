@@ -385,6 +385,12 @@ public class Jsons2Csv implements Callable<Void> {
                 Matcher exceptionMatcher = EXCEPTION.matcher("");
                 Params params = null;
                 for (String line; (line=reader.readLine()) != null; ) {
+                    // partial line matchers: match but do not "consume" the line
+                    if (oomMatcher.reset(line).find())
+                        oom = true;
+                    if (exceptionMatcher.reset(line).find())
+                        exception = true;
+                    // whole line matchers: only one regexp should match
                     if (forkMatcher.reset(line).find()) {
                         if (params != null && iteration >= 0
                                 && (!Double.isNaN(itTime) || oom || exception)) {
@@ -427,10 +433,6 @@ public class Jsons2Csv implements Callable<Void> {
                         params = new Params(queries, srcKind, null,
                                 null, null, batchKind, flowModel,
                                 null, null, unionSource);
-                    } else if (oomMatcher.reset(line).find()) {
-                        oom = true;
-                    } else if (exceptionMatcher.reset(line).find()) {
-                        exception = true;
                     } else if (itTimeMatcher.reset(line).find()) {
                         itTime = Double.parseDouble(itTimeMatcher.group(1));
                     } else if (line.startsWith(FAILED) && params != null) {
