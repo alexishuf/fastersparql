@@ -100,7 +100,7 @@ public class FSProperties {
     public static final int     DEF_FED_ASK_POS_CAP           = 1<<14;
     public static final int     DEF_FED_ASK_NEG_CAP           = 1<<12;
     public static final int     DEF_NETTY_EVLOOP_THREADS      = 0;
-    public static final int     DEF_SP_GROUP_BIND_JOIN        = 15; // same value as FedX
+    public static final int     DEF_SP_GROUP_BIND_JOIN        = 1;
     public static final boolean DEF_BATCH_NO_INTERN_IRI       = false;
     public static final boolean DEF_OP_WEAKEN_DISTINCT        = false;
     public static final boolean DEF_OP_CROSS_DEDUP            = true;
